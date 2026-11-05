@@ -552,3 +552,23 @@ async fn a_stalled_discovery_request_does_not_stop_later_refreshes() {
     .expect("a later refresh should succeed")
     .unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tracked_work_is_listed_until_its_guard_drops() {
+    let dir = temp();
+    let server = api_server().await;
+    let list = kubeconfig(dir.path(), &[("a", &server.uri(), Auth::None)]);
+    let mut sessions = manager(list);
+    sessions.connect("a").unwrap();
+    let session = sessions.session("a").unwrap();
+    let work = session.subscribe_work();
+
+    let shell = session.track_work("shell in web-1");
+    let forward = session.track_work("port-forward to web-2");
+    assert_eq!(*work.borrow(), ["shell in web-1", "port-forward to web-2"]);
+
+    drop(shell);
+    assert_eq!(*work.borrow(), ["port-forward to web-2"]);
+    drop(forward);
+    assert!(work.borrow().is_empty());
+}

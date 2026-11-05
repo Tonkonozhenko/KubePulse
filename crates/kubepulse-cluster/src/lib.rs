@@ -10,4 +10,4 @@ pub use kubeconfig::{
 };
 pub use manager::{SessionManager, UnknownContext};
 pub use resource_watch::{OwnerReference, RawObject, SessionWatcher, WatchEvent};
-pub use session::{ClusterSession, ConnectionState, ResourceKind, SessionOptions};
+pub use session::{ClusterSession, ConnectionState, ResourceKind, SessionOptions, WorkGuard};

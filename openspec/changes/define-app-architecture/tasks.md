@@ -51,11 +51,11 @@ Stop after this group if any target is missed, and revisit the design before sta
 
 ## 6. Application shell
 
-- [ ] 6.1 Build the main window, dock-based tabs and panes, and sidebar, and verify with headless UI tests covering splitting and tab moves
-- [ ] 6.2 Connect the UI to the background runtime using the channels and snapshots from D3, and verify a UI test stays responsive while a fake cluster stalls
-- [ ] 6.3 Implement the searchable cluster list showing each cluster's connection state, plus connect and disconnect actions and the active-work warning, and verify with UI tests against a fake cluster, including that opening a disconnected cluster starts no connection and closing its last tab leaves a cluster connected
-- [ ] 6.4 Implement cluster identity and protected clusters with the keys from D16, and verify a reused context name on another server does not inherit settings
-- [ ] 6.5 Implement workspace persistence and restore without automatic connection, and verify a restart test restores the layout in a disconnected state, activating a restored tab starts no connection, and disconnecting a cluster leaves its tabs open
+- [x] 6.1 Build the main window, dock-based tabs and panes, and sidebar, and verify with headless UI tests covering splitting and tab moves
+- [x] 6.2 Connect the UI to the background runtime using the channels and snapshots from D3, and verify a UI test stays responsive while a fake cluster stalls
+- [x] 6.3 Implement the searchable cluster list showing each cluster's connection state, plus connect and disconnect actions and the active-work warning, and verify with UI tests against a fake cluster, including that opening a disconnected cluster starts no connection and closing its last tab leaves a cluster connected
+- [x] 6.4 Implement cluster identity and protected clusters with the keys from D16, and verify a reused context name on another server does not inherit settings
+- [x] 6.5 Implement workspace persistence and restore without automatic connection, and verify a restart test restores the layout in a disconnected state, activating a restored tab starts no connection, and disconnecting a cluster leaves its tabs open
 - [ ] 6.6 Add a startup time check, and verify the window appears within 1 second on the reference machine with unreachable clusters
 
 ## 7. Resource browsing

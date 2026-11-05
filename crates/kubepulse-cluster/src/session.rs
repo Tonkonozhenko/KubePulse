@@ -75,8 +75,26 @@ pub struct ClusterSession {
     state: watch::Receiver<ConnectionState>,
     resources: watch::Receiver<Arc<Vec<ResourceKind>>>,
     client: watch::Receiver<Option<Client>>,
+    work: watch::Sender<Vec<String>>,
     cancel: CancellationToken,
     tasks: TaskTracker,
+}
+
+/// Marks user-visible work, such as a shell or a port-forward, as running in a
+/// session. Dropping it ends the mark.
+pub struct WorkGuard {
+    work: watch::Sender<Vec<String>>,
+    label: String,
+}
+
+impl Drop for WorkGuard {
+    fn drop(&mut self) {
+        self.work.send_modify(|work| {
+            if let Some(index) = work.iter().position(|label| *label == self.label) {
+                work.remove(index);
+            }
+        });
+    }
 }
 
 struct Channels {
@@ -108,10 +126,12 @@ impl ClusterSession {
             cancel.clone(),
             tasks.clone(),
         ));
+        let (work, _) = watch::channel(Vec::new());
         Self {
             state,
             resources,
             client,
+            work,
             cancel,
             tasks,
         }
@@ -133,6 +153,20 @@ impl ClusterSession {
     /// The client, once the session has connected.
     pub fn client(&self) -> Option<Client> {
         self.client.borrow().clone()
+    }
+
+    /// Records running work, so the user can be warned before disconnecting.
+    pub fn track_work(&self, label: &str) -> WorkGuard {
+        self.work.send_modify(|work| work.push(label.to_owned()));
+        WorkGuard {
+            work: self.work.clone(),
+            label: label.to_owned(),
+        }
+    }
+
+    /// Labels of the work running now.
+    pub fn subscribe_work(&self) -> watch::Receiver<Vec<String>> {
+        self.work.subscribe()
     }
 
     /// A handle for starting resource watches in this session's tree.
