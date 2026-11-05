@@ -97,13 +97,15 @@ The host reads the manifest without running your code, so an inactive extension 
 
 | Contribution | Where it appears |
 |---|---|
-| `resource_views` | A table for a resource kind |
+| `resource_views` | A table for a resource kind, and an entry in the kind sidebar under its `category` |
 | `columns` | A column in that kind's tables |
 | `detail_tabs` | A tab when the user opens an object of that kind |
 | `actions` | An action on an object |
 | `commands` | The command palette |
-| `navigation` | The navigation sidebar |
+| `navigation` | The kind sidebar |
 | `settings` | The settings screen |
+
+Categories appear as groups in the order extensions load. Served kinds that no view declares go under Other resources, by API group.
 
 Disabling an extension removes all of its contributions without a restart.
 

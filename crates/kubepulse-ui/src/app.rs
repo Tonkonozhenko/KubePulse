@@ -14,6 +14,7 @@ use crate::{
     persistence::{ConfigPaths, read_or_default},
     runtime::{ClusterBackend, ClusterRuntime, ConnectedClusters, RuntimeServices, StoreConfig},
     services::SharedServices,
+    shell_state::{SharedShellState, ShellState},
     workspace::Workspace,
 };
 
@@ -69,6 +70,8 @@ pub fn run_with(options: RunOptions) {
         cx.set_global(BackgroundRuntime(runtime));
         let model = cx.new(|cx| ClusterModel::new(state, commands, identities, cx));
         cx.set_global(SharedClusterModel(model.clone()));
+        let shell = cx.new(|_| ShellState::default());
+        cx.set_global(SharedShellState(shell));
 
         let window_options = WindowOptions {
             titlebar: Some(TitlebarOptions {

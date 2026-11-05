@@ -10,6 +10,8 @@ This describes how `kubepulse-cluster` lists clusters and manages connections. T
 - An invalid file appears in `ClusterList::errors`, and the other files still list. Error messages are summaries, because parser output can quote credentials.
 - Listing only parses files. It makes no network requests and runs no credential helpers.
 
+The cluster rail shows this list as icons, and a warning button reveals any file errors. A click selects a cluster, which never connects it. A double-click on a disconnected or failed cluster connects it, and the right-click menu holds the other actions.
+
 ## Session lifecycle
 
 A context has no session until the user connects it. `SessionManager` holds the sessions, and a context without one reports `Disconnected`.

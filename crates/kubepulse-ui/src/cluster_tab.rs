@@ -1,6 +1,6 @@
 //! A tab bound to one cluster for its whole lifetime. Tabs hold no connection,
-//! so they survive disconnection and restart, and offer a connect action. Once
-//! connected, a tab browses the kinds the cluster serves.
+//! so they survive disconnection and restart, and offer a connect action. A
+//! preview tab stays open only until the next kind replaces it.
 
 use std::sync::Arc;
 
@@ -18,17 +18,17 @@ use kubepulse_extension_api::KindRef;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    cluster_model::{ClusterModel, SharedClusterModel, state_label},
-    columns::{NavigationGroup, columns_for, kind_ref, navigation},
+    cluster_model::{ClusterModel, SharedClusterModel, can_connect, state_label},
+    columns::{columns_for, kind_ref, kind_title},
     detail::{DetailEvent, DetailView},
     identity::ClusterKey,
     resource_browser::{BrowserEvent, ResourceBrowser},
     services::{ClusterServices, SharedServices},
+    shell_state::{SharedShellState, ShellState, TabSummary},
 };
 
 pub const PANEL_NAME: &str = "ClusterTab";
 
-const NAVIGATION_WIDTH: f32 = 200.;
 const DETAIL_WIDTH: f32 = 420.;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,6 +36,13 @@ pub struct ClusterTabState {
     pub key: ClusterKey,
     #[serde(default)]
     pub kind: Option<KindRef>,
+    #[serde(default = "pinned_by_default")]
+    pub pinned: bool,
+}
+
+/// Layouts saved before preview tabs existed hold only pinned tabs.
+fn pinned_by_default() -> bool {
+    true
 }
 
 /// The same plural can be served by two groups, so the group is part of it.
@@ -50,7 +57,9 @@ pub fn kind_element_id(kind: &ResourceKind) -> String {
 pub struct ClusterTab {
     key: ClusterKey,
     kind: Option<KindRef>,
+    pinned: bool,
     model: Entity<ClusterModel>,
+    shell: Entity<ShellState>,
     services: Arc<dyn ClusterServices>,
     browser: Option<Entity<ResourceBrowser>>,
     detail: Option<Entity<DetailView>>,
@@ -62,11 +71,13 @@ impl ClusterTab {
     pub fn new(
         key: ClusterKey,
         kind: Option<KindRef>,
+        pinned: bool,
         model: Entity<ClusterModel>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let services = cx.global::<SharedServices>().0.clone();
+        let shell = cx.global::<SharedShellState>().0.clone();
         let subscription = cx.observe_in(&model, window, |this, _, window, cx| {
             this.sync_with_connection(window, cx);
             cx.notify();
@@ -74,7 +85,9 @@ impl ClusterTab {
         Self {
             key,
             kind,
+            pinned,
             model,
+            shell,
             services,
             browser: None,
             detail: None,
@@ -95,6 +108,42 @@ impl ClusterTab {
         self.detail.as_ref()
     }
 
+    pub fn pinned(&self) -> bool {
+        self.pinned
+    }
+
+    pub fn pin(&mut self, cx: &mut Context<Self>) {
+        self.pinned = true;
+        self.publish(cx);
+        cx.notify();
+    }
+
+    fn summary(&self, cx: &Context<Self>) -> TabSummary {
+        TabSummary {
+            id: cx.entity_id(),
+            key: self.key.clone(),
+            kind: self.kind.clone(),
+            pinned: self.pinned,
+        }
+    }
+
+    fn publish(&self, cx: &mut Context<Self>) {
+        let summary = self.summary(cx);
+        self.shell
+            .update(cx, |shell, cx| shell.update_tab(summary, cx));
+    }
+
+    /// Reports this as the active tab. Two panes can show tabs at once, so a
+    /// click on a displayed tab counts as well as the dock's notification.
+    pub fn activate(&self, cx: &mut Context<Self>) {
+        let id = cx.entity_id();
+        let key = self
+            .same_server(self.model.read(cx))
+            .then(|| self.key.clone());
+        self.shell
+            .update(cx, |shell, cx| shell.activate(id, key, cx));
+    }
+
     pub fn register(cx: &mut App) {
         dock::register_panel(cx, PANEL_NAME, |context: PanelBuildContext, window, cx| {
             let saved: Option<ClusterTabState> = match context.info() {
@@ -103,12 +152,12 @@ impl ClusterTab {
                     .ok(),
                 _ => None,
             };
-            let (key, kind) = saved.map_or_else(
-                || (ClusterKey::new("", None), None),
-                |state| (state.key, state.kind),
+            let (key, kind, pinned) = saved.map_or_else(
+                || (ClusterKey::new("", None), None, true),
+                |state| (state.key, state.kind, state.pinned),
             );
             let model = cx.global::<SharedClusterModel>().0.clone();
-            panel_handle(cx.new(|cx| Self::new(key, kind, model, window, cx)))
+            panel_handle(cx.new(|cx| Self::new(key, kind, pinned, model, window, cx)))
         });
     }
 
@@ -124,12 +173,7 @@ impl ClusterTab {
     /// connection ends. A degraded cluster keeps its data, shown as stale.
     fn sync_with_connection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let model = self.model.read(cx);
-        let state = model.connection(&self.key.context);
-        let ended = matches!(
-            state,
-            ConnectionState::Disconnected | ConnectionState::Failed { .. }
-        );
-        if ended {
+        if can_connect(&model.connection(&self.key.context)) {
             self.browser = None;
             self.detail = None;
             return;
@@ -169,6 +213,7 @@ impl ClusterTab {
             );
             self._subscriptions.push(subscription);
         }
+        self.publish(cx);
         cx.notify();
     }
 
@@ -192,45 +237,6 @@ impl ClusterTab {
         self.detail = Some(detail);
         cx.notify();
     }
-
-    fn render_navigation(
-        &self,
-        groups: Vec<NavigationGroup>,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        let muted = cx.theme().muted_foreground;
-        let sections = groups.into_iter().map(|group| {
-            let entries = group.kinds.into_iter().map(|(title, kind)| {
-                let id = kind_element_id(&kind);
-                div()
-                    .id(SharedString::from(id))
-                    .px_1()
-                    .cursor_pointer()
-                    .child(title)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.open_kind(kind.clone(), window, cx);
-                    }))
-                    .test_support()
-            });
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(div().text_xs().text_color(muted).child(group.name))
-                .children(entries.collect::<Vec<_>>())
-        });
-        div()
-            .id("kind-navigation")
-            .w(px(NAVIGATION_WIDTH))
-            .h_full()
-            .flex_none()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .overflow_y_scroll()
-            .children(sections.collect::<Vec<_>>())
-            .test_support()
-    }
 }
 
 impl gpui_kit::base::dock::Panel for ClusterTab {
@@ -243,22 +249,65 @@ impl gpui_kit::base::dock::Panel for ClusterTab {
         let saved = ClusterTabState {
             key: self.key.clone(),
             kind: self.kind.clone(),
+            pinned: self.pinned,
         };
         state.info = PanelInfo::panel(serde_json::to_value(saved).expect("tab state serializes"));
         state
+    }
+
+    fn on_added_to(
+        &mut self,
+        _: WeakEntity<gpui_kit::base::dock::TabGroup>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let summary = self.summary(cx);
+        let tab = cx.weak_entity();
+        self.pinned = self
+            .shell
+            .update(cx, |shell, cx| shell.add_tab(summary, tab, cx));
+    }
+
+    fn on_removed(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        let id = cx.entity_id();
+        self.shell.update(cx, |shell, cx| shell.remove_tab(id, cx));
+    }
+
+    fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut Context<Self>) {
+        if active {
+            self.activate(cx);
+        }
     }
 }
 
 impl dock::Panel for ClusterTab {
     fn title(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let identity = self.model.read(cx).identity(&self.key);
+        let contributions = self.services.contributions();
+        let title = self
+            .kind
+            .as_ref()
+            .map(|kind| kind_title(kind, &contributions));
         div()
+            .id(SharedString::from(format!("tab-title-{}", cx.entity_id())))
             .flex()
             .items_center()
             .gap_2()
+            .when(!self.pinned, |this| this.italic())
             .child(div().size_2().rounded_full().bg(rgb(identity.color)))
+            .children(title)
             .child(identity.name)
             .when(identity.protected, |this| this.child("(protected)"))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.activate(cx)),
+            )
+            .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
+                if event.click_count() == 2 {
+                    this.pin(cx);
+                }
+            }))
+            .test_support()
     }
 }
 
@@ -282,23 +331,14 @@ impl Render for ClusterTab {
             }
             _ => None,
         };
-        let resources = model
-            .status(&self.key.context)
-            .map(|status| status.resources.clone());
         let context = self.key.context.clone();
-        let connect = matches!(
-            state,
-            ConnectionState::Disconnected | ConnectionState::Failed { .. }
-        );
+        let connect = can_connect(&state);
         let stale = matches!(state, ConnectionState::Degraded { .. });
         let muted = cx.theme().muted_foreground;
-        let groups = resources
-            .filter(|_| same_server && !connect)
-            .map(|served| navigation(&served, &self.services.contributions()))
-            .unwrap_or_default();
 
         div()
             .id("cluster-tab")
+            .capture_any_mouse_down(cx.listener(|this, _, _, cx| this.activate(cx)))
             .size_full()
             .flex()
             .flex_col()
@@ -340,7 +380,7 @@ impl Render for ClusterTab {
                         ))
                     })
             })
-            .when(!groups.is_empty(), |this| {
+            .when(same_server && !connect, |this| {
                 this.child(
                     div()
                         .flex()
@@ -348,7 +388,6 @@ impl Render for ClusterTab {
                         .w_full()
                         .gap_2()
                         .overflow_hidden()
-                        .child(self.render_navigation(groups, cx))
                         .child(
                             div()
                                 .flex_1()

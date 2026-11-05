@@ -23,6 +23,8 @@ use kubepulse_ui::{
     resource_browser::ResourceBrowser,
     runtime::{ClusterState, ClusterStatus},
     services::SharedServices,
+    shell_state::{SharedShellState, ShellState},
+    workspace::Workspace,
 };
 use serde_json::{Value, json};
 use support::*;
@@ -44,7 +46,8 @@ fn state(status: ClusterStatus) -> Arc<ClusterState> {
 }
 
 struct Harness<'a> {
-    tab: Entity<ClusterTab>,
+    workspace: Entity<Workspace>,
+    shell: Entity<ShellState>,
     model: Entity<ClusterModel>,
     state: watch::Sender<Arc<ClusterState>>,
     cx: &'a mut VisualTestContext,
@@ -61,7 +64,7 @@ fn harness(
     let (commands, _) = mpsc::unbounded_channel();
     let mut identities = IdentityStore::default();
     identities.update(key(), |settings| settings.protected = protected);
-    let model = cx.update(|cx| {
+    let (model, shell) = cx.update(|cx| {
         gpui_kit::init(cx);
         // Dialogs close at once, with no exit animation to wait for.
         cx.set_reduce_motion(true);
@@ -69,39 +72,66 @@ fn harness(
         cx.set_global(SharedServices(services));
         let model = cx.new(|cx| ClusterModel::new(receiver, commands, identities, cx));
         cx.set_global(SharedClusterModel(model.clone()));
-        model
+        let shell = cx.new(|cx| {
+            let mut shell = ShellState::default();
+            shell.select(key(), cx);
+            shell
+        });
+        cx.set_global(SharedShellState(shell.clone()));
+        (model, shell)
     });
     let shared = model.clone();
     // The real window root, which is what shows dialogs.
-    let (window, tab) = cx
+    let (window, workspace) = cx
         .update(|cx| {
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-                cx.new(|cx| ClusterTab::new(key(), None, shared, window, cx))
+                cx.new(|cx| Workspace::new(shared, None, window, cx))
             })
         })
         .unwrap();
     let cx = VisualTestContext::from_window(window, cx).into_mut();
     cx.simulate_resize(gpui_kit::size(gpui_kit::px(1600.), gpui_kit::px(1000.)));
     cx.run_until_parked();
-    Harness {
-        tab,
+    let mut harness = Harness {
+        workspace,
+        shell,
         model,
         state,
         cx,
+    };
+    if harness.exists("group-Other resources".into()) {
+        harness.click("group-Other resources".into());
     }
+    harness
 }
 
 impl Harness<'_> {
-    fn open_kind(&mut self, kind: &ResourceKind) {
+    fn show(&mut self, kind: &ResourceKind) {
         let kind = kind.clone();
-        let tab = self.tab.clone();
-        self.cx
-            .update(|window, cx| tab.update(cx, |tab, cx| tab.open_kind(kind, window, cx)));
+        let workspace = self.workspace.clone();
+        self.cx.update(|window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                workspace.show_kind(key(), kind, false, window, cx);
+            });
+        });
+        self.cx.run_until_parked();
+    }
+
+    fn open_kind(&mut self, kind: &ResourceKind) {
+        self.show(kind);
         self.wait_for_rows(0);
     }
 
+    fn tab(&mut self) -> Entity<ClusterTab> {
+        let shell = self.shell.clone();
+        self.cx.update(|_, cx| {
+            let shell = shell.read(cx);
+            shell.tab(shell.active().expect("an active tab")).unwrap()
+        })
+    }
+
     fn browser(&mut self) -> Entity<ResourceBrowser> {
-        let tab = self.tab.clone();
+        let tab = self.tab();
         self.cx
             .update(|_, cx| tab.read(cx).browser().expect("a browser").clone())
     }
@@ -153,12 +183,13 @@ impl Harness<'_> {
     }
 
     fn detail(&mut self) -> Option<Entity<kubepulse_ui::detail::DetailView>> {
-        let tab = self.tab.clone();
+        let tab = self.tab();
         self.cx.update(|_, cx| tab.read(cx).detail().cloned())
     }
 
     fn open_object(&mut self, target: ObjectTarget) {
-        let tab = self.tab.clone();
+        self.show(&target.kind);
+        let tab = self.tab();
         self.cx.update(|window, cx| {
             tab.update(cx, |tab, cx| tab.open_object(target, window, cx));
         });
@@ -871,7 +902,8 @@ fn revealing_shows_one_value_and_hiding_covers_it_again(cx: &mut TestAppContext)
 fn deletable(cx: &mut TestAppContext, protected: bool) -> (Harness<'_>, Arc<FakeServices>) {
     let services = Arc::new(FakeServices::idle());
     services.add_object(&pod_kind(), Some("shop"), owned("web", None));
-    let mut harness = harness(cx, services.clone(), vec![pod_kind()], protected);
+    let resources = vec![pod_kind(), secret_kind()];
+    let mut harness = harness(cx, services.clone(), resources, protected);
     harness.open_object(target(pod_kind(), Some("shop"), "web"));
     harness.click("delete-object".into());
     (harness, services)
@@ -941,18 +973,44 @@ fn escape_closes_the_dialog_and_enter_never_deletes(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn replacing_the_preview_clears_its_filter_and_detail(cx: &mut TestAppContext) {
+    let services = Arc::new(FakeServices::new(
+        Arc::new(
+            ScriptedSource::default()
+                .with("Pod", vec![raw("web", Some("shop"), json!({}))])
+                .with("Widget", vec![raw("big", Some("ns"), json!({}))]),
+        ),
+        ContributionSet::default(),
+    ));
+    services.add_object(&pod_kind(), Some("shop"), owned("web", None));
+    let mut harness = harness(cx, services, vec![pod_kind(), widget_kind()], false);
+    harness.open_kind(&pod_kind());
+    harness.update_browser(|browser, cx| browser.set_filter("web", cx));
+    harness.open_object(target(pod_kind(), Some("shop"), "web"));
+    assert!(harness.detail().is_some());
+
+    // A kept filter of "web" would hide the widget, and this would time out.
+    harness.open_kind(&widget_kind());
+
+    assert!(harness.detail().is_none());
+}
+
+#[gpui_kit::test]
 fn the_dialog_blocks_the_rest_of_the_window(cx: &mut TestAppContext) {
     let (mut harness, _) = deletable(cx, false);
 
-    harness.click("kind-pods".into());
+    harness.click("kind-secrets".into());
 
     assert!(
         dialog_open(&mut harness),
         "clicking outside does not close it"
     );
-    let tab = harness.tab.clone();
-    let opened = harness.cx.update(|_, cx| tab.read(cx).browser().is_some());
-    assert!(!opened, "the click does not reach what is behind it");
+    let shell = harness.shell.clone();
+    let kind = harness.cx.update(|_, cx| {
+        let tab = shell.read(cx).active_tab().cloned();
+        tab.and_then(|tab| tab.kind).unwrap().kind
+    });
+    assert_eq!(kind, "Pod", "the click does not reach what is behind it");
 }
 
 #[gpui_kit::test]

@@ -126,3 +126,19 @@ pub fn state_label(state: &ConnectionState) -> &'static str {
         ConnectionState::Failed { .. } => "Failed",
     }
 }
+
+/// Whether a connect command would start an attempt.
+pub fn can_connect(state: &ConnectionState) -> bool {
+    matches!(
+        state,
+        ConnectionState::Disconnected | ConnectionState::Failed { .. }
+    )
+}
+
+/// Whether the session is up, even if it has lost contact for now.
+pub fn is_live(state: &ConnectionState) -> bool {
+    matches!(
+        state,
+        ConnectionState::Connected | ConnectionState::Degraded { .. }
+    )
+}

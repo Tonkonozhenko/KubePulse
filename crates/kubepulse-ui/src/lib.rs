@@ -4,16 +4,19 @@
 
 pub mod app;
 pub mod cluster_model;
-pub mod cluster_panel;
+pub mod cluster_rail;
+pub mod cluster_settings;
 pub mod cluster_tab;
 pub mod columns;
 pub mod declarative;
 pub mod detail;
 pub mod identity;
+pub mod kind_sidebar;
 pub mod persistence;
 pub mod resource_browser;
 pub mod runtime;
 pub mod services;
+pub mod shell_state;
 pub mod workspace;
 
 pub use app::{RunOptions, run, run_with};

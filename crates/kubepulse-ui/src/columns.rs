@@ -1,7 +1,7 @@
 //! Which columns a kind's table shows: declared by extensions, or by a custom
 //! resource definition, evaluated without calling any extension.
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use kubepulse_cluster::ResourceKind;
 use kubepulse_extension_api::{ColumnSource, KindRef};
@@ -85,13 +85,36 @@ pub fn columns_for(kind: &ResourceKind, contributions: &ContributionSet) -> Kind
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NavigationEntry {
+    pub title: String,
+    pub kind: ResourceKind,
+}
+
+/// The kinds of one API group, inside the group of undeclared kinds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NavigationSection {
+    pub name: String,
+    pub kinds: Vec<NavigationEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NavigationGroup {
     pub name: String,
-    pub kinds: Vec<(String, ResourceKind)>,
+    pub kinds: Vec<NavigationEntry>,
+    pub sections: Vec<NavigationSection>,
+}
+
+pub fn kind_title(kind: &KindRef, contributions: &ContributionSet) -> String {
+    contributions
+        .extensions
+        .iter()
+        .flat_map(|(_, contributed)| &contributed.resource_views)
+        .find(|view| view.kind == *kind)
+        .map_or_else(|| kind.kind.clone(), |view| view.title.clone())
 }
 
 /// The kinds this cluster serves, by category. Anything no extension claims is
-/// still listed, so every served kind can be browsed.
+/// still listed, by API group, so every served kind can be browsed.
 pub fn navigation(
     resources: &[ResourceKind],
     contributions: &ContributionSet,
@@ -104,26 +127,49 @@ pub fn navigation(
                 continue;
             };
             claimed.push(kind_ref(kind));
-            let entry = (view.title.clone(), kind.clone());
+            let entry = NavigationEntry {
+                title: view.title.clone(),
+                kind: kind.clone(),
+            };
             match groups.iter_mut().find(|group| group.name == view.category) {
                 Some(group) => group.kinds.push(entry),
                 None => groups.push(NavigationGroup {
                     name: view.category.clone(),
                     kinds: vec![entry],
+                    sections: Vec::new(),
                 }),
             }
         }
     }
-    let others: Vec<(String, ResourceKind)> = resources
+    let mut sections: BTreeMap<String, Vec<NavigationEntry>> = BTreeMap::new();
+    for kind in resources
         .iter()
         .filter(|kind| !claimed.contains(&kind_ref(kind)))
         .filter(|kind| kind.verbs.iter().any(|verb| verb == "list"))
-        .map(|kind| (kind.plural.clone(), kind.clone()))
-        .collect();
-    if !others.is_empty() {
+    {
+        let name = match kind.group.as_str() {
+            "" => "core",
+            group => group,
+        };
+        sections
+            .entry(name.to_owned())
+            .or_default()
+            .push(NavigationEntry {
+                title: kind.plural.clone(),
+                kind: kind.clone(),
+            });
+    }
+    if !sections.is_empty() {
         groups.push(NavigationGroup {
             name: "Other resources".to_owned(),
-            kinds: others,
+            kinds: Vec::new(),
+            sections: sections
+                .into_iter()
+                .map(|(name, mut kinds)| {
+                    kinds.sort_by(|a, b| a.title.cmp(&b.title));
+                    NavigationSection { name, kinds }
+                })
+                .collect(),
         });
     }
     groups
@@ -235,9 +281,36 @@ mod tests {
         ];
         let groups = navigation(&resources, &set(pods()));
         assert_eq!(groups[0].name, "Workloads");
-        assert_eq!(groups[0].kinds[0].0, "Pods");
+        assert_eq!(groups[0].kinds[0].title, "Pods");
         assert_eq!(groups[1].name, "Other resources");
-        assert_eq!(groups[1].kinds[0].1.kind, "Widget");
+        assert_eq!(groups[1].sections[0].kinds[0].kind.kind, "Widget");
+    }
+
+    #[test]
+    fn undeclared_kinds_are_nested_by_api_group_and_sorted() {
+        let resources = [
+            kind("example.com", "Widget", vec![]),
+            kind("cert-manager.io", "Issuer", vec![]),
+            kind("example.com", "Gadget", vec![]),
+            kind("", "PodTemplate", vec![]),
+        ];
+        let groups = navigation(&resources, &ContributionSet::default());
+        let sections: Vec<(&str, Vec<&str>)> = groups[0]
+            .sections
+            .iter()
+            .map(|section| {
+                let titles = section.kinds.iter().map(|e| e.title.as_str()).collect();
+                (section.name.as_str(), titles)
+            })
+            .collect();
+        assert_eq!(
+            sections,
+            [
+                ("cert-manager.io", vec!["issuers"]),
+                ("core", vec!["podtemplates"]),
+                ("example.com", vec!["gadgets", "widgets"]),
+            ]
+        );
     }
 
     #[test]
