@@ -2,10 +2,10 @@
 
 ## 1. Workspace and project foundations
 
-- [ ] 1.1 Replace the scaffold with a Cargo workspace containing the crates from design D1, rename the package to `kubepulse`, and verify `cargo build --workspace` succeeds
+- [x] 1.1 Replace the scaffold with a Cargo workspace containing the crates from design D1, rename the package to `kubepulse`, and verify `cargo build --workspace` succeeds
 - [ ] 1.2 Add a CI check that enforces the crate dependency graph from D1, and verify it fails on a test branch where `kubepulse-builtin` depends on `kubepulse-store`
 - [ ] 1.3 Set up CI builds and tests on Linux, macOS, and Windows, and verify all three pass on the empty workspace
-- [ ] 1.4 Add the root `LICENSE` with the BUSL 1.1 parameters from D17 and the Apache-2.0 license on `kubepulse-extension-api`, and verify each crate's manifest declares the intended license
+- [x] 1.4 Add the root `LICENSE` with the BUSL 1.1 parameters from D17 and the Apache-2.0 license on `kubepulse-extension-api`, and verify each crate's manifest declares the intended license
 - [ ] 1.5 Add a license check in CI with a GPL-family exclusion, and verify a deliberately added GPL dependency fails it
 - [ ] 1.6 Add a contributor license agreement check to pull requests and a README licensing section that says source-available, and verify the check blocks a pull request from a contributor who has not accepted
 

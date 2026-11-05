@@ -3,13 +3,6 @@
 version = 4
 
 [[package]]
-name = "KubePulse"
-version = "0.1.0"
-dependencies = [
- "gpui-kit",
-]
-
-[[package]]
 name = "accesskit"
 version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3334,6 +3327,55 @@ checksum = "07293a4e297ac234359b510362495713f75ea345d5307140414f20c69ffeb087"
 dependencies = [
  "bitflags 2.13.2",
  "libc",
+]
+
+[[package]]
+name = "kubepulse"
+version = "0.1.0"
+dependencies = [
+ "kubepulse-builtin",
+ "kubepulse-cluster",
+ "kubepulse-extension-host",
+ "kubepulse-store",
+ "kubepulse-ui",
+]
+
+[[package]]
+name = "kubepulse-builtin"
+version = "0.1.0"
+dependencies = [
+ "kubepulse-extension-api",
+]
+
+[[package]]
+name = "kubepulse-cluster"
+version = "0.1.0"
+
+[[package]]
+name = "kubepulse-extension-api"
+version = "0.1.0"
+
+[[package]]
+name = "kubepulse-extension-host"
+version = "0.1.0"
+dependencies = [
+ "kubepulse-extension-api",
+]
+
+[[package]]
+name = "kubepulse-store"
+version = "0.1.0"
+dependencies = [
+ "kubepulse-cluster",
+]
+
+[[package]]
+name = "kubepulse-ui"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "kubepulse-extension-api",
+ "kubepulse-extension-host",
 ]
 
 [[package]]

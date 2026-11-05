@@ -1,7 +1,20 @@
-[package]
-name = "KubePulse"
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "Apache-2.0"
+publish = false
 
-[dependencies]
+[workspace.dependencies]
+kubepulse-builtin = { path = "crates/kubepulse-builtin" }
+kubepulse-cluster = { path = "crates/kubepulse-cluster" }
+kubepulse-extension-api = { path = "crates/kubepulse-extension-api" }
+kubepulse-extension-host = { path = "crates/kubepulse-extension-host" }
+kubepulse-store = { path = "crates/kubepulse-store" }
+kubepulse-ui = { path = "crates/kubepulse-ui" }
+
+# Upgrade the kit and every snapshot crate together in one commit.
 gpui-kit = "=0.9.0"

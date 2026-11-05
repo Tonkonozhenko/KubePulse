@@ -1,0 +1,13 @@
+[package]
+name = "kubepulse"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+kubepulse-builtin.workspace = true
+kubepulse-cluster.workspace = true
+kubepulse-extension-host.workspace = true
+kubepulse-store.workspace = true
+kubepulse-ui.workspace = true

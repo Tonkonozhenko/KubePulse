@@ -1,0 +1,21 @@
+# Only these licenses may appear in a build. GPL-family licenses are excluded
+# on purpose: never add GPL, LGPL, or AGPL here.
+[licenses]
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.93
+
+# Workspace crates set `publish = false`, so their own licenses are not checked
+# here. Each crate's manifest declares its license.
+[licenses.private]
+ignore = true

@@ -1,0 +1,9 @@
+[package]
+name = "kubepulse-extension-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+kubepulse-extension-api.workspace = true

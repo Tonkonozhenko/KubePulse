@@ -4,23 +4,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-KubePulse is a lightweight, native Kubernetes IDE written in Rust. The code is still a single-package `cargo new` scaffold. The architecture below is planned in the OpenSpec change `openspec/changes/define-app-architecture/` and is not implemented yet, so check what exists before assuming a crate or module does.
+KubePulse is a lightweight, native Kubernetes IDE written in Rust. The Cargo workspace exists, but its crates are mostly empty. The architecture below is planned in the OpenSpec change `openspec/changes/define-app-architecture/` and is only partly implemented, so check what exists before assuming a module does.
 
 Read `design.md` in that change for the reasoning behind each decision. Its specs define required behavior, including the performance limits.
 
 ## Commands
 
 ```bash
-cargo build                  # build
-cargo run                    # run the app
-cargo test                   # run all tests
-cargo test <name>            # run tests whose name contains <name>
-cargo test <name> -- --exact # run one test by its full path
-cargo clippy --all-targets   # lint
-cargo fmt --check            # check formatting
+cargo build --workspace                  # build
+cargo run                                # run the app
+cargo test --workspace                   # run all tests
+cargo test --workspace <name>            # run tests whose name contains <name>
+cargo test -p <crate> <name> -- --exact  # run one test by its full path
+cargo clippy --workspace --all-targets   # lint
+cargo fmt --all --check                  # check formatting
+python3 scripts/check-crate-graph.py     # check the crate dependency graph
+cargo deny check licenses                # check dependency licenses
 ```
-
-Once the workspace from `design.md` exists, add `--workspace` to run across all crates or `-p <crate>` to target one.
 
 OpenSpec:
 
@@ -35,7 +35,7 @@ Use the `/opsx:propose`, `/opsx:explore`, `/opsx:apply`, `/opsx:sync`, and `/ops
 
 ## Planned architecture
 
-Dependencies point downward, and CI is to enforce this graph:
+Dependencies point downward, and CI enforces this graph with `scripts/check-crate-graph.py`:
 
 | Crate | Responsibility |
 |---|---|
@@ -60,11 +60,15 @@ These rules hold the design together:
 ## Constraints
 
 - **Product names:** never name other products in specs, OpenSpec artifacts, code, or comments. Describe capabilities directly instead.
-- **Licensing:** the product is Business Source License 1.1 with free non-commercial use, and each version converts to AGPL-3.0 after four years. Call it source-available, never open source.
+- **Licensing:** the product is open source under Apache-2.0.
 - **Dependencies:** no GPL-family dependencies. That rules out reusing the code editor from gpui's parent project.
 - **UI stack:** use `gpui-kit` on an exact `gpui-pre` pin. Upgrade the kit and all snapshot crates together in one commit, because any snapshot can break the API. Do not substitute `gpui` or `gpui-ce`.
 - **No phoning home:** no license keys, activation, or telemetry.
 - **Platforms:** Linux (Wayland and X11), macOS, and Windows must have the same features.
+
+## Git
+
+- Commit and push through a subagent running the Haiku model.
 
 ## OpenSpec conventions
 
