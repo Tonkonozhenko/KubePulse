@@ -7,13 +7,13 @@ use std::{
     ffi::OsString,
     io,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, mpsc},
+    thread,
     time::Duration,
 };
 
 use kube::config::{Kubeconfig, KubeconfigError};
-use notify::RecursiveMode;
-use notify_debouncer_mini::{DebounceEventResult, Debouncer, new_debouncer};
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 use tokio::sync::watch;
 
 const RELOAD_DEBOUNCE: Duration = Duration::from_millis(200);
@@ -129,7 +129,7 @@ fn entries(kubeconfig: &Kubeconfig) -> Vec<ClusterEntry> {
 /// watching.
 pub struct KubeconfigWatcher {
     list: watch::Receiver<Arc<ClusterList>>,
-    _debouncer: Debouncer<notify::RecommendedWatcher>,
+    _watcher: RecommendedWatcher,
 }
 
 impl KubeconfigWatcher {
@@ -137,35 +137,44 @@ impl KubeconfigWatcher {
         let paths: Vec<PathBuf> = paths.iter().map(|p| absolute(p)).collect();
         let (sender, list) = watch::channel(Arc::new(load(&paths)));
 
+        let (changed, changes) = mpsc::channel();
         let watched = paths.clone();
-        let mut debouncer = new_debouncer(RELOAD_DEBOUNCE, move |result: DebounceEventResult| {
-            let relevant = match result {
-                Ok(events) => events.iter().any(|event| watched.contains(&event.path)),
-                Err(error) => {
-                    tracing::warn!(%error, "kubeconfig watcher error");
-                    false
+        let mut watcher = notify::recommended_watcher(move |event: notify::Result<Event>| {
+            match event {
+                // Reading a kubeconfig reports access events, including the
+                // reads below, which must not cause another reload.
+                Ok(event) if matches!(event.kind, EventKind::Access(_)) => {}
+                Ok(event) if event.paths.iter().any(|path| watched.contains(path)) => {
+                    // The receiver is gone only while the watcher is dropped.
+                    let _ = changed.send(());
                 }
-            };
-            if relevant {
+                Ok(_) => {}
+                Err(error) => tracing::warn!(%error, "kubeconfig watcher error"),
+            }
+        })?;
+
+        // Ends when the watcher is dropped, because that closes the channel.
+        let loaded = paths.clone();
+        thread::spawn(move || {
+            while changes.recv().is_ok() {
+                while changes.recv_timeout(RELOAD_DEBOUNCE).is_ok() {}
                 let version = sender.borrow().version + 1;
                 sender.send_replace(Arc::new(ClusterList {
                     version,
-                    ..load(&watched)
+                    ..load(&loaded)
                 }));
             }
-        })?;
+        });
 
         // Watching directories catches files that are created later or replaced
         // by rename, which is how most tools save them.
         let directories: HashSet<&Path> = paths.iter().filter_map(|p| p.parent()).collect();
         for directory in directories.into_iter().filter(|d| d.is_dir()) {
-            debouncer
-                .watcher()
-                .watch(directory, RecursiveMode::NonRecursive)?;
+            watcher.watch(directory, RecursiveMode::NonRecursive)?;
         }
         Ok(Self {
             list,
-            _debouncer: debouncer,
+            _watcher: watcher,
         })
     }
 
@@ -333,6 +342,23 @@ mod tests {
         assert!(updated.version > 0);
     }
 
+    #[tokio::test]
+    async fn one_write_reloads_once_and_reading_a_file_never_reloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write(dir.path(), "config", &config(&[("a", "https://a")]));
+        let watcher = KubeconfigWatcher::start(vec![path.clone()]).unwrap();
+        let list = watcher.subscribe();
+
+        fs::read_to_string(&path).unwrap();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert_eq!(list.borrow().version, 0, "reading is not a change");
+
+        for _ in 0..20 {
+            fs::write(&path, config(&[("a", "https://a"), ("b", "https://b")])).unwrap();
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        assert_eq!(list.borrow().version, 1, "a burst settles into one reload");
+    }
     #[tokio::test]
     async fn watcher_sees_a_file_created_later() {
         let dir = tempfile::tempdir().unwrap();
