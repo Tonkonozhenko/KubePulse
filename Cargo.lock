@@ -4338,15 +4338,20 @@ version = "0.1.0"
 dependencies = [
  "kubepulse-builtin",
  "kubepulse-cluster",
+ "kubepulse-extension-api",
  "kubepulse-extension-host",
  "kubepulse-store",
  "kubepulse-ui",
+ "serde_json",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
 name = "kubepulse-builtin"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "kubepulse-extension-api",
 ]
 
@@ -4406,15 +4411,19 @@ dependencies = [
 name = "kubepulse-ui"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "base64 0.22.1",
  "directories",
  "gpui-kit",
  "kubepulse-cluster",
  "kubepulse-extension-api",
  "kubepulse-extension-host",
+ "kubepulse-store",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 

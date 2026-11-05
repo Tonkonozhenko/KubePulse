@@ -29,6 +29,7 @@ pub fn pod_kind() -> ResourceKind {
         plural: "pods".into(),
         namespaced: true,
         verbs: vec!["list".into(), "watch".into()],
+        printer_columns: vec![],
     }
 }
 
@@ -83,8 +84,14 @@ pub fn pod(index: usize, restarts: u64) -> RawObject {
         ]
         .map(|(key, value)| (key.to_owned(), value)),
     );
+    let created = format!("2026-{:02}-{:02}T08:30:00Z", index % 12 + 1, index % 28 + 1);
     let data = json!({
-        "metadata": {"name": name, "namespace": namespace, "labels": labels},
+        "metadata": {
+            "name": name,
+            "namespace": namespace,
+            "labels": labels,
+            "creationTimestamp": created,
+        },
         "spec": {
             "nodeName": node,
             "serviceAccountName": "default",
@@ -121,11 +128,7 @@ pub fn pod(index: usize, restarts: u64) -> RawObject {
             name: format!("workload-{workload}-{:08x}", workload * 7919),
             uid: format!("{workload:08x}-aaaa-4b6a-9e21-7c5d00000000"),
         }],
-        created: Some(format!(
-            "2026-{:02}-{:02}T08:30:00Z",
-            index % 12 + 1,
-            index % 28 + 1
-        )),
+        created: Some(created),
         data,
     }
 }

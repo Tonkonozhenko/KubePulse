@@ -52,6 +52,7 @@ fn manifest() -> Manifest {
                 id: "v".into(),
                 title: "V".into(),
                 kind: kind(),
+                category: "C".into(),
             }],
             columns: vec![
                 ColumnContribution {

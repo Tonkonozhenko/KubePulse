@@ -1,3 +1,5 @@
+mod support;
+
 use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 
 use gpui_kit::{
@@ -12,8 +14,10 @@ use kubepulse_ui::{
     identity::{ClusterKey, IdentityStore},
     persistence::{ConfigPaths, write_atomic},
     runtime::{ClusterCommand, ClusterRuntime, ClusterState, ClusterStatus},
+    services::SharedServices,
     workspace::Workspace,
 };
+use support::FakeServices;
 use tokio::sync::{mpsc, watch};
 
 struct Harness {
@@ -33,6 +37,7 @@ fn status(context: &str, state: ConnectionState, work: &[&str]) -> ClusterStatus
         },
         state,
         active_work: work.iter().map(|w| w.to_string()).collect(),
+        resources: Arc::default(),
     }
 }
 
@@ -54,6 +59,7 @@ fn harness(cx: &mut TestAppContext, statuses: Vec<ClusterStatus>) -> Harness {
     let model = cx.update(|cx| {
         gpui_kit::init(cx);
         ClusterTab::register(cx);
+        cx.set_global(SharedServices(Arc::new(FakeServices::idle())));
         let model = cx.new(|cx| ClusterModel::new(receiver, sender, IdentityStore::default(), cx));
         cx.set_global(SharedClusterModel(model.clone()));
         model
@@ -509,7 +515,8 @@ fn the_ui_stays_responsive_while_a_cluster_stalls(cx: &mut TestAppContext) {
     let directory = tempfile::tempdir().unwrap();
     let (_listener, server) = stalled_server();
     let path = stalled_kubeconfig(directory.path(), &server);
-    let runtime = ClusterRuntime::start(vec![path], SessionOptions::default()).unwrap();
+    let runtime =
+        ClusterRuntime::start(vec![path], SessionOptions::default(), Default::default()).unwrap();
     let commands = runtime.commands();
 
     let mut state = runtime.state();
@@ -525,6 +532,7 @@ fn the_ui_stays_responsive_while_a_cluster_stalls(cx: &mut TestAppContext) {
     let model = cx.update(|cx| {
         gpui_kit::init(cx);
         ClusterTab::register(cx);
+        cx.set_global(SharedServices(Arc::new(FakeServices::idle())));
         let receiver = runtime.state();
         let model =
             cx.new(|cx| ClusterModel::new(receiver, commands, IdentityStore::default(), cx));

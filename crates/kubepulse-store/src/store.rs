@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 
-use kubepulse_cluster::{ResourceKind, SessionWatcher, WatchEvent};
+use kubepulse_cluster::{ResourceKind, SessionHandle, WatchEvent};
 use tokio::{
     sync::{mpsc, watch},
     time::{self, Instant},
@@ -33,14 +33,14 @@ pub trait WatchSource: Send + Sync + 'static {
     fn watch(&self, kind: &ResourceKind, events: mpsc::Sender<WatchEvent>, stop: CancellationToken);
 }
 
-impl WatchSource for SessionWatcher {
+impl WatchSource for SessionHandle {
     fn watch(
         &self,
         kind: &ResourceKind,
         events: mpsc::Sender<WatchEvent>,
         stop: CancellationToken,
     ) {
-        SessionWatcher::watch(self, kind, events, stop);
+        SessionHandle::watch(self, kind, events, stop);
     }
 }
 

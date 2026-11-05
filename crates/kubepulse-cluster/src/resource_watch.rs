@@ -67,13 +67,13 @@ pub enum WatchEvent {
 
 /// Starts watches that belong to a session, so disconnecting stops them.
 #[derive(Clone)]
-pub struct SessionWatcher {
+pub struct SessionHandle {
     client: watch::Receiver<Option<Client>>,
     cancel: CancellationToken,
     tasks: TaskTracker,
 }
 
-impl SessionWatcher {
+impl SessionHandle {
     pub(crate) fn new(
         client: watch::Receiver<Option<Client>>,
         cancel: CancellationToken,
@@ -84,6 +84,13 @@ impl SessionWatcher {
             cancel,
             tasks,
         }
+    }
+
+    /// The session's client, once it has connected.
+    pub(crate) async fn client(&self) -> Option<Client> {
+        let mut client = self.client.clone();
+        let ready = client.wait_for(Option::is_some).await.ok()?;
+        ready.clone()
     }
 
     /// Sends events for `kind` until `stop` fires, the session ends, or
@@ -152,7 +159,7 @@ async fn accessible_namespaces(client: &Client) -> Vec<String> {
     }
 }
 
-fn api_resource(kind: &ResourceKind) -> ApiResource {
+pub(crate) fn api_resource(kind: &ResourceKind) -> ApiResource {
     let api_version = match kind.group.as_str() {
         "" => kind.version.clone(),
         group => format!("{group}/{}", kind.version),

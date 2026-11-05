@@ -102,7 +102,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Entity<ClusterTab> {
         let model = self.model.clone();
-        let tab = cx.new(|cx| ClusterTab::new(key, model, cx));
+        let tab = cx.new(|cx| ClusterTab::new(key, None, model, window, cx));
         let opened = tab.clone();
         self.dock.update(cx, |dock, cx| {
             if dock.is_empty(DockPlacement::Center, cx) {

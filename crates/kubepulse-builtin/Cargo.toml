@@ -6,4 +6,5 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+async-trait.workspace = true
 kubepulse-extension-api.workspace = true

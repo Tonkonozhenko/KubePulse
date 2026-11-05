@@ -60,13 +60,13 @@ Stop after this group if any target is missed, and revisit the design before sta
 
 ## 7. Resource browsing
 
-- [ ] 7.1 Implement the declarative UI renderer for all contract elements, including the unknown-element placeholder, and verify with UI tests for each element
-- [ ] 7.2 Implement the generic resource table with declarative columns, namespace selection, sorting, filtering, and stable selection, and verify with UI tests at 10k rows
-- [ ] 7.3 Implement printer columns for custom resources, and verify a fixture custom resource shows its declared columns
-- [ ] 7.4 Implement computed columns for visible rows only, and verify scrolling does not block on a deliberately slow extension
-- [ ] 7.5 Add built-in extensions for workload, network, config, storage, and access-control kinds, and verify each kind lists with its default columns
-- [ ] 7.6 Implement the detail view with events and owner navigation, and verify with a UI test on a Deployment-owned pod
-- [ ] 7.7 Implement hidden Secret values and deletion confirmation, and verify with UI tests covering a protected cluster
+- [x] 7.1 Implement the declarative UI renderer for all contract elements, including the unknown-element placeholder, and verify with UI tests for each element
+- [x] 7.2 Implement the generic resource table with declarative columns, namespace selection, sorting, filtering, and stable selection, and verify with UI tests at 10k rows
+- [x] 7.3 Implement printer columns for custom resources, and verify a fixture custom resource shows its declared columns
+- [x] 7.4 Implement computed columns for visible rows only, and verify scrolling does not block on a deliberately slow extension
+- [x] 7.5 Add built-in extensions for workload, network, config, storage, and access-control kinds, and verify each kind lists with its default columns
+- [x] 7.6 Implement the detail view with events and owner navigation, and verify with a UI test on a Deployment-owned pod
+- [x] 7.7 Implement hidden Secret values and deletion confirmation, and verify with UI tests covering a protected cluster
 - [ ] 7.8 Verify the memory limits and the 5-minute watch release with a 10-minute soak test on the reference machine
 
 ## 8. Command palette

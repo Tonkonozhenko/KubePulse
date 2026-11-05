@@ -1,0 +1,281 @@
+//! Fakes for UI tests: services with a real store behind them, and helpers to
+//! wait for the background threads.
+#![allow(dead_code)]
+
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
+
+use gpui_kit::VisualTestContext;
+use kubepulse_cluster::{
+    ClusterEntry, ConnectionState, EventRecord, ObjectError, ObjectTarget, RawObject, ResourceKind,
+    WatchEvent,
+};
+use kubepulse_extension_api::{ExtensionRequest, ExtensionResponse, KindRef, UiNode};
+use kubepulse_extension_host::{CallError, ContributionSet};
+use kubepulse_store::{ClusterStore, ColumnResolver, StoreOptions, View, ViewQuery, WatchSource};
+use kubepulse_ui::{
+    columns::columns_for,
+    runtime::ClusterStatus,
+    services::{ClusterServices, Reply},
+};
+use serde_json::Value;
+use tokio::{
+    runtime::{Builder, Runtime},
+    sync::{mpsc, watch},
+};
+use tokio_util::sync::CancellationToken;
+
+const WAIT: Duration = Duration::from_secs(30);
+
+/// Runs the UI until `condition` holds. Needs `allow_parking`, because the
+/// store answers from other threads.
+pub fn wait_until(
+    cx: &mut VisualTestContext,
+    what: &str,
+    mut condition: impl FnMut(&mut VisualTestContext) -> bool,
+) {
+    let started = Instant::now();
+    loop {
+        cx.run_until_parked();
+        if condition(cx) {
+            return;
+        }
+        assert!(started.elapsed() < WAIT, "timed out waiting for {what}");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+pub fn kind(group: &str, name: &str, plural: &str, namespaced: bool) -> ResourceKind {
+    ResourceKind {
+        group: group.to_owned(),
+        version: "v1".into(),
+        kind: name.to_owned(),
+        plural: plural.to_owned(),
+        namespaced,
+        verbs: vec!["get".into(), "list".into(), "watch".into()],
+        printer_columns: vec![],
+    }
+}
+
+pub fn connected(context: &str, resources: Vec<ResourceKind>) -> ClusterStatus {
+    ClusterStatus {
+        entry: ClusterEntry {
+            context: context.to_owned(),
+            cluster: Some(context.to_owned()),
+            server: Some(format!("https://{context}.example")),
+            user: None,
+            namespace: None,
+        },
+        state: ConnectionState::Connected,
+        active_work: vec![],
+        resources: Arc::new(resources),
+    }
+}
+
+/// An object as a watch delivers it.
+pub fn raw(name: &str, namespace: Option<&str>, data: Value) -> RawObject {
+    RawObject {
+        key: format!("uid-{name}"),
+        name: name.to_owned(),
+        namespace: namespace.map(str::to_owned),
+        labels: Default::default(),
+        owners: vec![],
+        created: Some("2026-01-01T00:00:00Z".into()),
+        data,
+    }
+}
+
+/// Lists fixed objects per kind, then stays open for live changes.
+#[derive(Default)]
+pub struct ScriptedSource {
+    objects: Mutex<HashMap<String, Vec<RawObject>>>,
+    live: Mutex<Vec<mpsc::Sender<WatchEvent>>>,
+}
+
+impl ScriptedSource {
+    pub fn with(self, kind: &str, objects: Vec<RawObject>) -> Self {
+        self.objects
+            .lock()
+            .unwrap()
+            .insert(kind.to_owned(), objects);
+        self
+    }
+
+    /// Sends a change to every open watch.
+    pub fn send(&self, event: WatchEvent) {
+        for watch in self.live.lock().unwrap().iter() {
+            watch.try_send(event.clone()).expect("the watch has room");
+        }
+    }
+}
+
+impl WatchSource for ScriptedSource {
+    fn watch(&self, kind: &ResourceKind, events: mpsc::Sender<WatchEvent>, _: CancellationToken) {
+        let objects = self
+            .objects
+            .lock()
+            .unwrap()
+            .get(&kind.kind)
+            .cloned()
+            .unwrap_or_default();
+        self.live.lock().unwrap().push(events.clone());
+        tokio::spawn(async move {
+            let _ = events.send(WatchEvent::Restarted { scope: None }).await;
+            for object in objects {
+                let scope = None;
+                let _ = events.send(WatchEvent::Listed { scope, object }).await;
+            }
+            let _ = events.send(WatchEvent::Synced { scope: None }).await;
+        });
+    }
+}
+
+/// The services a view sees, over a real store and a fixed set of objects.
+pub struct FakeServices {
+    runtime: Runtime,
+    store: Option<ClusterStore>,
+    contributions: Arc<ContributionSet>,
+    pub objects: Mutex<Vec<(ObjectTarget, Value)>>,
+    pub events: Mutex<Vec<EventRecord>>,
+    pub deleted: Mutex<Vec<ObjectTarget>>,
+    /// Why the next delete fails.
+    pub delete_failure: Mutex<Option<String>>,
+    pub requests: Mutex<Vec<(String, ExtensionRequest)>>,
+    pub tab_ui: Mutex<Option<UiNode>>,
+    /// Extension replies wait while this holds false.
+    gate: watch::Sender<bool>,
+}
+
+impl FakeServices {
+    /// Services for tests that open no views.
+    pub fn idle() -> Self {
+        Self::build(None, ContributionSet::default())
+    }
+
+    pub fn new(source: Arc<dyn WatchSource>, contributions: ContributionSet) -> Self {
+        Self::build(Some(source), contributions)
+    }
+
+    fn build(source: Option<Arc<dyn WatchSource>>, contributions: ContributionSet) -> Self {
+        let runtime = Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        let resolved = contributions.clone();
+        let columns: ColumnResolver = Arc::new(move |kind: &ResourceKind| {
+            columns_for(kind, &resolved)
+                .declared
+                .into_iter()
+                .map(|column| column.spec)
+                .collect()
+        });
+        let store = source.map(|source| {
+            let _runtime = runtime.enter();
+            ClusterStore::new(source, columns, StoreOptions::default())
+        });
+        Self {
+            runtime,
+            store,
+            contributions: Arc::new(contributions),
+            objects: Mutex::default(),
+            events: Mutex::default(),
+            deleted: Mutex::default(),
+            delete_failure: Mutex::default(),
+            requests: Mutex::default(),
+            tab_ui: Mutex::default(),
+            gate: watch::channel(true).0,
+        }
+    }
+
+    pub fn add_object(&self, kind: &ResourceKind, namespace: Option<&str>, object: Value) {
+        let target = ObjectTarget {
+            kind: kind.clone(),
+            namespace: namespace.map(str::to_owned),
+            name: object["metadata"]["name"]
+                .as_str()
+                .expect("a name")
+                .to_owned(),
+        };
+        self.objects.lock().unwrap().push((target, object));
+    }
+
+    /// Makes extensions stop answering until `release_extensions`.
+    pub fn stall_extensions(&self) {
+        self.gate.send_replace(false);
+    }
+
+    pub fn release_extensions(&self) {
+        self.gate.send_replace(true);
+    }
+}
+
+impl ClusterServices for FakeServices {
+    fn open_view(&self, _: &str, kind: &ResourceKind, query: ViewQuery) -> Option<View> {
+        let _runtime = self.runtime.enter();
+        self.store.as_ref().map(|store| store.view(kind, query))
+    }
+
+    fn get_object(&self, _: &str, target: ObjectTarget) -> Reply<Value> {
+        let found = self
+            .objects
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(candidate, _)| *candidate == target)
+            .map(|(_, object)| object.clone());
+        Box::pin(async move { found.ok_or_else(|| ObjectError::NotFound("not found".into())) })
+    }
+
+    fn events(&self, _: &str, _: Option<String>, _: String) -> Reply<Vec<EventRecord>> {
+        let events = self.events.lock().unwrap().clone();
+        Box::pin(async move { Ok(events) })
+    }
+
+    fn delete_object(&self, _: &str, target: ObjectTarget) -> Reply<()> {
+        self.deleted.lock().unwrap().push(target);
+        let failure = self.delete_failure.lock().unwrap().take();
+        Box::pin(async move { failure.map_or(Ok(()), |message| Err(ObjectError::Failed(message))) })
+    }
+
+    fn contributions(&self) -> Arc<ContributionSet> {
+        self.contributions.clone()
+    }
+
+    fn kind_opened(&self, _: KindRef) {}
+
+    fn extension(
+        &self,
+        id: &str,
+        request: ExtensionRequest,
+    ) -> Reply<ExtensionResponse, CallError> {
+        self.requests
+            .lock()
+            .unwrap()
+            .push((id.to_owned(), request.clone()));
+        let mut gate = self.gate.subscribe();
+        let ui = self.tab_ui.lock().unwrap().clone();
+        Box::pin(async move {
+            let _ = gate.wait_for(|open| *open).await;
+            match request {
+                ExtensionRequest::ComputeColumn { targets, .. } => Ok(ExtensionResponse::Cells {
+                    cells: targets
+                        .iter()
+                        .map(|target| format!("computed {}", target.name))
+                        .collect(),
+                }),
+                _ => ui.map_or_else(
+                    || {
+                        Err(CallError::Failed {
+                            message: "no interface".into(),
+                        })
+                    },
+                    |root| Ok(ExtensionResponse::Ui { root }),
+                ),
+            }
+        })
+    }
+}

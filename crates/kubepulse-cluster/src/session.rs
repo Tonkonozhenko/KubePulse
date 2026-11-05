@@ -1,11 +1,18 @@
 //! One connected cluster: its client, connection state, and task tree.
 //! Cancelling the tree stops everything the session owns.
 
-use std::{collections::BTreeSet, future::Future, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeSet, HashMap},
+    future::Future,
+    sync::Arc,
+    time::Duration,
+};
 
 use backon::{BackoffBuilder as _, ExponentialBuilder};
+use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use kube::{
-    Client, Config,
+    Api, Client, Config,
+    api::ListParams,
     config::{KubeConfigOptions, Kubeconfig},
     core::discovery::Scope,
     discovery::{ApiGroup, Discovery},
@@ -13,7 +20,7 @@ use kube::{
 use tokio::{sync::watch, time};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
-use crate::resource_watch::SessionWatcher;
+use crate::resource_watch::SessionHandle;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConnectionState {
@@ -39,6 +46,15 @@ pub struct ResourceKind {
     pub plural: String,
     pub namespaced: bool,
     pub verbs: Vec<String>,
+    /// Columns a custom resource definition declares.
+    pub printer_columns: Vec<PrinterColumn>,
+}
+
+/// One additional printer column from a custom resource definition.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PrinterColumn {
+    pub name: String,
+    pub path: String,
 }
 
 #[derive(Clone, Debug)]
@@ -169,9 +185,9 @@ impl ClusterSession {
         self.work.subscribe()
     }
 
-    /// A handle for starting resource watches in this session's tree.
-    pub fn watcher(&self) -> SessionWatcher {
-        SessionWatcher::new(self.client.clone(), self.cancel.clone(), self.tasks.clone())
+    /// A handle for watches and object requests in this session.
+    pub fn handle(&self) -> SessionHandle {
+        SessionHandle::new(self.client.clone(), self.cancel.clone(), self.tasks.clone())
     }
 
     /// Runs `task` in this session's tree. It stops when the session disconnects.
@@ -428,8 +444,47 @@ async fn discover(client: &Client) -> Result<Vec<ResourceKind>, kube::Error> {
                 plural: resource.plural,
                 namespaced: capabilities.scope == Scope::Namespaced,
                 verbs: capabilities.operations,
+                printer_columns: Vec::new(),
             });
         }
     }
-    Ok(kinds.into_iter().collect())
+    let columns = printer_columns(client).await;
+    Ok(kinds
+        .into_iter()
+        .map(|mut kind| {
+            let key = (
+                kind.group.clone(),
+                kind.plural.clone(),
+                kind.version.clone(),
+            );
+            kind.printer_columns = columns.get(&key).cloned().unwrap_or_default();
+            kind
+        })
+        .collect())
+}
+
+/// Printer columns by group, plural, and version. Reading definitions can be
+/// forbidden, and those kinds then simply show the default columns.
+async fn printer_columns(client: &Client) -> HashMap<(String, String, String), Vec<PrinterColumn>> {
+    let api: Api<CustomResourceDefinition> = Api::all(client.clone());
+    let Ok(definitions) = api.list(&ListParams::default()).await else {
+        return HashMap::new();
+    };
+    let mut columns = HashMap::new();
+    for definition in definitions {
+        let spec = definition.spec;
+        for version in spec.versions {
+            let declared = version.additional_printer_columns.unwrap_or_default();
+            let declared = declared
+                .into_iter()
+                .map(|column| PrinterColumn {
+                    name: column.name,
+                    path: column.json_path,
+                })
+                .collect();
+            let key = (spec.group.clone(), spec.names.plural.clone(), version.name);
+            columns.insert(key, declared);
+        }
+    }
+    columns
 }

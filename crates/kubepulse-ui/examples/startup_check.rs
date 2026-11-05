@@ -26,6 +26,7 @@ fn main() {
     run_with(RunOptions {
         config: Some(ConfigPaths::in_directory(&directory)),
         kubeconfig: Some(vec![kubeconfig]),
+        extensions: Vec::new(),
         exit_after_first_frame: Some(Box::new(move |elapsed| {
             println!("first frame after {elapsed:?}, limit {LIMIT:?}");
             let _ = fs::remove_dir_all(&cleanup);

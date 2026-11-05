@@ -1,3 +1,8 @@
+use kubepulse_ui::{RunOptions, run_with};
+
 fn main() {
-    kubepulse_ui::run();
+    run_with(RunOptions {
+        extensions: kubepulse_builtin::extensions(),
+        ..Default::default()
+    });
 }

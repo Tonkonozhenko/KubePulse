@@ -11,3 +11,9 @@ kubepulse-cluster.workspace = true
 kubepulse-extension-host.workspace = true
 kubepulse-store.workspace = true
 kubepulse-ui.workspace = true
+
+[dev-dependencies]
+kubepulse-extension-api.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true

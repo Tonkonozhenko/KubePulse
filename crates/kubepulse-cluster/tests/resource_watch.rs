@@ -2,9 +2,7 @@ mod support;
 
 use std::time::Duration;
 
-use kubepulse_cluster::{
-    ConnectionState, ResourceKind, SessionManager, SessionWatcher, WatchEvent,
-};
+use kubepulse_cluster::{ConnectionState, ResourceKind, SessionHandle, SessionManager, WatchEvent};
 use support::*;
 use tokio::{sync::mpsc, time};
 use tokio_util::sync::CancellationToken;
@@ -21,6 +19,7 @@ fn pods() -> ResourceKind {
         plural: "pods".into(),
         namespaced: true,
         verbs: vec!["list".into(), "watch".into()],
+        printer_columns: vec![],
     }
 }
 
@@ -87,7 +86,7 @@ async fn watch_pods(server: &MockServer, default_namespace: Option<&str>) -> Wat
     })
     .await;
 
-    let watcher: SessionWatcher = session.watcher();
+    let watcher: SessionHandle = session.handle();
     let (sender, events) = mpsc::channel(64);
     let stop = CancellationToken::new();
     watcher.watch(&pods(), sender, stop.clone());
@@ -308,4 +307,147 @@ async fn stopping_a_watch_closes_its_channel() {
     watch.stop.cancel();
     let closed = time::timeout(WAIT, async { while watch.events.recv().await.is_some() {} });
     closed.await.expect("the channel should close");
+}
+
+fn object_target(name: &str) -> kubepulse_cluster::ObjectTarget {
+    kubepulse_cluster::ObjectTarget {
+        kind: pods(),
+        namespace: Some("x".into()),
+        name: name.to_owned(),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn reads_an_object_with_its_metadata() {
+    let server = api_server().await;
+    get("/api/v1/namespaces/x/pods/one", json(&pod("one", "x")))
+        .mount(&server)
+        .await;
+
+    let dir = temp();
+    let list = kubeconfig(dir.path(), &[("a", &server.uri(), Auth::None)]);
+    let mut sessions = SessionManager::new(list_channel(list), fast_options());
+    sessions.connect("a").unwrap();
+    let handle = sessions.session("a").unwrap().handle();
+
+    let object = handle.get_object(&object_target("one")).await.unwrap();
+    assert_eq!(object["metadata"]["uid"], "uid-one");
+    assert_eq!(object["status"]["phase"], "Running");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn object_errors_separate_denied_from_missing() {
+    let server = api_server().await;
+    get("/api/v1/namespaces/x/pods/secret", denied())
+        .mount(&server)
+        .await;
+    get(
+        "/api/v1/namespaces/x/pods/gone",
+        ResponseTemplate::new(404).set_body_raw(
+            r#"{"kind":"Status","apiVersion":"v1","status":"Failure","message":"not found","reason":"NotFound","code":404}"#,
+            "application/json",
+        ),
+    )
+    .mount(&server)
+    .await;
+
+    let dir = temp();
+    let list = kubeconfig(dir.path(), &[("a", &server.uri(), Auth::None)]);
+    let mut sessions = SessionManager::new(list_channel(list), fast_options());
+    sessions.connect("a").unwrap();
+    let handle = sessions.session("a").unwrap().handle();
+
+    assert_eq!(
+        handle.get_object(&object_target("secret")).await,
+        Err(kubepulse_cluster::ObjectError::Denied(
+            "pods is forbidden".into()
+        ))
+    );
+    assert_eq!(
+        handle.get_object(&object_target("gone")).await,
+        Err(kubepulse_cluster::ObjectError::NotFound("not found".into()))
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn deletes_an_object() {
+    let server = api_server().await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/namespaces/x/pods/one"))
+        .respond_with(json(&pod("one", "x")))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let dir = temp();
+    let list = kubeconfig(dir.path(), &[("a", &server.uri(), Auth::None)]);
+    let mut sessions = SessionManager::new(list_channel(list), fast_options());
+    sessions.connect("a").unwrap();
+    let handle = sessions.session("a").unwrap().handle();
+    handle.delete_object(&object_target("one")).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn lists_events_for_one_object_newest_first() {
+    let server = api_server().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/namespaces/x/events"))
+        .and(query_param("fieldSelector", "involvedObject.uid=uid-one"))
+        .respond_with(json(
+            r#"{"apiVersion":"v1","kind":"EventList","metadata":{},"items":[
+            {"metadata":{"name":"a","namespace":"x"},"involvedObject":{},"type":"Normal","reason":"Pulled","message":"old","count":1,"lastTimestamp":"2026-01-01T00:00:00Z"},
+            {"metadata":{"name":"b","namespace":"x"},"involvedObject":{},"type":"Warning","reason":"BackOff","message":"new","count":4,"lastTimestamp":"2026-02-01T00:00:00Z"}]}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let dir = temp();
+    let list = kubeconfig(dir.path(), &[("a", &server.uri(), Auth::None)]);
+    let mut sessions = SessionManager::new(list_channel(list), fast_options());
+    sessions.connect("a").unwrap();
+    let handle = sessions.session("a").unwrap().handle();
+
+    let events = handle.events_for(Some("x"), "uid-one").await.unwrap();
+    assert_eq!(events[0].reason, "BackOff");
+    assert_eq!(events[0].count, 4);
+    assert_eq!(events[1].reason, "Pulled");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn discovery_attaches_printer_columns_from_definitions() {
+    let server = api_server().await;
+    get(
+        "/apis",
+        json(
+            r#"{"kind":"APIGroupList","apiVersion":"v1","groups":[{"name":"example.com",
+        "versions":[{"groupVersion":"example.com/v1","version":"v1"}],
+        "preferredVersion":{"groupVersion":"example.com/v1","version":"v1"}}]}"#,
+        ),
+    )
+    .mount(&server)
+    .await;
+    get("/apis/example.com/v1", json(r#"{"kind":"APIResourceList","apiVersion":"v1","groupVersion":"example.com/v1","resources":[
+        {"name":"widgets","singularName":"widget","namespaced":true,"kind":"Widget","verbs":["get","list","watch"]}]}"#)).mount(&server).await;
+    get("/apis/apiextensions.k8s.io/v1/customresourcedefinitions", json(r#"{"apiVersion":"apiextensions.k8s.io/v1","kind":"CustomResourceDefinitionList","metadata":{},"items":[
+        {"metadata":{"name":"widgets.example.com"},"spec":{"group":"example.com","scope":"Namespaced",
+         "names":{"kind":"Widget","plural":"widgets"},
+         "versions":[{"name":"v1","served":true,"storage":true,
+           "additionalPrinterColumns":[{"name":"Size","type":"string","jsonPath":".spec.size"}]}]}}]}"#)).mount(&server).await;
+
+    let dir = temp();
+    let list = kubeconfig(dir.path(), &[("a", &server.uri(), Auth::None)]);
+    let mut sessions = SessionManager::new(list_channel(list), fast_options());
+    sessions.connect("a").unwrap();
+    let mut resources = sessions.session("a").unwrap().subscribe_resources();
+    let kinds = time::timeout(
+        WAIT,
+        resources.wait_for(|kinds| kinds.iter().any(|k| k.kind == "Widget")),
+    )
+    .await
+    .expect("the kind should appear")
+    .unwrap()
+    .clone();
+    let widget = kinds.iter().find(|k| k.kind == "Widget").unwrap();
+    assert_eq!(widget.printer_columns[0].name, "Size");
+    assert_eq!(widget.printer_columns[0].path, ".spec.size");
 }

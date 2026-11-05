@@ -79,6 +79,9 @@ pub struct ResourceViewContribution {
     pub id: String,
     pub title: String,
     pub kind: KindRef,
+    /// The navigation group, such as `Workloads`.
+    #[serde(default)]
+    pub category: String,
 }
 
 /// Where a column's value comes from.
