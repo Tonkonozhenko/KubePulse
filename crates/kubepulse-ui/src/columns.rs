@@ -7,6 +7,7 @@ use kubepulse_cluster::ResourceKind;
 use kubepulse_extension_api::{ColumnSource, KindRef};
 use kubepulse_extension_host::ContributionSet;
 use kubepulse_store::ColumnSpec;
+use rust_i18n::t;
 
 #[derive(Clone, Debug)]
 pub struct ColumnDef {
@@ -78,7 +79,7 @@ pub fn columns_for(kind: &ResourceKind, contributions: &ContributionSet) -> Kind
     }
     columns.declared.extend(declared(
         "created",
-        "Created",
+        &t!("column.created"),
         ".metadata.creationTimestamp",
     ));
     columns
@@ -94,12 +95,15 @@ pub struct NavigationEntry {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NavigationSection {
     pub name: String,
+    pub title: String,
     pub kinds: Vec<NavigationEntry>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NavigationGroup {
+    /// As declared, so it stays the same in every language.
     pub name: String,
+    pub title: String,
     pub kinds: Vec<NavigationEntry>,
     pub sections: Vec<NavigationSection>,
 }
@@ -112,6 +116,9 @@ pub fn kind_title(kind: &KindRef, contributions: &ContributionSet) -> String {
         .find(|view| view.kind == *kind)
         .map_or_else(|| kind.kind.clone(), |view| view.title.clone())
 }
+
+const OTHER_RESOURCES: &str = "Other resources";
+const CORE_GROUP: &str = "core";
 
 /// The kinds this cluster serves, by category. Anything no extension claims is
 /// still listed, by API group, so every served kind can be browsed.
@@ -135,6 +142,11 @@ pub fn navigation(
                 Some(group) => group.kinds.push(entry),
                 None => groups.push(NavigationGroup {
                     name: view.category.clone(),
+                    title: contributions
+                        .category_titles
+                        .get(&view.category)
+                        .unwrap_or(&view.category)
+                        .clone(),
                     kinds: vec![entry],
                     sections: Vec::new(),
                 }),
@@ -148,26 +160,29 @@ pub fn navigation(
         .filter(|kind| kind.verbs.iter().any(|verb| verb == "list"))
     {
         let name = match kind.group.as_str() {
-            "" => "core",
-            group => group,
+            "" => CORE_GROUP.to_owned(),
+            group => group.to_owned(),
         };
-        sections
-            .entry(name.to_owned())
-            .or_default()
-            .push(NavigationEntry {
-                title: kind.plural.clone(),
-                kind: kind.clone(),
-            });
+        sections.entry(name).or_default().push(NavigationEntry {
+            title: kind.plural.clone(),
+            kind: kind.clone(),
+        });
     }
     if !sections.is_empty() {
         groups.push(NavigationGroup {
-            name: "Other resources".to_owned(),
+            name: OTHER_RESOURCES.to_owned(),
+            title: t!("sidebar.other_resources").to_string(),
             kinds: Vec::new(),
             sections: sections
                 .into_iter()
                 .map(|(name, mut kinds)| {
                     kinds.sort_by(|a, b| a.title.cmp(&b.title));
-                    NavigationSection { name, kinds }
+                    let title = if name == CORE_GROUP {
+                        t!("sidebar.core_group").to_string()
+                    } else {
+                        name.clone()
+                    };
+                    NavigationSection { name, title, kinds }
                 })
                 .collect(),
         });
@@ -198,6 +213,7 @@ mod tests {
         ContributionSet {
             version: 1,
             extensions: vec![("e".to_owned(), contributions)],
+            ..ContributionSet::default()
         }
     }
 

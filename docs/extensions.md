@@ -52,6 +52,7 @@ impl Extension for PodInfo {
                 ..Default::default()
             },
             permissions: vec![Permission { kind: pods(), verbs: vec![Verb::Get] }],
+            translations: Default::default(),
         }
     }
 
@@ -92,6 +93,7 @@ The host reads the manifest without running your code, so an inactive extension 
 | `activation` | What wakes the extension. Without a trigger, it activates on its first request. |
 | `contributions` | Everything it adds. |
 | `permissions` | The verbs it needs, per resource kind. |
+| `translations` | Optional. Translations of your titles and categories, by language. See [Translations](#translations). |
 
 ## Contribution points
 
@@ -122,6 +124,22 @@ You return a tree of `UiNode` elements, and the host renders it with its own com
 Logs, terminals, and editors are host-owned surfaces. Call `HostOperation::OpenSurface`, then place the returned reference in a `UiNode::Surface`. Their data stays in the host.
 
 If a host does not know an element, that region shows a placeholder error and the rest of the interface still works.
+
+## Translations
+
+`translations` maps a language tag to a map from your declared text to its translation:
+
+```rust
+use std::collections::BTreeMap;
+
+let german = BTreeMap::from([("Say hello".to_owned(), "Hallo sagen".to_owned())]);
+let translations = BTreeMap::from([("de".to_owned(), german)]);
+# let _: BTreeMap<String, BTreeMap<String, String>> = translations;
+```
+
+The host uses these for contribution titles and categories, and shows the declared text for anything without a translation. It matches the interface language by exact tag, then primary language, so `de` also serves `de-AT`. Views stay grouped by their declared category, so two extensions that share a category stay in one group even if only one translates it.
+
+The host never changes the text inside your declarative interfaces, because that text can hold cluster data. To localize it, ask for the language with `HostOperation::GetLanguage`, which needs no permission and returns `HostResponse::Language`, then write your text in that language. The language stays the same until the application restarts.
 
 ## Reaching clusters
 

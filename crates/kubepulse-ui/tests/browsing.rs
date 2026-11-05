@@ -20,9 +20,11 @@ use kubepulse_ui::{
     cluster_model::{ClusterModel, SharedClusterModel},
     cluster_tab::ClusterTab,
     identity::{ClusterKey, IdentityStore},
+    preferences::Preferences,
     resource_browser::ResourceBrowser,
     runtime::{ClusterState, ClusterStatus},
     services::SharedServices,
+    settings_tab,
     shell_state::{SharedShellState, ShellState},
     workspace::Workspace,
 };
@@ -78,6 +80,7 @@ fn harness(
             shell
         });
         cx.set_global(SharedShellState(shell.clone()));
+        settings_tab::init(Preferences::default(), None, cx);
         (model, shell)
     });
     let shared = model.clone();
@@ -215,6 +218,7 @@ fn contributed(columns: Vec<ColumnContribution>) -> ContributionSet {
                 ..Default::default()
             },
         )],
+        ..ContributionSet::default()
     }
 }
 
@@ -808,6 +812,7 @@ fn a_detail_tab_form_reaches_its_extension(cx: &mut TestAppContext) {
                 ..Default::default()
             },
         )],
+        ..ContributionSet::default()
     };
     let source = Arc::new(ScriptedSource::default());
     let services = Arc::new(FakeServices::new(source, contributions));

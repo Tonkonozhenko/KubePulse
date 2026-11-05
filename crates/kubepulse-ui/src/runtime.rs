@@ -193,6 +193,7 @@ impl HostBackend for ClusterBackend {
             HostOperation::OpenSurface { .. } => Err(HostError::Failed {
                 message: "surfaces are not available yet".into(),
             }),
+            HostOperation::GetLanguage => unreachable!("the capability answers this"),
             HostOperation::Notify { message } => {
                 tracing::info!(%message, "extension notification");
                 Ok(HostResponse::Done)

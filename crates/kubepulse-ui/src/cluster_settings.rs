@@ -8,6 +8,8 @@ use gpui_kit::{
     *,
 };
 
+use rust_i18n::t;
+
 use crate::{
     cluster_model::ClusterModel,
     identity::{ClusterKey, PALETTE},
@@ -29,7 +31,8 @@ impl ClusterSettingsForm {
     ) -> Self {
         let current = model.read(cx).settings(&key).name.unwrap_or_default();
         let name = cx.new(|cx| {
-            let mut input = InputState::new(window, cx).placeholder("Display name");
+            let mut input =
+                InputState::new(window, cx).placeholder(t!("cluster.display_name").to_string());
             input.set_value(current, window, cx);
             input
         });
@@ -79,11 +82,14 @@ impl Render for ClusterSettingsForm {
             .child(div().flex().gap_1().children(swatches))
             .child(
                 Button::new("toggle-protected")
-                    .label(if protected {
-                        "Remove protection"
-                    } else {
-                        "Protect"
-                    })
+                    .label(
+                        if protected {
+                            t!("cluster.remove_protection")
+                        } else {
+                            t!("cluster.protect")
+                        }
+                        .to_string(),
+                    )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         let key = this.key.clone();
                         this.model.update(cx, |model, cx| {

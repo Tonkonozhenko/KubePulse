@@ -40,6 +40,7 @@ fn manifest() -> Manifest {
         name: "Everything".into(),
         version: "1.2.3".into(),
         contract: CONTRACT_VERSION,
+        translations: Default::default(),
         activation: vec![
             ActivationTrigger::Startup,
             ActivationTrigger::Kind { kind: kind() },
@@ -451,4 +452,20 @@ fn every_cluster_operation_names_its_permission() {
         .required_permission(),
         None
     );
+}
+
+#[test]
+fn a_manifest_without_translations_still_parses() {
+    let mut value = serde_json::to_value(manifest()).unwrap();
+    value.as_object_mut().unwrap().remove("translations");
+    value["contract"] = serde_json::json!({ "major": 1, "minor": 0 });
+    let parsed: Manifest = serde_json::from_value(value).unwrap();
+    assert!(parsed.translations.is_empty());
+    assert!(CONTRACT_VERSION.supports(parsed.contract));
+}
+
+#[test]
+fn the_language_messages_round_trip() {
+    round_trip(&HostOperation::GetLanguage);
+    round_trip(&HostResponse::Language { tag: "de".into() });
 }

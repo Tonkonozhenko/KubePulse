@@ -1,7 +1,7 @@
 //! Built-in views, tabs, and actions, written against the extension contract.
 //! Each one is declarative, so tables stay fast and no code runs per row.
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
 use kubepulse_extension_api::{
@@ -9,6 +9,22 @@ use kubepulse_extension_api::{
     ExtensionRequest, ExtensionResponse, Host, KindRef, Manifest, Permission,
     ResourceViewContribution, Verb,
 };
+
+/// One file per language, mapping declared text to its translation.
+const CATALOGS: [(&str, &str); 2] = [
+    ("en", include_str!("../locales/en.json")),
+    ("en-XA", include_str!("../locales/en-XA.json")),
+];
+
+fn translations() -> BTreeMap<String, BTreeMap<String, String>> {
+    CATALOGS
+        .iter()
+        .map(|(tag, text)| {
+            let catalog = serde_json::from_str(text).expect("built-in catalogs are valid");
+            ((*tag).to_owned(), catalog)
+        })
+        .collect()
+}
 
 struct KindView {
     group: &'static str,
@@ -251,6 +267,7 @@ impl Extension for KindGroup {
             name: self.name.to_owned(),
             version: env!("CARGO_PKG_VERSION").to_owned(),
             contract: CONTRACT_VERSION,
+            translations: translations(),
             activation: Vec::new(),
             contributions,
             permissions,
@@ -284,6 +301,26 @@ mod tests {
             .collect()
     }
 
+    #[test]
+    fn every_catalog_covers_every_title_and_category() {
+        let mut missing = std::collections::BTreeSet::new();
+        for manifest in manifests() {
+            let contributions = &manifest.contributions;
+            let declared = contributions
+                .resource_views
+                .iter()
+                .flat_map(|view| [&view.title, &view.category])
+                .chain(contributions.columns.iter().map(|column| &column.title));
+            for text in declared {
+                for (tag, catalog) in &manifest.translations {
+                    if !catalog.contains_key(text) {
+                        missing.insert((tag.clone(), text.clone()));
+                    }
+                }
+            }
+        }
+        assert!(missing.is_empty(), "missing translations: {missing:?}");
+    }
     #[test]
     fn covers_every_category_from_the_spec() {
         let names: Vec<String> = manifests().into_iter().map(|m| m.name).collect();

@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use gpui_kit::*;
 use kubepulse_cluster::ConnectionState;
+use rust_i18n::t;
 use tokio::sync::{mpsc, watch};
 
 use crate::{
@@ -116,15 +117,16 @@ impl ClusterModel {
     }
 }
 
-pub fn state_label(state: &ConnectionState) -> &'static str {
-    match state {
-        ConnectionState::Disconnected => "Disconnected",
-        ConnectionState::Connecting => "Connecting",
-        ConnectionState::Authenticating => "Authenticating",
-        ConnectionState::Connected => "Connected",
-        ConnectionState::Degraded { .. } => "Degraded",
-        ConnectionState::Failed { .. } => "Failed",
-    }
+pub fn state_label(state: &ConnectionState) -> String {
+    let label = match state {
+        ConnectionState::Disconnected => t!("state.disconnected"),
+        ConnectionState::Connecting => t!("state.connecting"),
+        ConnectionState::Authenticating => t!("state.authenticating"),
+        ConnectionState::Connected => t!("state.connected"),
+        ConnectionState::Degraded { .. } => t!("state.degraded"),
+        ConnectionState::Failed { .. } => t!("state.failed"),
+    };
+    label.to_string()
 }
 
 /// Whether a connect command would start an attempt.

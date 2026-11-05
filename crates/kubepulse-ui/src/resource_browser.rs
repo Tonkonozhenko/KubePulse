@@ -21,6 +21,8 @@ use kubepulse_store::{
     Cell, LabelSelector, Row, Snapshot, SortDirection, SortKey, View, ViewQuery,
 };
 
+use rust_i18n::t;
+
 use crate::{
     columns::{ComputedColumn, KindColumns, kind_ref},
     services::ClusterServices,
@@ -206,9 +208,10 @@ impl ResourceBrowser {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut table_columns = vec![Column::new("name", "Name").sortable()];
+        let mut table_columns = vec![Column::new("name", t!("column.name").to_string()).sortable()];
         if kind.namespaced {
-            table_columns.push(Column::new("namespace", "Namespace").sortable());
+            table_columns
+                .push(Column::new("namespace", t!("column.namespace").to_string()).sortable());
         }
         for column in &columns.declared {
             table_columns
@@ -228,10 +231,14 @@ impl ResourceBrowser {
         };
         let table = cx.new(|cx| TableState::new(delegate, window, cx));
 
-        let filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter"));
-        let labels = cx.new(|cx| InputState::new(window, cx).placeholder("Label selector"));
-        let namespaces =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Namespaces, comma separated"));
+        let filter =
+            cx.new(|cx| InputState::new(window, cx).placeholder(t!("browser.filter").to_string()));
+        let labels = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(t!("browser.label_selector").to_string())
+        });
+        let namespaces = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(t!("browser.namespaces").to_string())
+        });
         let subscriptions = vec![
             cx.subscribe(&table, Self::on_table_event),
             cx.subscribe(&filter, |this, input, event: &InputEvent, cx| {
@@ -327,7 +334,10 @@ impl ResourceBrowser {
                     self.query.labels = Some(selector);
                     self.label_error = None;
                 }
-                Err(error) => self.label_error = Some(error.to_string()),
+                Err(error) => {
+                    self.label_error =
+                        Some(t!("browser.invalid_selector", error = error).to_string());
+                }
             }
         }
         self.apply_query(cx);
@@ -452,7 +462,7 @@ impl ResourceBrowser {
                         // Failures show in the cell rather than retrying forever.
                         other => {
                             tracing::warn!(column = %column.id, ?other, "computed column failed");
-                            vec!["unavailable".to_owned(); wanted.len()]
+                            vec![t!("browser.unavailable").to_string(); wanted.len()]
                         }
                     };
                     this.table.update(cx, |table, cx| {
@@ -486,11 +496,16 @@ impl Render for ResourceBrowser {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let snapshot = &self.snapshot;
         let summary = if !snapshot.synced {
-            "Loading…".to_owned()
+            t!("common.loading").to_string()
         } else if snapshot.rows.len() == snapshot.total {
-            format!("{} objects", snapshot.total)
+            t!("browser.objects", count = snapshot.total).to_string()
         } else {
-            format!("{} of {} objects", snapshot.rows.len(), snapshot.total)
+            t!(
+                "browser.objects_filtered",
+                shown = snapshot.rows.len(),
+                total = snapshot.total
+            )
+            .to_string()
         };
         let denied = snapshot.denied.clone();
         let muted = cx.theme().muted_foreground;
@@ -526,7 +541,7 @@ impl Render for ResourceBrowser {
             .children(denied.map(|reason| {
                 div()
                     .id("access-denied")
-                    .child(format!("Access denied: {reason}"))
+                    .child(t!("browser.access_denied", reason = reason).to_string())
                     .test_support()
             }))
             .child(div().flex_1().w_full().child(DataTable::new(&self.table)))

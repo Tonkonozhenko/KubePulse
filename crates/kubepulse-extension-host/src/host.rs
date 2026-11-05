@@ -5,6 +5,7 @@
 //! or another extension. Real memory isolation waits for a sandboxed loader.
 
 use std::{
+    collections::BTreeMap,
     future::Future,
     sync::{
         Arc, Mutex,
@@ -15,7 +16,7 @@ use std::{
 
 use kubepulse_extension_api::{
     ActivationTrigger, CONTRACT_VERSION, ContractVersion, Contributions, Extension, ExtensionError,
-    ExtensionRequest, ExtensionResponse, Host, Manifest,
+    ExtensionRequest, ExtensionResponse, Host, Manifest, best_language,
 };
 use tokio::{sync::watch, task::JoinSet, time};
 
@@ -24,6 +25,8 @@ use crate::capability::{Capability, HostBackend};
 #[derive(Clone, Debug)]
 pub struct HostOptions {
     pub contract: ContractVersion,
+    /// The interface language, as a language tag.
+    pub language: String,
     pub call_timeout: Duration,
     pub activation_timeout: Duration,
     /// Consecutive failures before an extension is disabled.
@@ -34,6 +37,7 @@ impl Default for HostOptions {
     fn default() -> Self {
         Self {
             contract: CONTRACT_VERSION,
+            language: "en".to_owned(),
             call_timeout: Duration::from_secs(5),
             activation_timeout: Duration::from_secs(10),
             failure_limit: 3,
@@ -92,7 +96,62 @@ impl std::error::Error for CallError {}
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ContributionSet {
     pub version: u64,
+    /// Titles and categories are already in the interface language, except
+    /// `category`, which stays as declared so that views group by it.
     pub extensions: Vec<(String, Contributions)>,
+    /// Display names of declared categories, for those with a translation.
+    pub category_titles: BTreeMap<String, String>,
+}
+
+fn translations_for<'a>(
+    manifest: &'a Manifest,
+    language: &str,
+) -> Option<&'a BTreeMap<String, String>> {
+    let tag = best_language(language, manifest.translations.keys().map(String::as_str))?;
+    manifest.translations.get(tag)
+}
+
+/// Replaces every title that has a translation. A category stays as declared,
+/// so that views from different extensions still group together.
+fn localized(
+    contributions: &Contributions,
+    translations: Option<&BTreeMap<String, String>>,
+) -> Contributions {
+    let mut localized = contributions.clone();
+    let Some(translations) = translations else {
+        return localized;
+    };
+    let titles = localized
+        .resource_views
+        .iter_mut()
+        .map(|view| &mut view.title)
+        .chain(localized.columns.iter_mut().map(|column| &mut column.title))
+        .chain(localized.detail_tabs.iter_mut().map(|tab| &mut tab.title))
+        .chain(localized.actions.iter_mut().map(|action| &mut action.title))
+        .chain(
+            localized
+                .commands
+                .iter_mut()
+                .map(|command| &mut command.title),
+        )
+        .chain(
+            localized
+                .navigation
+                .iter_mut()
+                .map(|entry| &mut entry.title),
+        )
+        .chain(
+            localized
+                .settings
+                .iter_mut()
+                .map(|setting| &mut setting.title),
+        );
+    for title in titles {
+        if let Some(translation) = translations.get(title.as_str()) {
+            title.clone_from(translation);
+        }
+    }
+    localized
 }
 
 struct Entry {
@@ -148,6 +207,7 @@ impl ExtensionHost {
                     manifest.permissions.clone(),
                     self.inner.backend.clone(),
                     refused.clone(),
+                    self.inner.options.language.clone(),
                 ));
                 entries.push(Entry {
                     manifest,
@@ -349,22 +409,29 @@ impl ExtensionHost {
     }
 
     fn publish(&self) {
-        let extensions: Vec<(String, Contributions)> = self
-            .entries()
-            .iter()
-            .filter(|entry| {
-                matches!(
-                    entry.status,
-                    ExtensionStatus::Inactive | ExtensionStatus::Active
-                )
-            })
-            .map(|entry| {
-                (
-                    entry.manifest.id.clone(),
-                    entry.manifest.contributions.clone(),
-                )
-            })
-            .collect();
+        let language = &self.inner.options.language;
+        let mut extensions = Vec::new();
+        let mut category_titles = BTreeMap::new();
+        for entry in self.entries().iter().filter(|entry| {
+            matches!(
+                entry.status,
+                ExtensionStatus::Inactive | ExtensionStatus::Active
+            )
+        }) {
+            let manifest = &entry.manifest;
+            let translations = translations_for(manifest, language);
+            for view in &manifest.contributions.resource_views {
+                if let Some(title) = translations.and_then(|t| t.get(&view.category)) {
+                    category_titles
+                        .entry(view.category.clone())
+                        .or_insert_with(|| title.clone());
+                }
+            }
+            extensions.push((
+                manifest.id.clone(),
+                localized(&manifest.contributions, translations),
+            ));
+        }
         self.inner.contributions.send_if_modified(|current| {
             let changed = current.extensions != extensions;
             if changed {
@@ -372,6 +439,7 @@ impl ExtensionHost {
                 *current = Arc::new(ContributionSet {
                     version,
                     extensions,
+                    category_titles,
                 });
             }
             changed

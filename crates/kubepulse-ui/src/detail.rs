@@ -20,6 +20,8 @@ use kubepulse_extension_api::{
 };
 use serde_json::Value;
 
+use rust_i18n::t;
+
 use crate::{
     cluster_model::ClusterModel,
     columns::kind_ref,
@@ -54,7 +56,7 @@ fn decode(value: &str) -> String {
         .decode(value)
         .ok()
         .and_then(|bytes| String::from_utf8(bytes).ok())
-        .unwrap_or_else(|| "(binary value)".to_owned())
+        .unwrap_or_else(|| t!("detail.binary_value").to_string())
 }
 
 fn owner_target(
@@ -122,8 +124,8 @@ impl DetailView {
             .filter(|(_, tab)| tab.kind == wanted)
             .collect();
 
-        let typed_name =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Type the object's name"));
+        let typed_name = cx
+            .new(|cx| InputState::new(window, cx).placeholder(t!("detail.type_name").to_string()));
         let subscription = cx.subscribe(&typed_name, |this, input, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
                 let text = input.read(cx).value().to_string();
@@ -146,7 +148,7 @@ impl DetailView {
             let _ = this.update(cx, |this, cx| {
                 this.object = match result {
                     Ok(object) => Load::Loaded(object),
-                    Err(error) => Load::Failed(error.to_string()),
+                    Err(error) => Load::Failed(t!("detail.load_failed", error = error).to_string()),
                 };
                 cx.notify();
             });
@@ -243,7 +245,10 @@ impl DetailView {
                         window.close_dialog(cx);
                         cx.emit(DetailEvent::Deleted);
                     }
-                    Err(error) => this.delete_error = Some(error.to_string()),
+                    Err(error) => {
+                        this.delete_error =
+                            Some(t!("detail.delete_failed", error = error).to_string());
+                    }
                 }
                 cx.notify();
             });
@@ -273,10 +278,11 @@ impl DetailView {
                     Ok(ExtensionResponse::Ui { root }) => {
                         this.show_extension_ui(extension, root, window, cx);
                     }
-                    Ok(_) => {
-                        this.extension_error = Some("The extension returned no interface.".into())
+                    Ok(_) => this.extension_error = Some(t!("detail.extension_no_ui").to_string()),
+                    Err(error) => {
+                        this.extension_error =
+                            Some(t!("detail.extension_failed", error = error).to_string());
                     }
-                    Err(error) => this.extension_error = Some(error.to_string()),
                 }
                 cx.notify();
             });
@@ -325,7 +331,10 @@ impl DetailView {
                         this.show_extension_ui(extension, root, window, cx);
                     }
                     Ok(_) => this.extension_error = None,
-                    Err(error) => this.extension_error = Some(error.to_string()),
+                    Err(error) => {
+                        this.extension_error =
+                            Some(t!("detail.extension_failed", error = error).to_string());
+                    }
                 }
                 cx.notify();
             });
@@ -375,7 +384,14 @@ impl DetailView {
                     )
                     .child(
                         Button::new(format!("reveal-{key}"))
-                            .label(if shown { "Hide" } else { "Reveal" })
+                            .label(
+                                if shown {
+                                    t!("detail.hide")
+                                } else {
+                                    t!("detail.reveal")
+                                }
+                                .to_string(),
+                            )
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if !this.revealed.remove(&toggle) {
                                     this.revealed.insert(toggle.clone());
@@ -411,7 +427,7 @@ impl DetailView {
             match view.upgrade() {
                 Some(view) => view.read(cx).delete_dialog(dialog, view.downgrade(), cx),
                 // The cluster disconnected behind the dialog.
-                None => dialog.title("This object is no longer open."),
+                None => dialog.title(t!("detail.gone").to_string()),
             }
         });
     }
@@ -422,20 +438,24 @@ impl DetailView {
             .target
             .namespace
             .clone()
-            .unwrap_or_else(|| "(cluster-wide)".to_owned());
+            .unwrap_or_else(|| t!("detail.cluster_wide").to_string());
         let needs_name = identity.protected;
         let confirm = ((!needs_name || self.name_matches) && !self.deleting).then(|| {
             Button::new("delete-confirm")
-                .label("Delete")
+                .label(t!("detail.delete").to_string())
                 .on_click(move |_, window, cx| {
                     let _ = view.update(cx, |this, cx| this.delete(window, cx));
                 })
         });
         dialog
-            .title(format!(
-                "Delete {} {}?",
-                self.target.kind.kind, self.target.name
-            ))
+            .title(
+                t!(
+                    "detail.delete_title",
+                    kind = self.target.kind.kind,
+                    name = self.target.name
+                )
+                .to_string(),
+            )
             .overlay_closable(false)
             // Enter never deletes, so deleting always takes a deliberate click.
             .on_ok(|_, _, _| false)
@@ -448,10 +468,10 @@ impl DetailView {
                     .child(
                         div()
                             .text_color(rgb(identity.color))
-                            .child(format!("Cluster: {}", identity.name)),
+                            .child(t!("detail.cluster", name = identity.name).to_string()),
                     )
-                    .child(format!("Namespace: {namespace}"))
-                    .children(needs_name.then(|| "This cluster is protected.".to_owned()))
+                    .child(t!("detail.namespace_line", namespace = namespace).to_string())
+                    .children(needs_name.then(|| t!("detail.protected").to_string()))
                     .children(needs_name.then(|| Input::new(&self.typed_name)))
                     .children(
                         self.delete_error
@@ -467,7 +487,7 @@ impl DetailView {
                     .gap_2()
                     .child(
                         Button::new("delete-cancel")
-                            .label("Cancel")
+                            .label(t!("common.cancel").to_string())
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     )
                     .children(confirm),
@@ -488,7 +508,7 @@ impl Render for DetailView {
             .child(format!("{} {}", self.target.kind.kind, self.target.name));
 
         let object = match &self.object {
-            Load::Loading => return root.child("Loading…").test_support(),
+            Load::Loading => return root.child(t!("common.loading").to_string()).test_support(),
             Load::Failed(message) => {
                 return root
                     .child(
@@ -507,10 +527,22 @@ impl Render for DetailView {
         let phase = object["status"]["phase"].as_str().map(str::to_owned);
         let list = DescriptionList::new()
             .columns(1)
-            .item("Namespace", text(&metadata["namespace"]), 1)
-            .item("Created", text(&metadata["creationTimestamp"]), 1)
-            .item("UID", text(&metadata["uid"]), 1)
-            .item("Status", phase.unwrap_or_else(|| "-".to_owned()), 1);
+            .item(
+                t!("column.namespace").to_string(),
+                text(&metadata["namespace"]),
+                1,
+            )
+            .item(
+                t!("column.created").to_string(),
+                text(&metadata["creationTimestamp"]),
+                1,
+            )
+            .item(t!("detail.uid").to_string(), text(&metadata["uid"]), 1)
+            .item(
+                t!("detail.status").to_string(),
+                phase.unwrap_or_else(|| "-".to_owned()),
+                1,
+            );
 
         let labels: Vec<String> = metadata["labels"]
             .as_object()
@@ -545,10 +577,16 @@ impl Render for DetailView {
             .events
             .iter()
             .map(|event| {
-                div().child(format!(
-                    "{} {} (x{}): {}",
-                    event.kind, event.reason, event.count, event.message
-                ))
+                div().child(
+                    t!(
+                        "detail.event",
+                        kind = event.kind,
+                        reason = event.reason,
+                        count = event.count,
+                        message = event.message
+                    )
+                    .to_string(),
+                )
             })
             .collect();
 
@@ -572,14 +610,22 @@ impl Render for DetailView {
                 div()
                     .flex()
                     .flex_col()
-                    .child(div().text_color(muted).child("Labels"))
+                    .child(
+                        div()
+                            .text_color(muted)
+                            .child(t!("detail.labels").to_string()),
+                    )
                     .children(labels.into_iter().map(|label| div().child(label)))
             }))
             .children((!conditions.is_empty()).then(|| {
                 div()
                     .flex()
                     .flex_col()
-                    .child(div().text_color(muted).child("Conditions"))
+                    .child(
+                        div()
+                            .text_color(muted)
+                            .child(t!("detail.conditions").to_string()),
+                    )
                     .children(
                         conditions
                             .into_iter()
@@ -592,7 +638,11 @@ impl Render for DetailView {
                     .flex_col()
                     .items_start()
                     .gap_1()
-                    .child(div().text_color(muted).child("Owners"))
+                    .child(
+                        div()
+                            .text_color(muted)
+                            .child(t!("detail.owners").to_string()),
+                    )
                     .children(owner_rows)
             }))
             .children(secret)
@@ -601,12 +651,16 @@ impl Render for DetailView {
                     .id("detail-events")
                     .flex()
                     .flex_col()
-                    .child(div().text_color(muted).child("Events"))
+                    .child(
+                        div()
+                            .text_color(muted)
+                            .child(t!("detail.events").to_string()),
+                    )
                     .children(events)
                     .children(self.events_error.clone().map(|error| {
                         div()
                             .id("events-error")
-                            .child(format!("Could not read events: {error}"))
+                            .child(t!("detail.events_failed", error = error).to_string())
                             .test_support()
                     }))
                     .test_support(),
@@ -620,7 +674,7 @@ impl Render for DetailView {
             )
             .child(
                 Button::new("delete-object")
-                    .label("Delete")
+                    .label(t!("detail.delete").to_string())
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.open_delete_dialog(window, cx);
                     })),

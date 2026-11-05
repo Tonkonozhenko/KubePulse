@@ -1,4 +1,5 @@
-//! Local files: layout and cluster display settings. No secrets are stored.
+//! Local files: layout, cluster display settings, and preferences. No secrets
+//! are stored.
 
 use std::{
     fs, io,
@@ -9,6 +10,8 @@ use std::{
 pub struct ConfigPaths {
     pub workspace: PathBuf,
     pub clusters: PathBuf,
+    pub preferences: PathBuf,
+    pub themes: PathBuf,
 }
 
 impl ConfigPaths {
@@ -16,6 +19,8 @@ impl ConfigPaths {
         Self {
             workspace: directory.join("workspace.json"),
             clusters: directory.join("clusters.json"),
+            preferences: directory.join("settings.json"),
+            themes: directory.join("themes"),
         }
     }
 

@@ -15,12 +15,14 @@ use gpui_kit::{
     *,
 };
 use kubepulse_cluster::ConnectionState;
+use rust_i18n::t;
 
 use crate::{
     cluster_model::{ClusterModel, can_connect, is_live, state_label},
     cluster_settings::ClusterSettingsForm,
     identity::{ClusterIdentity, ClusterKey},
     runtime::ClusterStatus,
+    settings_tab::OpenSettings,
     shell_state::{SharedShellState, ShellState},
 };
 
@@ -73,7 +75,7 @@ pub fn tooltip_text(identity: &ClusterIdentity, context: &str, state: &Connectio
         ConnectionState::Failed { reason } | ConnectionState::Degraded { reason } => {
             format!("{label}: {reason}")
         }
-        _ => label.to_owned(),
+        _ => label,
     };
     format!("{}\n{context}\n{state}", identity.name)
 }
@@ -115,7 +117,8 @@ impl ClusterSearch {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search clusters"));
+        let input =
+            cx.new(|cx| InputState::new(window, cx).placeholder(t!("rail.search").to_string()));
         let subscription = cx.subscribe(&input, |this, input, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
                 this.query = input.read(cx).value().to_string();
@@ -286,14 +289,14 @@ impl ClusterRail {
             let confirm_context = context.clone();
             let confirm_model = model.clone();
             dialog
-                .title(format!("Disconnect {context}?"))
+                .title(t!("rail.disconnect_title", context = context).to_string())
                 .child(
                     div()
                         .id("disconnect-warning")
                         .flex()
                         .flex_col()
                         .gap_1()
-                        .child("Disconnecting stops:")
+                        .child(t!("rail.disconnect_warning").to_string())
                         .children(work.iter().map(|item| div().child(item.clone())))
                         .test_support(),
                 )
@@ -303,12 +306,12 @@ impl ClusterRail {
                         .gap_2()
                         .child(
                             Button::new("disconnect-cancel")
-                                .label("Cancel")
+                                .label(t!("common.cancel").to_string())
                                 .on_click(|_, window, cx| window.close_dialog(cx)),
                         )
                         .child(
                             Button::new("disconnect-confirm")
-                                .label("Disconnect")
+                                .label(t!("cluster.disconnect").to_string())
                                 .on_click(move |_, window, cx| {
                                     confirm_model.read(cx).disconnect(&confirm_context);
                                     window.close_dialog(cx);
@@ -320,7 +323,8 @@ impl ClusterRail {
 
     fn open_settings(&self, key: ClusterKey, window: &mut Window, cx: &mut App) {
         let model = self.model.clone();
-        let title = format!("{} settings", model.read(cx).identity(&key).name);
+        let name = model.read(cx).identity(&key).name;
+        let title = t!("rail.cluster_settings", name = name).to_string();
         let form = cx.new(|cx| ClusterSettingsForm::new(key, model, window, cx));
         window.open_dialog(cx, move |dialog, _, _| {
             dialog.title(title.clone()).child(form.clone())
@@ -446,16 +450,20 @@ impl ClusterRail {
                     .test_support()
                     .context_menu(move |menu, _, _| {
                         let (label, action) = match &state {
-                            ConnectionState::Disconnected => ("Connect", MenuAction::Connect),
-                            ConnectionState::Failed { .. } => ("Retry", MenuAction::Connect),
+                            ConnectionState::Disconnected => {
+                                (t!("cluster.connect"), MenuAction::Connect)
+                            }
+                            ConnectionState::Failed { .. } => {
+                                (t!("cluster.retry"), MenuAction::Connect)
+                            }
                             ConnectionState::Connecting | ConnectionState::Authenticating => {
-                                ("Cancel", MenuAction::Cancel)
+                                (t!("common.cancel"), MenuAction::Cancel)
                             }
                             ConnectionState::Connected | ConnectionState::Degraded { .. } => {
-                                ("Disconnect", MenuAction::Disconnect)
+                                (t!("cluster.disconnect"), MenuAction::Disconnect)
                             }
                         };
-                        let item = |label: &'static str, action: MenuAction| {
+                        let item = |label: String, action: MenuAction| {
                             let rail = rail.clone();
                             let context = menu_context.clone();
                             PopupMenuItem::new(label).on_click(move |_, window, cx| {
@@ -466,8 +474,8 @@ impl ClusterRail {
                                 }
                             })
                         };
-                        menu.item(item(label, action))
-                            .item(item("Settings", MenuAction::Settings))
+                        menu.item(item(label.to_string(), action))
+                            .item(item(t!("settings.title").to_string(), MenuAction::Settings))
                     }),
             )
     }
@@ -533,7 +541,7 @@ impl Render for ClusterRail {
                         Button::new("rail-search")
                             .icon(IconName::Search)
                             .ghost()
-                            .tooltip("Search clusters"),
+                            .tooltip(t!("rail.search").to_string()),
                     )
                     .content(move |_, _, _| search.clone()),
             )
@@ -558,7 +566,7 @@ impl Render for ClusterRail {
                             Button::new("rail-errors")
                                 .icon(IconName::TriangleAlert)
                                 .ghost()
-                                .tooltip("Kubeconfig errors"),
+                                .tooltip(t!("rail.kubeconfig_errors").to_string()),
                         )
                         .content(move |_, _, _| {
                             div()
@@ -578,6 +586,13 @@ impl Render for ClusterRail {
                         }),
                 )
             })
+            .child(
+                Button::new("rail-settings")
+                    .icon(IconName::Settings)
+                    .ghost()
+                    .tooltip(t!("settings.title").to_string())
+                    .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSettings), cx)),
+            )
             .test_support()
     }
 }

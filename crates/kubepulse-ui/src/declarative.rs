@@ -17,6 +17,7 @@ use gpui_kit::{
     *,
 };
 use kubepulse_extension_api::{FormFieldKind, SurfaceKind, UiNode};
+use rust_i18n::t;
 
 pub struct FormSubmitted {
     pub form: String,
@@ -163,7 +164,14 @@ impl DeclarativeView {
             Some(FieldState::Toggle(value)) => {
                 let value = *value;
                 Button::new(element_id.clone())
-                    .label(if value { "On" } else { "Off" })
+                    .label(
+                        if value {
+                            t!("declarative.on")
+                        } else {
+                            t!("declarative.off")
+                        }
+                        .to_string(),
+                    )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(FieldState::Toggle(state)) = this.fields.get_mut(&key) {
                             *state = !value;
@@ -302,9 +310,14 @@ impl DeclarativeView {
             }
             UiNode::Surface { surface } => {
                 let (id, label) = match surface.kind {
-                    SurfaceKind::Log => ("element-surface-log", "Log surface"),
-                    SurfaceKind::Terminal => ("element-surface-terminal", "Terminal surface"),
-                    SurfaceKind::Editor => ("element-surface-editor", "Editor surface"),
+                    SurfaceKind::Log => ("element-surface-log", t!("declarative.surface_log")),
+                    SurfaceKind::Terminal => (
+                        "element-surface-terminal",
+                        t!("declarative.surface_terminal"),
+                    ),
+                    SurfaceKind::Editor => {
+                        ("element-surface-editor", t!("declarative.surface_editor"))
+                    }
                 };
                 div().id(id).child(label).test_support().into_any_element()
             }
@@ -313,7 +326,7 @@ impl DeclarativeView {
                 .p_2()
                 .border_1()
                 .border_color(cx.theme().danger)
-                .child("This element is not supported by this version.")
+                .child(t!("declarative.unsupported").to_string())
                 .test_support()
                 .into_any_element(),
         }

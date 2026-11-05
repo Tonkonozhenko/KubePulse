@@ -76,7 +76,7 @@ Stop after this group if any target is missed, and revisit the design before sta
 ## 9. Manifest editing
 
 - [ ] 9.1 Implement manifest loading with stripping and restoring of server-managed fields, and verify with round-trip unit tests
-- [ ] 9.2 Implement the editor surface with YAML highlighting, search, undo, and syntax errors, and verify a syntax error disables applying
+- [ ] 9.2 Implement the editor surface with YAML highlighting, search, undo, and syntax errors, and verify a syntax error disables applying, that highlighting follows the active theme, and that its text comes from catalogs
 - [ ] 9.3 Implement the dry-run step, and verify a rejected change shows the server's message and leaves the cluster unchanged
 - [ ] 9.4 Implement diff review with target details and the no-change case, and verify an admission mutation appears in the diff using a fake server
 - [ ] 9.5 Implement apply with `resourceVersion` checks and conflict recovery, and verify a concurrent change is refused and can be reapplied on the newer version
@@ -93,7 +93,7 @@ Stop after this group if any target is missed, and revisit the design before sta
 ## 11. Pod shell
 
 - [ ] 11.1 Implement the exec stream with shell discovery and the fallback command prompt, and verify against a simulated cluster, including a container with no shell
-- [ ] 11.2 Implement the terminal element from D13 with colors, scrollback, copy and paste, and resizing, and verify a full-screen program works on all three platforms
+- [ ] 11.2 Implement the terminal element from D13 with colors, scrollback, copy and paste, and resizing, and verify a full-screen program works on all three platforms, and that named ANSI colors come from the active theme's `base.*` colors
 - [ ] 11.3 Implement session-end handling, reconnect, and the target display, and verify a dropped connection keeps the scrollback
 
 ## 12. Port-forwarding

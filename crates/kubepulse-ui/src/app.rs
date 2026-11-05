@@ -11,10 +11,14 @@ use crate::{
     cluster_model::{ClusterModel, SharedClusterModel},
     cluster_tab::ClusterTab,
     identity::IdentityStore,
+    language,
     persistence::{ConfigPaths, read_or_default},
+    preferences::Preferences,
     runtime::{ClusterBackend, ClusterRuntime, ConnectedClusters, RuntimeServices, StoreConfig},
     services::SharedServices,
+    settings_tab,
     shell_state::{SharedShellState, ShellState},
+    theme::ThemeWatcher,
     workspace::Workspace,
 };
 
@@ -47,9 +51,22 @@ pub fn run_with(options: RunOptions) {
         .map_or_else(IdentityStore::default, |config| {
             read_or_default(&config.clusters, IdentityStore::from_json)
         });
+    let preferences = config.as_ref().map_or_else(Preferences::default, |config| {
+        read_or_default(&config.preferences, Preferences::from_json)
+    });
+    language::set_current(&language::select(&preferences));
+    let themes = config
+        .as_ref()
+        .map(|config| ThemeWatcher::start(config.themes.clone()));
     let clusters = Arc::new(ConnectedClusters::default());
     let backend = Arc::new(ClusterBackend(clusters.clone()));
-    let host = ExtensionHost::new(backend, HostOptions::default());
+    let host = ExtensionHost::new(
+        backend,
+        HostOptions {
+            language: language::current(),
+            ..HostOptions::default()
+        },
+    );
     host.load(options.extensions);
     let stores = StoreConfig::for_host(clusters.clone(), &host);
     let runtime = ClusterRuntime::start(paths, SessionOptions::default(), stores)
@@ -72,6 +89,7 @@ pub fn run_with(options: RunOptions) {
         cx.set_global(SharedClusterModel(model.clone()));
         let shell = cx.new(|_| ShellState::default());
         cx.set_global(SharedShellState(shell));
+        settings_tab::init(preferences, themes, cx);
 
         let window_options = WindowOptions {
             titlebar: Some(TitlebarOptions {

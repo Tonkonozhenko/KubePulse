@@ -15,8 +15,10 @@ use kubepulse_ui::{
     cluster_tab::ClusterTab,
     identity::{ClusterKey, IdentityStore},
     persistence::{ConfigPaths, write_atomic},
+    preferences::{Appearance, Preferences, SharedPreferences},
     runtime::{ClusterCommand, ClusterRuntime, ClusterState, ClusterStatus, StoreConfig},
     services::SharedServices,
+    settings_tab,
     shell_state::{SharedShellState, ShellState},
     workspace::Workspace,
 };
@@ -87,6 +89,7 @@ fn harness(cx: &mut TestAppContext, statuses: Vec<ClusterStatus>) -> Harness {
         cx.set_global(SharedClusterModel(model.clone()));
         let shell = cx.new(|_| ShellState::default());
         cx.set_global(SharedShellState(shell.clone()));
+        settings_tab::init(Preferences::default(), None, cx);
         (model, shell)
     });
     Harness {
@@ -1301,6 +1304,7 @@ fn the_ui_stays_responsive_while_a_cluster_stalls(cx: &mut TestAppContext) {
         cx.set_global(SharedClusterModel(model.clone()));
         let shell = cx.new(|_| ShellState::default());
         cx.set_global(SharedShellState(shell));
+        settings_tab::init(Preferences::default(), None, cx);
         model
     });
     let (workspace, cx) = window(cx, &model, None);
@@ -1332,4 +1336,108 @@ fn the_ui_stays_responsive_while_a_cluster_stalls(cx: &mut TestAppContext) {
         ConnectionState::Connecting
     );
     drop(runtime);
+}
+
+fn settings_open(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) -> usize {
+    fn count(state: &PanelState) -> usize {
+        usize::from(state.panel_name == settings_tab::PANEL_NAME)
+            + state.children.iter().map(count).sum::<usize>()
+    }
+    count(&layout(workspace, cx).center)
+}
+
+#[gpui_kit::test]
+fn the_gear_button_opens_one_settings_tab(cx: &mut TestAppContext) {
+    let harness = harness(cx, vec![]);
+    let (workspace, cx) = window(cx, &harness.model, None);
+    click("rail-settings", cx);
+    assert!(exists("settings", cx));
+    click("rail-settings", cx);
+    assert_eq!(settings_open(&workspace, cx), 1, "a second open reuses it");
+}
+
+#[gpui_kit::test]
+fn the_shortcut_opens_settings_with_nothing_focused(cx: &mut TestAppContext) {
+    let harness = harness(cx, vec![]);
+    let (workspace, cx) = window(cx, &harness.model, None);
+    cx.simulate_keystrokes(settings_tab::SETTINGS_SHORTCUT);
+    cx.run_until_parked();
+    cx.simulate_keystrokes(settings_tab::SETTINGS_SHORTCUT);
+    cx.run_until_parked();
+    assert!(exists("settings", cx));
+    assert_eq!(settings_open(&workspace, cx), 1);
+}
+
+#[gpui_kit::test]
+fn an_open_settings_tab_activates_rather_than_duplicates(cx: &mut TestAppContext) {
+    let harness = harness(cx, vec![serving("a", kinds())]);
+    let (workspace, cx) = window(cx, &harness.model, None);
+    click("rail-settings", cx);
+    open_kind(&workspace, "a", pod_kind(), cx);
+    assert!(!exists("settings", cx), "the kind's tab is in front");
+    click("rail-settings", cx);
+    assert!(exists("settings", cx));
+    assert_eq!(settings_open(&workspace, cx), 1);
+}
+
+#[gpui_kit::test]
+fn the_settings_tab_returns_with_the_layout(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let config = ConfigPaths::in_directory(directory.path());
+    let harness = harness(cx, vec![]);
+    {
+        let (workspace, cx) = window(cx, &harness.model, None);
+        click("rail-settings", cx);
+        let saved = serde_json::to_string(&layout(&workspace, cx)).unwrap();
+        write_atomic(&config.workspace, &saved).unwrap();
+    }
+    let (workspace, cx) = window(cx, &harness.model, Some(config));
+    assert_eq!(settings_open(&workspace, cx), 1);
+}
+
+#[gpui_kit::test]
+fn activating_settings_keeps_the_selected_cluster(cx: &mut TestAppContext) {
+    let harness = harness(cx, vec![serving("a", kinds())]);
+    let (workspace, cx) = window(cx, &harness.model, None);
+    open_kind(&workspace, "a", pod_kind(), cx);
+    click("rail-settings", cx);
+    assert_eq!(selected(&harness, cx), Some(key("a")));
+}
+
+#[gpui_kit::test]
+fn selecting_a_kind_leaves_a_settings_tab_beside_the_preview(cx: &mut TestAppContext) {
+    let harness = harness(cx, vec![serving("a", kinds())]);
+    let (workspace, cx) = window(cx, &harness.model, None);
+    let show = |kind: ResourceKind, cx: &mut VisualTestContext| {
+        cx.update(|window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                workspace.show_kind(key("a"), kind, false, window, cx);
+            });
+        });
+        cx.run_until_parked();
+    };
+    show(pod_kind(), cx);
+    click("rail-settings", cx);
+    show(service_kind(), cx);
+    assert_eq!(settings_open(&workspace, cx), 1);
+    assert_eq!(open_tabs(&workspace, cx).len(), 1, "the preview was reused");
+}
+
+#[gpui_kit::test]
+fn a_preference_change_is_saved_once_and_read_back(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let config = ConfigPaths::in_directory(directory.path());
+    let harness = harness(cx, vec![]);
+    let (_workspace, cx) = window(cx, &harness.model, Some(config.clone()));
+    let preferences = cx.update(|_, cx| cx.global::<SharedPreferences>().0.clone());
+    cx.update(|_, cx| {
+        preferences.update(cx, |preferences, cx| {
+            preferences.change(|p| p.appearance = Appearance::Dark, cx);
+            preferences.change(|p| p.appearance = Appearance::Dark, cx);
+        });
+    });
+    cx.run_until_parked();
+    let saved = fs::read_to_string(&config.preferences).unwrap();
+    let saved = Preferences::from_json(&saved).unwrap();
+    assert_eq!(saved.appearance, Appearance::Dark);
 }

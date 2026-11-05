@@ -1,6 +1,8 @@
 //! What an extension declares. The host reads this without running any of the
 //! extension's code.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 /// `major` changes break extensions. `minor` changes only add to the contract.
@@ -183,4 +185,53 @@ pub struct Manifest {
     pub contributions: Contributions,
     #[serde(default)]
     pub permissions: Vec<Permission>,
+    /// Language tag to declared text to translation. The host uses these for
+    /// contribution titles and categories.
+    #[serde(default)]
+    pub translations: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+/// The best of `available` for a language `tag`: the same tag, then the bare
+/// primary language, then any variant of it. Tags compare without case.
+pub fn best_language<'a>(
+    tag: &str,
+    available: impl Iterator<Item = &'a str> + Clone,
+) -> Option<&'a str> {
+    let tag = tag.replace('_', "-");
+    let primary = |tag: &'a str| tag.split('-').next().unwrap_or(tag);
+    let wanted = tag.split('-').next().unwrap_or(&tag);
+    let find = |matches: &dyn Fn(&'a str) -> bool| available.clone().find(|c| matches(c));
+    find(&|candidate| candidate.eq_ignore_ascii_case(&tag))
+        .or_else(|| find(&|candidate| candidate.eq_ignore_ascii_case(wanted)))
+        .or_else(|| find(&|candidate| primary(candidate).eq_ignore_ascii_case(wanted)))
+}
+
+#[cfg(test)]
+mod language_tests {
+    use super::best_language;
+
+    fn best<'a>(tag: &str, available: &[&'a str]) -> Option<&'a str> {
+        best_language(tag, available.iter().copied())
+    }
+
+    #[test]
+    fn the_same_tag_wins() {
+        assert_eq!(best("pt-BR", &["pt", "pt-BR"]), Some("pt-BR"));
+        assert_eq!(best("pt_br", &["pt-BR"]), Some("pt-BR"));
+    }
+
+    #[test]
+    fn a_regional_variant_uses_the_primary_language() {
+        assert_eq!(best("de-AT", &["en", "de"]), Some("de"));
+    }
+
+    #[test]
+    fn another_variant_of_the_language_is_better_than_nothing() {
+        assert_eq!(best("pt-PT", &["en", "pt-BR"]), Some("pt-BR"));
+    }
+
+    #[test]
+    fn an_unrelated_language_does_not_match() {
+        assert_eq!(best("fr", &["en", "de"]), None);
+    }
 }

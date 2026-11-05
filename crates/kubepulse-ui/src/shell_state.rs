@@ -66,6 +66,8 @@ pub struct ShellState {
     selected: Option<ClusterKey>,
     active: Option<EntityId>,
     tabs: Vec<Entry>,
+    /// Kept apart from `tabs`, because the Settings tab has no cluster or kind.
+    settings_tab: Option<EntityId>,
 }
 
 /// Lets panels rebuilt from a saved layout find the shell state.
@@ -85,6 +87,14 @@ impl ShellState {
 
     pub fn active(&self) -> Option<EntityId> {
         self.active
+    }
+
+    pub fn settings_tab(&self) -> Option<EntityId> {
+        self.settings_tab
+    }
+
+    pub fn set_settings_tab(&mut self, tab: Option<EntityId>) {
+        self.settings_tab = tab;
     }
 
     pub fn active_tab(&self) -> Option<&TabSummary> {

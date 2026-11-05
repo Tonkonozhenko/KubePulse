@@ -113,6 +113,9 @@ pub enum HostOperation {
     OpenSurface {
         request: SurfaceRequest,
     },
+    /// Asks for the interface language, which stays the same until the
+    /// application restarts. Needs no permission.
+    GetLanguage,
     /// Shows a message to the user. Needs no permission.
     Notify {
         message: String,
@@ -127,7 +130,7 @@ impl HostOperation {
             Self::ListObjects { kind, .. } => Some((kind, Verb::List)),
             Self::RequestChange { request } => Some(request.required()),
             Self::OpenSurface { request } => Some(request.required()),
-            Self::Notify { .. } => None,
+            Self::GetLanguage | Self::Notify { .. } => None,
         }
     }
 }
@@ -150,6 +153,7 @@ pub enum HostResponse {
     Objects { objects: Vec<ResourceObject> },
     Change { outcome: ChangeOutcome },
     Surface { reference: SurfaceRef },
+    Language { tag: String },
     Done,
 }
 

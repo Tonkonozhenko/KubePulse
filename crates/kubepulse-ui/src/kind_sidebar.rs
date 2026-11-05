@@ -13,6 +13,8 @@ use gpui_kit::{
 };
 use kubepulse_cluster::{ConnectionState, ResourceKind};
 
+use rust_i18n::t;
+
 use crate::{
     cluster_model::{ClusterModel, state_label},
     cluster_tab::kind_element_id,
@@ -143,14 +145,16 @@ impl KindSidebar {
             .context_menu(move |menu, _, _| {
                 let (sidebar, key, kind) = (sidebar.clone(), menu_key.clone(), kind.clone());
                 menu.item(
-                    PopupMenuItem::new("Open in new tab").on_click(move |_, _, cx| {
-                        let (key, kind) = (key.clone(), kind.clone());
-                        if let Some(sidebar) = sidebar.upgrade() {
-                            sidebar.update(cx, |_, cx| {
-                                cx.emit(KindSidebarEvent::OpenInNewTab { key, kind });
-                            });
-                        }
-                    }),
+                    PopupMenuItem::new(t!("sidebar.open_new_tab").to_string()).on_click(
+                        move |_, _, cx| {
+                            let (key, kind) = (key.clone(), kind.clone());
+                            if let Some(sidebar) = sidebar.upgrade() {
+                                sidebar.update(cx, |_, cx| {
+                                    cx.emit(KindSidebarEvent::OpenInNewTab { key, kind });
+                                });
+                            }
+                        },
+                    ),
                 )
             })
     }
@@ -163,6 +167,7 @@ impl KindSidebar {
     ) -> impl IntoElement + use<> {
         let NavigationGroup {
             name,
+            title,
             kinds,
             sections,
         } = group;
@@ -175,7 +180,7 @@ impl KindSidebar {
             for section in sections {
                 let id = format!("{name}/{}", section.name);
                 let closed = self.is_collapsed(&id, false);
-                let header = self.render_group_header(&id, section.name, closed, cx);
+                let header = self.render_group_header(&id, section.title, closed, cx);
                 body.push(div().pl_2().child(header).into_any_element());
                 if !closed {
                     for entry in section.kinds {
@@ -189,7 +194,7 @@ impl KindSidebar {
             .flex()
             .flex_col()
             .gap_1()
-            .child(self.render_group_header(&name.clone(), name, collapsed, cx))
+            .child(self.render_group_header(&name, title, collapsed, cx))
             .children(body)
     }
 
@@ -235,7 +240,7 @@ impl KindSidebar {
                     div()
                         .id("sidebar-protected")
                         .text_xs()
-                        .child("Protected")
+                        .child(t!("cluster.protected").to_string())
                         .test_support(),
                 )
             })
@@ -245,7 +250,7 @@ impl KindSidebar {
     fn render_connect(
         &self,
         id: &'static str,
-        label: &'static str,
+        label: String,
         context: String,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
@@ -264,8 +269,13 @@ impl KindSidebar {
         match &status.state {
             ConnectionState::Disconnected => {
                 vec![
-                    self.render_connect("sidebar-connect", "Connect", context, cx)
-                        .into_any_element(),
+                    self.render_connect(
+                        "sidebar-connect",
+                        t!("cluster.connect").to_string(),
+                        context,
+                        cx,
+                    )
+                    .into_any_element(),
                 ]
             }
             ConnectionState::Failed { reason } => vec![
@@ -275,8 +285,13 @@ impl KindSidebar {
                     .child(reason.clone())
                     .test_support()
                     .into_any_element(),
-                self.render_connect("sidebar-retry", "Retry", context, cx)
-                    .into_any_element(),
+                self.render_connect(
+                    "sidebar-retry",
+                    t!("cluster.retry").to_string(),
+                    context,
+                    cx,
+                )
+                .into_any_element(),
             ],
             ConnectionState::Connecting | ConnectionState::Authenticating => Vec::new(),
             ConnectionState::Connected | ConnectionState::Degraded { .. } => {
@@ -285,7 +300,7 @@ impl KindSidebar {
                     div()
                         .id("sidebar-stale")
                         .text_xs()
-                        .child("Showing last known kinds.")
+                        .child(t!("sidebar.stale").to_string())
                         .test_support()
                         .into_any_element()
                 });
@@ -324,7 +339,7 @@ impl Render for KindSidebar {
                 div()
                     .id("sidebar-no-cluster")
                     .text_color(cx.theme().muted_foreground)
-                    .child("Select a cluster.")
+                    .child(t!("sidebar.select_cluster").to_string())
                     .test_support()
                     .into_any_element(),
             ],

@@ -23,6 +23,7 @@ pub struct Capability {
     permissions: Vec<Permission>,
     backend: Arc<dyn HostBackend>,
     refused: Arc<AtomicU64>,
+    language: String,
 }
 
 impl Capability {
@@ -31,12 +32,14 @@ impl Capability {
         permissions: Vec<Permission>,
         backend: Arc<dyn HostBackend>,
         refused: Arc<AtomicU64>,
+        language: String,
     ) -> Self {
         Self {
             extension,
             permissions,
             backend,
             refused,
+            language,
         }
     }
 
@@ -58,6 +61,11 @@ impl Host for Capability {
             return Err(HostError::NotPermitted {
                 kind: Some(kind.clone()),
                 verb: Some(verb),
+            });
+        }
+        if matches!(operation, HostOperation::GetLanguage) {
+            return Ok(HostResponse::Language {
+                tag: self.language.clone(),
             });
         }
         self.backend.execute(operation).await

@@ -1,5 +1,5 @@
 //! Measures launch to the first painted frame, with an unreachable cluster in
-//! the kubeconfig. Exits non-zero over the limit.
+//! the kubeconfig and a full themes folder. Exits non-zero over the limit.
 //!
 //! ```bash
 //! cargo run -p kubepulse-ui --release --example startup_check
@@ -10,6 +10,7 @@ use std::{env, fs, process, time::Duration};
 use kubepulse_ui::{RunOptions, persistence::ConfigPaths, run_with};
 
 const LIMIT: Duration = Duration::from_secs(1);
+const THEME_FILES: usize = 50;
 
 fn main() {
     let directory = env::temp_dir().join(format!("kubepulse-startup-{}", process::id()));
@@ -22,9 +23,18 @@ fn main() {
     )
     .expect("write the kubeconfig");
 
+    let config = ConfigPaths::in_directory(&directory);
+    fs::create_dir_all(&config.themes).expect("create the themes folder");
+    for index in 0..THEME_FILES {
+        let theme = format!(
+            r#"{{ "name": "Set {index}", "themes": [{{ "name": "Theme {index}", "mode": "dark" }}] }}"#
+        );
+        fs::write(config.themes.join(format!("{index}.json")), theme).expect("write a theme");
+    }
+
     let cleanup = directory.clone();
     run_with(RunOptions {
-        config: Some(ConfigPaths::in_directory(&directory)),
+        config: Some(config),
         kubeconfig: Some(vec![kubeconfig]),
         extensions: Vec::new(),
         exit_after_first_frame: Some(Box::new(move |elapsed| {

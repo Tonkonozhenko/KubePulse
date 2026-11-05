@@ -17,6 +17,8 @@ use kubepulse_cluster::{ConnectionState, ObjectTarget, ResourceKind};
 use kubepulse_extension_api::KindRef;
 use serde::{Deserialize, Serialize};
 
+use rust_i18n::t;
+
 use crate::{
     cluster_model::{ClusterModel, SharedClusterModel, can_connect, state_label},
     columns::{columns_for, kind_ref, kind_title},
@@ -297,7 +299,9 @@ impl dock::Panel for ClusterTab {
             .child(div().size_2().rounded_full().bg(rgb(identity.color)))
             .children(title)
             .child(identity.name)
-            .when(identity.protected, |this| this.child("(protected)"))
+            .when(identity.protected, |this| {
+                this.child(t!("cluster.protected_tag").to_string())
+            })
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| this.activate(cx)),
@@ -359,7 +363,7 @@ impl Render for ClusterTab {
                     return this.child(
                         div()
                             .id("tab-server-changed")
-                            .child("This context is missing or now points to another server.")
+                            .child(t!("tab.server_changed").to_string())
                             .test_support(),
                     );
                 }
@@ -368,16 +372,18 @@ impl Render for ClusterTab {
                         this.child(
                             div()
                                 .id("tab-stale")
-                                .child("Showing last known data.")
+                                .child(t!("tab.stale").to_string())
                                 .test_support(),
                         )
                     })
                     .when(connect, |this| {
-                        this.child(Button::new("tab-connect").label("Connect").on_click(
-                            cx.listener(move |this, _, _, cx| {
-                                this.model.read(cx).connect(&context);
-                            }),
-                        ))
+                        this.child(
+                            Button::new("tab-connect")
+                                .label(t!("cluster.connect").to_string())
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.model.read(cx).connect(&context);
+                                })),
+                        )
                     })
             })
             .when(same_server && !connect, |this| {

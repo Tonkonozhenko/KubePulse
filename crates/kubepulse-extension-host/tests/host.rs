@@ -42,6 +42,7 @@ fn manifest(id: &str) -> Manifest {
         name: id.to_uppercase(),
         version: "1.0.0".into(),
         contract: CONTRACT_VERSION,
+        translations: Default::default(),
         activation: vec![],
         contributions: Contributions {
             commands: vec![CommandContribution {
@@ -544,7 +545,7 @@ async fn an_incompatible_manifest_is_refused_with_a_clear_message() {
     };
     assert_eq!(
         reason,
-        "built for contract 2.0, but this application provides 1.0"
+        "built for contract 2.0, but this application provides 1.1"
     );
     assert!(contributed(&host).is_empty());
     assert_eq!(
@@ -569,4 +570,184 @@ async fn a_refused_extension_cannot_be_enabled() {
         status(&host, "a"),
         ExtensionStatus::Refused { .. }
     ));
+}
+
+fn translated_manifest(id: &str, category: &str, translated: &[(&str, &str, &str)]) -> Manifest {
+    let mut translations =
+        std::collections::BTreeMap::<String, std::collections::BTreeMap<_, _>>::new();
+    for (tag, text, translation) in translated {
+        translations
+            .entry((*tag).to_owned())
+            .or_default()
+            .insert((*text).to_owned(), (*translation).to_owned());
+    }
+    Manifest {
+        translations,
+        contributions: Contributions {
+            resource_views: vec![
+                ResourceViewContribution {
+                    id: "pods".into(),
+                    title: "Pods".into(),
+                    kind: pods(),
+                    category: category.into(),
+                },
+                ResourceViewContribution {
+                    id: "jobs".into(),
+                    title: "Jobs".into(),
+                    kind: KindRef::new("batch", "Job"),
+                    category: category.into(),
+                },
+            ],
+            commands: vec![CommandContribution {
+                id: "run".into(),
+                title: "Run".into(),
+            }],
+            ..Contributions::default()
+        },
+        ..manifest(id)
+    }
+}
+
+fn host_in(language: &str, extensions: Vec<Arc<dyn Extension>>) -> ExtensionHost {
+    let host = ExtensionHost::new(
+        Arc::new(FakeBackend::default()),
+        HostOptions {
+            language: language.to_owned(),
+            ..options()
+        },
+    );
+    host.load(extensions);
+    host
+}
+
+fn view_titles(host: &ExtensionHost) -> Vec<String> {
+    host.contributions().borrow().extensions[0]
+        .1
+        .resource_views
+        .iter()
+        .map(|view| view.title.clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn titles_use_the_translation_for_the_interface_language() {
+    let manifest = translated_manifest("a", "Workloads", &[("de", "Pods", "Pods-de")]);
+    let host = host_in("de", vec![TestExtension::new(manifest)]);
+    assert_eq!(view_titles(&host)[0], "Pods-de");
+}
+
+#[tokio::test]
+async fn a_regional_language_uses_the_primary_translation() {
+    let manifest = translated_manifest("a", "Workloads", &[("de", "Pods", "Pods-de")]);
+    let host = host_in("de-AT", vec![TestExtension::new(manifest)]);
+    assert_eq!(view_titles(&host)[0], "Pods-de");
+}
+
+#[tokio::test]
+async fn text_with_no_translation_stays_as_declared() {
+    let manifest = translated_manifest("a", "Workloads", &[("de", "Pods", "Pods-de")]);
+    let host = host_in("de", vec![TestExtension::new(manifest)]);
+    assert_eq!(view_titles(&host), ["Pods-de", "Jobs"]);
+
+    let manifest = translated_manifest("b", "Workloads", &[("de", "Pods", "Pods-de")]);
+    let host = host_in("fr", vec![TestExtension::new(manifest)]);
+    assert_eq!(view_titles(&host), ["Pods", "Jobs"], "no catalog for fr");
+}
+
+#[tokio::test]
+async fn every_contribution_title_is_translated() {
+    let manifest = translated_manifest("a", "Workloads", &[("de", "Run", "Run-de")]);
+    let host = host_in("de", vec![TestExtension::new(manifest)]);
+    let set = host.contributions().borrow().clone();
+    assert_eq!(set.extensions[0].1.commands[0].title, "Run-de");
+}
+
+#[tokio::test]
+async fn titles_stay_translated_after_disabling_an_extension() {
+    let a = translated_manifest("a", "Workloads", &[("de", "Pods", "Pods-de")]);
+    let b = translated_manifest("b", "Other", &[("de", "Pods", "Pods-b")]);
+    let extensions: Vec<Arc<dyn Extension>> = vec![TestExtension::new(a), TestExtension::new(b)];
+    let host = host_in("de", extensions);
+    host.set_enabled("a", false).await.unwrap();
+    assert_eq!(view_titles(&host)[0], "Pods-b");
+}
+
+#[tokio::test]
+async fn a_shared_category_keeps_its_declared_name_and_the_first_translation() {
+    let a = translated_manifest("a", "Workloads", &[]);
+    let b = translated_manifest("b", "Workloads", &[("de", "Workloads", "Arbeitslasten")]);
+    let extensions: Vec<Arc<dyn Extension>> = vec![TestExtension::new(a), TestExtension::new(b)];
+    let host = host_in("de", extensions);
+    let set = host.contributions().borrow().clone();
+    assert_eq!(set.extensions[0].1.resource_views[0].category, "Workloads");
+    assert_eq!(set.extensions[1].1.resource_views[0].category, "Workloads");
+    assert_eq!(set.category_titles["Workloads"], "Arbeitslasten");
+}
+
+#[tokio::test]
+async fn an_extension_with_no_permissions_can_read_the_language() {
+    let extension = TestExtension::new(manifest("a"));
+    *extension.operation.lock().unwrap() = Some(HostOperation::GetLanguage);
+    let host = host_in("de", vec![extension.clone()]);
+    host.request("a", command()).await.unwrap();
+    assert_eq!(
+        *extension.last_host_result.lock().unwrap(),
+        Some(Ok(HostResponse::Language { tag: "de".into() }))
+    );
+}
+
+#[tokio::test]
+async fn a_newer_minor_contract_is_refused_by_an_older_host() {
+    let host = ExtensionHost::new(
+        Arc::new(FakeBackend::default()),
+        HostOptions {
+            contract: ContractVersion { major: 1, minor: 0 },
+            ..options()
+        },
+    );
+    host.load(vec![TestExtension::new(manifest("a"))]);
+    let ExtensionStatus::Refused { reason } = status(&host, "a") else {
+        panic!("should be refused")
+    };
+    assert_eq!(
+        reason,
+        "built for contract 1.1, but this application provides 1.0"
+    );
+}
+
+struct Echo(Manifest);
+
+#[async_trait]
+impl Extension for Echo {
+    fn manifest(&self) -> Manifest {
+        self.0.clone()
+    }
+
+    async fn handle(
+        &self,
+        _: ExtensionRequest,
+        _: Arc<dyn Host>,
+    ) -> Result<ExtensionResponse, ExtensionError> {
+        Ok(ExtensionResponse::Ui {
+            root: UiNode::Text {
+                text: "Pods".into(),
+            },
+        })
+    }
+}
+
+#[tokio::test]
+async fn interface_text_is_not_rewritten_even_when_it_matches_a_translation() {
+    let manifest = translated_manifest("a", "Workloads", &[("de", "Pods", "Pods-de")]);
+    let extension: Arc<dyn Extension> = Arc::new(Echo(manifest));
+    let host = host_in("de", vec![extension]);
+    let response = host.request("a", command()).await.unwrap();
+    assert_eq!(
+        response,
+        ExtensionResponse::Ui {
+            root: UiNode::Text {
+                text: "Pods".into()
+            }
+        }
+    );
 }

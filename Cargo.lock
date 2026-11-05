@@ -4336,6 +4336,7 @@ dependencies = [
 name = "kubepulse"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "kubepulse-builtin",
  "kubepulse-cluster",
  "kubepulse-extension-api",
@@ -4354,6 +4355,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "kubepulse-extension-api",
+ "serde_json",
 ]
 
 [[package]]
@@ -4419,8 +4421,11 @@ dependencies = [
  "kubepulse-extension-api",
  "kubepulse-extension-host",
  "kubepulse-store",
+ "notify",
+ "rust-i18n",
  "serde",
  "serde_json",
+ "sys-locale",
  "tempfile",
  "tokio",
  "tokio-util",

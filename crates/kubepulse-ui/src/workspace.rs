@@ -1,9 +1,10 @@
 //! The main window: the cluster rail, the kind sidebar, and a dock of tabs and
 //! panes.
 
-use std::{path::PathBuf, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use gpui_kit::{
+    base::dock::PanelView,
     component::{
         ActiveTheme as _,
         dock::{
@@ -16,6 +17,8 @@ use gpui_kit::{
 };
 use kubepulse_cluster::ResourceKind;
 
+use rust_i18n::t;
+
 use crate::{
     cluster_model::{ClusterModel, ClusterModelEvent},
     cluster_rail::ClusterRail,
@@ -24,7 +27,10 @@ use crate::{
     identity::ClusterKey,
     kind_sidebar::{KindSidebar, KindSidebarEvent},
     persistence::{ConfigPaths, read_or_default, write_atomic},
+    preferences::{PreferencesEvent, PreferencesModel, SharedPreferences},
+    settings_tab::{OpenSettings, SettingsTab},
     shell_state::{Placement, SharedShellState, ShellEvent, ShellState, place_kind},
+    theme::{self, SharedThemes, ThemeCatalog},
 };
 
 const SAVE_DELAY: Duration = Duration::from_millis(500);
@@ -35,6 +41,8 @@ const LAYOUT_VERSION: usize = 1;
 pub struct Workspace {
     model: Entity<ClusterModel>,
     shell: Entity<ShellState>,
+    preferences: Entity<PreferencesModel>,
+    themes: Entity<ThemeCatalog>,
     rail: Entity<ClusterRail>,
     sidebar: Entity<KindSidebar>,
     dock: Entity<DockArea>,
@@ -52,6 +60,8 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Self {
         let shell = cx.global::<SharedShellState>().0.clone();
+        let preferences = cx.global::<SharedPreferences>().0.clone();
+        let themes = cx.global::<SharedThemes>().0.clone();
         let rail = cx.new(|cx| ClusterRail::new(model.clone(), window, cx));
         let sidebar = cx.new(|cx| KindSidebar::new(model.clone(), cx));
         let (dock, _skin) = DockSkin::dock_area(DOCK_ID, Some(LAYOUT_VERSION), window, cx);
@@ -95,10 +105,44 @@ impl Workspace {
                     }
                 },
             ),
+            cx.subscribe_in(
+                &preferences,
+                window,
+                |this, _, event: &PreferencesEvent, window, cx| match event {
+                    PreferencesEvent::Changed => {
+                        this.save_preferences(cx);
+                        this.apply_theme(window, cx);
+                    }
+                },
+            ),
+            cx.observe_in(&themes, window, |this, _, window, cx| {
+                this.apply_theme(window, cx);
+            }),
+            cx.observe_window_appearance(window, |this, window, cx| {
+                this.apply_theme(window, cx);
+            }),
         ];
+        // An application action, because a shortcut must work with nothing in
+        // the workspace focused.
+        let workspace = cx.weak_entity();
+        let handle = window.window_handle();
+        App::on_action(cx, move |_: &OpenSettings, cx| {
+            let workspace = workspace.clone();
+            // The window is busy dispatching this action until it returns.
+            cx.defer(move |cx| {
+                let opened = handle.update(cx, |_, window, cx| {
+                    workspace.update(cx, |workspace, cx| workspace.open_settings(window, cx))
+                });
+                if let Err(error) = opened.and_then(|result| result) {
+                    tracing::warn!(%error, "could not open settings");
+                }
+            });
+        });
         Self {
             model,
             shell,
+            preferences,
+            themes,
             rail,
             sidebar,
             dock,
@@ -195,6 +239,17 @@ impl Workspace {
         }
     }
 
+    /// Activates the Settings tab, opening it if needed.
+    pub fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(tab) = self.shell.read(cx).settings_tab() {
+            self.dock
+                .update(cx, |dock, cx| dock.select_panel(tab.into(), window, cx));
+            return;
+        }
+        let tab = cx.new(SettingsTab::new);
+        self.add_to_dock(panel_handle(tab), window, cx);
+    }
+
     /// Opens a new tab bound to this cluster. It does not connect.
     pub fn open_tab(
         &mut self,
@@ -210,19 +265,23 @@ impl Workspace {
             tab.open_kind(kind, window, cx);
             tab
         });
-        let opened = tab.clone();
+        self.add_to_dock(panel_handle(tab.clone()), window, cx);
+        tab
+    }
+
+    fn add_to_dock(
+        &mut self,
+        panel: Arc<dyn PanelView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.dock.update(cx, |dock, cx| {
             if dock.is_empty(DockPlacement::Center, cx) {
-                dock.set_center(
-                    DockLayout::tabs().panel_view(panel_handle(tab), cx),
-                    window,
-                    cx,
-                );
+                dock.set_center(DockLayout::tabs().panel_view(panel, cx), window, cx);
             } else {
-                dock.add_panel_view(panel_handle(tab), DockPlacement::Center, None, window, cx);
+                dock.add_panel_view(panel, DockPlacement::Center, None, window, cx);
             }
         });
-        opened
     }
 
     fn schedule_layout_save(&mut self, cx: &mut Context<Self>) {
@@ -243,11 +302,30 @@ impl Workspace {
         .detach();
     }
 
+    /// The window's value, because the application-wide one is unreliable on
+    /// Linux.
+    fn apply_theme(&self, window: &Window, cx: &mut App) {
+        let preferences = self.preferences.read(cx).get().clone();
+        let themes = self.themes.clone();
+        themes.update(cx, |themes, cx| {
+            theme::apply(&preferences, themes, window.appearance(), cx);
+        });
+    }
+
     fn save_identities(&self, model: &Entity<ClusterModel>, cx: &mut Context<Self>) {
         let Some(path) = self.paths.as_ref().map(|paths| paths.clusters.clone()) else {
             return;
         };
         let json = model.read(cx).identities().to_json();
+        cx.spawn(async move |_, cx| save_in_background(path, json, cx))
+            .detach();
+    }
+
+    fn save_preferences(&self, cx: &mut Context<Self>) {
+        let Some(path) = self.paths.as_ref().map(|paths| paths.preferences.clone()) else {
+            return;
+        };
+        let json = self.preferences.read(cx).get().to_json();
         cx.spawn(async move |_, cx| save_in_background(path, json, cx))
             .detach();
     }
@@ -288,7 +366,7 @@ impl Render for Workspace {
                                 .items_center()
                                 .justify_center()
                                 .text_color(cx.theme().muted_foreground)
-                                .child("Choose a kind from the sidebar.")
+                                .child(t!("workspace.no_tabs").to_string())
                                 .test_support(),
                         )
                     }),
