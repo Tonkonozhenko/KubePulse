@@ -103,6 +103,7 @@ impl Workspace {
                     ClusterModelEvent::IdentitiesChanged => {
                         this.save_identities(&model, cx);
                     }
+                    ClusterModelEvent::NamespacesChanged(_) => {}
                 },
             ),
             cx.subscribe_in(

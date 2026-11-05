@@ -21,6 +21,8 @@ const NAMESPACES: usize = 40;
 const NODES: usize = 200;
 const BATCHES_PER_SECOND: usize = 100;
 
+type ObjectAt = fn(usize, u64) -> RawObject;
+
 pub fn pod_kind() -> ResourceKind {
     ResourceKind {
         group: String::new(),
@@ -30,6 +32,15 @@ pub fn pod_kind() -> ResourceKind {
         namespaced: true,
         verbs: vec!["list".into(), "watch".into()],
         printer_columns: vec![],
+    }
+}
+
+pub fn namespace_kind() -> ResourceKind {
+    ResourceKind {
+        kind: "Namespace".into(),
+        plural: "namespaces".into(),
+        namespaced: false,
+        ..pod_kind()
     }
 }
 
@@ -43,6 +54,19 @@ pub fn pod_columns() -> Arc<[ColumnSpec]> {
     ]
     .map(|(id, path)| ColumnSpec::new(id, path).expect("valid path"))
     .into()
+}
+
+fn namespace(index: usize, _: u64) -> RawObject {
+    let name = format!("team-{index:02}");
+    RawObject {
+        key: name.clone(),
+        name,
+        namespace: None,
+        labels: BTreeMap::new(),
+        owners: vec![],
+        created: None,
+        data: json!({}),
+    }
 }
 
 /// Pod number `index`, with `restarts` as its changing field.
@@ -138,7 +162,8 @@ pub struct Burst {
     pub duration: Duration,
 }
 
-/// Serves `pods` pods, then runs `burst` if there is one.
+/// Serves `pods` pods, then runs `burst` if there is one. The namespaces those
+/// pods are in are served to a watch of the namespace kind.
 pub struct SyntheticCluster {
     pods: usize,
     burst: Option<Burst>,
@@ -161,14 +186,23 @@ impl SyntheticCluster {
 }
 
 impl WatchSource for SyntheticCluster {
-    fn watch(&self, _: &ResourceKind, events: mpsc::Sender<WatchEvent>, stop: CancellationToken) {
+    fn watch(
+        &self,
+        kind: &ResourceKind,
+        events: mpsc::Sender<WatchEvent>,
+        stop: CancellationToken,
+    ) {
         self.started.fetch_add(1, Ordering::SeqCst);
         self.active.fetch_add(1, Ordering::SeqCst);
         let active = self.active.clone();
         let changes = self.changes_sent.clone();
-        let (pods, burst) = (self.pods, self.burst);
+        let (object, count, burst): (ObjectAt, _, _) = if kind.kind == "Namespace" {
+            (namespace, NAMESPACES, None)
+        } else {
+            (pod, self.pods, self.burst)
+        };
         tokio::spawn(async move {
-            stop.run_until_cancelled(stream(pods, burst, events, changes))
+            stop.run_until_cancelled(stream(object, count, burst, events, changes))
                 .await;
             active.fetch_sub(1, Ordering::SeqCst);
         });
@@ -176,6 +210,7 @@ impl WatchSource for SyntheticCluster {
 }
 
 async fn stream(
+    object: ObjectAt,
     pods: usize,
     burst: Option<Burst>,
     events: mpsc::Sender<WatchEvent>,
@@ -186,7 +221,7 @@ async fn stream(
         .await
         .ok()?;
     for index in 0..pods {
-        let object = pod(index, 0);
+        let object = object(index, 0);
         events
             .send(WatchEvent::Listed {
                 scope: None,
@@ -208,7 +243,7 @@ async fn stream(
                 // A prime step spreads changes across the table.
                 cursor = (cursor + 7919) % pods;
                 restarts[cursor] += 1;
-                let object = pod(cursor, restarts[cursor]);
+                let object = object(cursor, restarts[cursor]);
                 events.send(WatchEvent::Applied(object)).await.ok()?;
                 changes.fetch_add(1, Ordering::SeqCst);
             }

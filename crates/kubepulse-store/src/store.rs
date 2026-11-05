@@ -5,7 +5,7 @@
 //! update rate rather than falling behind.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     sync::{
         Arc, Mutex, Weak,
         atomic::{AtomicU64, Ordering},
@@ -68,6 +68,8 @@ pub struct Snapshot {
     pub rows: Vec<Arc<Row>>,
     /// Objects of this kind before filtering.
     pub total: usize,
+    /// The namespaces of this kind's objects before filtering, sorted.
+    pub namespaces: Arc<Vec<String>>,
     /// False until the first full list completes.
     pub synced: bool,
     pub denied: Option<String>,
@@ -335,6 +337,12 @@ async fn wait_until(deadline: Option<Instant>) {
 
 fn publish(cache: &Cache, views: &mut HashMap<u64, ViewState>) {
     let rows: Vec<Arc<Row>> = cache.rows.values().cloned().collect();
+    let namespaces: BTreeSet<&str> = rows
+        .iter()
+        .filter_map(|row| row.namespace.as_deref())
+        .collect();
+    let namespaces: Arc<Vec<String>> =
+        Arc::new(namespaces.into_iter().map(str::to_owned).collect());
     for view in views.values_mut().filter(|view| view.dirty) {
         view.dirty = false;
         view.version += 1;
@@ -342,6 +350,7 @@ fn publish(cache: &Cache, views: &mut HashMap<u64, ViewState>) {
             version: view.version,
             rows: view.query.apply(&rows),
             total: rows.len(),
+            namespaces: namespaces.clone(),
             synced: cache.synced,
             denied: cache.denied.clone(),
         }));

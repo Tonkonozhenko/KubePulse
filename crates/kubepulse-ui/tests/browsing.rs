@@ -6,7 +6,9 @@ use gpui_kit::{
     AppContext as _, Entity, SharedString, TestAppContext, VisualTestContext, WindowOptions,
     component::WindowExt as _, test::TestWindowExt as _,
 };
-use kubepulse_cluster::{EventRecord, ObjectTarget, PrinterColumn, ResourceKind, WatchEvent};
+use kubepulse_cluster::{
+    ConnectionState, EventRecord, ObjectTarget, PrinterColumn, ResourceKind, WatchEvent,
+};
 use kubepulse_extension_api::{
     ColumnContribution, ColumnSource, Contributions, DetailTabContribution, ExtensionRequest,
     FormField, FormFieldKind, KindRef, UiNode,
@@ -17,7 +19,7 @@ use kubepulse_store::{
     synthetic::{SyntheticCluster, pod, pod_kind},
 };
 use kubepulse_ui::{
-    cluster_model::{ClusterModel, SharedClusterModel},
+    cluster_model::{ClusterModel, ClusterModelEvent, SharedClusterModel},
     cluster_tab::ClusterTab,
     identity::{ClusterKey, IdentityStore},
     preferences::Preferences,
@@ -296,7 +298,7 @@ fn the_table_shows_declared_columns_at_ten_thousand_rows(cx: &mut TestAppContext
 fn selecting_namespaces_shows_only_those_namespaces(cx: &mut TestAppContext) {
     let mut harness = ten_thousand_pods(cx, pod_columns());
 
-    harness.update_browser(|browser, cx| browser.set_namespaces("team-01, team-02", cx));
+    harness.select_namespaces(&["team-01", "team-02"]);
     harness.wait_for_rows(500);
 
     let (_, rows) = harness.cells(500);
@@ -1058,4 +1060,405 @@ fn closing_on_a_protected_cluster_forgets_the_typed_name(cx: &mut TestAppContext
 
     assert!(dialog_open(&mut harness));
     assert!(!harness.exists("delete-confirm".into()));
+}
+
+fn node_kind() -> ResourceKind {
+    kind("", "Node", "nodes", false)
+}
+
+fn namespace_kind() -> ResourceKind {
+    kind("", "Namespace", "namespaces", false)
+}
+
+fn other_key() -> ClusterKey {
+    ClusterKey::new("other", Some("https://other.example"))
+}
+
+/// Pods in `prod` and `dev`, and an `idle` namespace that holds none.
+fn namespaced_cluster(cx: &mut TestAppContext) -> (Harness<'_>, Arc<ScriptedSource>) {
+    let source = Arc::new(
+        ScriptedSource::default()
+            .with(
+                "Pod",
+                vec![
+                    raw("web", Some("prod"), json!({})),
+                    raw("api", Some("dev"), json!({})),
+                ],
+            )
+            .with(
+                "Deployment",
+                vec![
+                    raw("web-deploy", Some("prod"), json!({})),
+                    raw("api-deploy", Some("dev"), json!({})),
+                ],
+            )
+            .with("Node", vec![raw("node-1", None, json!({}))])
+            .with(
+                "Namespace",
+                ["prod", "dev", "idle"]
+                    .map(|name| raw(name, None, json!({})))
+                    .to_vec(),
+            ),
+    );
+    let services = Arc::new(FakeServices::new(
+        source.clone() as Arc<dyn WatchSource>,
+        ContributionSet::default(),
+    ));
+    let resources = vec![pod_kind(), deployment_kind(), node_kind(), namespace_kind()];
+    let mut harness = harness(cx, services, resources, false);
+    harness.open_kind(&pod_kind());
+    harness.wait_for_rows(2);
+    harness.wait_for_options(&["dev", "idle", "prod"]);
+    (harness, source)
+}
+
+impl Harness<'_> {
+    fn select_namespaces(&mut self, namespaces: &[&str]) {
+        let selected = namespaces.iter().map(|name| (*name).to_owned()).collect();
+        self.update_browser(|browser, cx| browser.set_namespaces(selected, cx));
+        self.cx.run_until_parked();
+    }
+
+    fn picker_values(&mut self) -> Vec<String> {
+        let browser = self.browser();
+        self.cx.update(|_, cx| {
+            let browser = browser.read(cx);
+            let picker = browser.namespace_picker().expect("a picker");
+            picker.read(cx).selected_values()
+        })
+    }
+
+    fn wait_for_options(&mut self, options: &[&str]) {
+        let browser = self.browser();
+        wait_until(self.cx, "the namespace options", |cx| {
+            cx.update(|_, cx| browser.read(cx).namespace_options().iter().eq(options))
+        });
+    }
+
+    fn row_names(&mut self, browser: &Entity<ResourceBrowser>) -> Vec<String> {
+        self.cx.update(|_, cx| {
+            let snapshot = browser.read(cx).snapshot().clone();
+            snapshot
+                .rows
+                .iter()
+                .map(|row| row.name.to_string())
+                .collect()
+        })
+    }
+
+    fn wait_for_names(&mut self, browser: &Entity<ResourceBrowser>, names: &[&str]) {
+        wait_until(self.cx, "the selected rows", |cx| {
+            cx.update(|_, cx| {
+                let snapshot = browser.read(cx).snapshot();
+                snapshot.synced
+                    && snapshot
+                        .rows
+                        .iter()
+                        .map(|row| &*row.name)
+                        .eq(names.iter().copied())
+            })
+        });
+    }
+
+    fn set_query(&mut self, text: &str) {
+        let browser = self.browser();
+        let picker = self.cx.update(|_, cx| {
+            browser
+                .read(cx)
+                .namespace_picker()
+                .expect("a picker")
+                .clone()
+        });
+        self.cx.update(|window, cx| {
+            picker.update(cx, |picker, cx| picker.set_query(text, window, cx))
+        });
+        self.cx.run_until_parked();
+    }
+
+    fn search_text(&mut self) -> String {
+        let browser = self.browser();
+        self.cx.update(|_, cx| {
+            let browser = browser.read(cx);
+            let picker = browser.namespace_picker().expect("a picker");
+            picker.read(cx).query(cx).to_string()
+        })
+    }
+}
+
+#[gpui_kit::test]
+fn a_selection_belongs_to_one_cluster_and_outlives_the_connection(cx: &mut TestAppContext) {
+    let (harness, _) = namespaced_cluster(cx);
+    let model = harness.model.clone();
+    let selected: std::collections::BTreeSet<String> = ["prod".to_owned()].into();
+    let events = harness.cx.update(|_, cx| {
+        let events = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = events.clone();
+        cx.subscribe(&model, move |_, _: &ClusterModelEvent, _| {
+            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        })
+        .detach();
+        model.update(cx, |model, cx| {
+            model.set_namespaces(key(), selected.clone(), cx);
+            model.set_namespaces(key(), selected.clone(), cx);
+        });
+        events
+    });
+    harness.cx.run_until_parked();
+
+    assert_eq!(events.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let (ours, other) = harness.cx.update(|_, cx| {
+        let model = model.read(cx);
+        (
+            model.selected_namespaces(&key()),
+            model.selected_namespaces(&other_key()),
+        )
+    });
+    assert_eq!(ours, selected);
+    assert!(other.is_empty());
+
+    let mut disconnected = connected(CONTEXT, vec![]);
+    disconnected.state = ConnectionState::Disconnected;
+    harness.state.send_replace(state(disconnected));
+    harness.cx.run_until_parked();
+    let kept = harness
+        .cx
+        .update(|_, cx| model.read(cx).selected_namespaces(&key()));
+    assert_eq!(kept, selected);
+}
+
+#[gpui_kit::test]
+fn another_kind_opens_with_the_cluster_selection(cx: &mut TestAppContext) {
+    let (mut harness, _) = namespaced_cluster(cx);
+    harness.select_namespaces(&["prod"]);
+
+    harness.show(&deployment_kind());
+    let browser = harness.browser();
+    wait_until(harness.cx, "the deployments", |cx| {
+        cx.update(|_, cx| {
+            let snapshot = browser.read(cx).snapshot();
+            assert!(snapshot.rows.len() <= 1, "shown before it was filtered");
+            snapshot.synced
+        })
+    });
+
+    assert_eq!(harness.row_names(&browser), ["web-deploy"]);
+    assert_eq!(harness.picker_values(), ["prod"]);
+}
+
+#[gpui_kit::test]
+fn tabs_on_a_cluster_follow_one_selection(cx: &mut TestAppContext) {
+    let (mut harness, _) = namespaced_cluster(cx);
+    let (workspace, pods) = (harness.workspace.clone(), harness.browser());
+    harness.cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.show_kind(key(), pod_kind(), true, window, cx);
+            workspace.show_kind(key(), deployment_kind(), true, window, cx);
+        });
+    });
+    harness.cx.run_until_parked();
+    let deployments = harness.browser();
+    assert_ne!(pods, deployments);
+    harness.wait_for_names(&deployments, &["api-deploy", "web-deploy"]);
+
+    harness.select_namespaces(&["dev"]);
+
+    harness.wait_for_names(&deployments, &["api-deploy"]);
+    harness.wait_for_names(&pods, &["api"]);
+    let values = harness.cx.update(|_, cx| {
+        let browser = pods.read(cx);
+        let picker = browser.namespace_picker().expect("a picker");
+        picker.read(cx).selected_values()
+    });
+    assert_eq!(values, ["dev"]);
+}
+
+#[gpui_kit::test]
+fn another_clusters_selection_changes_nothing_here(cx: &mut TestAppContext) {
+    let (mut harness, _) = namespaced_cluster(cx);
+    let model = harness.model.clone();
+    harness.cx.update(|_, cx| {
+        model.update(cx, |model, cx| {
+            model.set_namespaces(other_key(), ["prod".to_owned()].into(), cx);
+        });
+    });
+    harness.cx.run_until_parked();
+
+    assert_eq!(harness.browser_names(), ["api", "web"]);
+    assert!(harness.picker_values().is_empty());
+}
+
+impl Harness<'_> {
+    fn browser_names(&mut self) -> Vec<String> {
+        let browser = self.browser();
+        self.row_names(&browser)
+    }
+}
+
+#[gpui_kit::test]
+fn the_picker_selects_searches_and_clears(cx: &mut TestAppContext) {
+    let (mut harness, _) = namespaced_cluster(cx);
+    let browser = harness.browser();
+    assert!(harness.exists("namespace-picker".into()));
+
+    harness.click("namespace-picker".into());
+    harness.set_query("pro");
+    harness.cx.simulate_keystrokes("enter");
+    harness.cx.run_until_parked();
+
+    harness.wait_for_names(&browser, &["web"]);
+    assert_eq!(harness.picker_values(), ["prod"]);
+    assert_eq!(harness.search_text(), "pro", "a toggle keeps the search");
+
+    let picker = harness.cx.update(|_, cx| {
+        browser
+            .read(cx)
+            .namespace_picker()
+            .expect("a picker")
+            .clone()
+    });
+    harness
+        .cx
+        .update(|_, cx| picker.update(cx, |picker, cx| picker.clear_selection(cx)));
+    harness.cx.run_until_parked();
+
+    harness.wait_for_names(&browser, &["api", "web"]);
+    assert!(harness.picker_values().is_empty());
+}
+
+#[gpui_kit::test]
+fn an_empty_selection_shows_every_namespace(cx: &mut TestAppContext) {
+    let (mut harness, _) = namespaced_cluster(cx);
+    assert!(harness.picker_values().is_empty());
+    let browser = harness.browser();
+    harness.wait_for_names(&browser, &["api", "web"]);
+}
+
+#[gpui_kit::test]
+fn a_namespaced_custom_kind_has_the_picker(cx: &mut TestAppContext) {
+    let widget = raw("big", Some("ns"), json!({"spec": {"size": 7}}));
+    let source = Arc::new(ScriptedSource::default().with("Widget", vec![widget]));
+    let services = Arc::new(FakeServices::new(source, ContributionSet::default()));
+    let mut harness = harness(cx, services, vec![widget_kind()], false);
+    harness.open_kind(&widget_kind());
+    assert!(harness.exists("namespace-picker".into()));
+    harness.wait_for_options(&["ns"]);
+}
+
+#[gpui_kit::test]
+fn cluster_scoped_kinds_ignore_the_selection(cx: &mut TestAppContext) {
+    let (mut harness, _) = namespaced_cluster(cx);
+    harness.select_namespaces(&["prod"]);
+
+    harness.show(&node_kind());
+    let nodes = harness.browser();
+    harness.wait_for_names(&nodes, &["node-1"]);
+    assert!(!harness.exists("namespace-picker".into()));
+
+    harness.show(&pod_kind());
+    let pods = harness.browser();
+    harness.wait_for_names(&pods, &["web"]);
+    assert_eq!(harness.picker_values(), ["prod"]);
+}
+
+#[gpui_kit::test]
+fn namespaces_with_no_objects_of_the_kind_are_offered(cx: &mut TestAppContext) {
+    let (mut harness, _) = namespaced_cluster(cx);
+    harness.select_namespaces(&["idle"]);
+    harness.wait_for_options(&["dev", "idle", "prod"]);
+    let browser = harness.browser();
+    harness.wait_for_names(&browser, &[]);
+}
+
+#[gpui_kit::test]
+fn a_new_namespace_appears_and_the_selection_survives_it(cx: &mut TestAppContext) {
+    let (mut harness, source) = namespaced_cluster(cx);
+    let browser = harness.browser();
+    harness.select_namespaces(&["dev", "prod"]);
+
+    source.send(WatchEvent::Applied(raw("aaa", None, json!({}))));
+    harness.wait_for_options(&["aaa", "dev", "idle", "prod"]);
+    assert_eq!(harness.picker_values(), ["dev", "prod"]);
+
+    let picker = harness.cx.update(|_, cx| {
+        browser
+            .read(cx)
+            .namespace_picker()
+            .expect("a picker")
+            .clone()
+    });
+    harness.click("namespace-picker".into());
+    harness.set_query("dev");
+    harness.cx.simulate_keystrokes("enter");
+    harness.cx.run_until_parked();
+
+    harness.wait_for_names(&browser, &["web"]);
+    let values = harness.cx.update(|_, cx| picker.read(cx).selected_values());
+    assert_eq!(values, ["prod"]);
+}
+
+#[gpui_kit::test]
+fn a_deleted_namespace_stays_selected_until_removed(cx: &mut TestAppContext) {
+    let (mut harness, source) = namespaced_cluster(cx);
+    let browser = harness.browser();
+    harness.select_namespaces(&["idle"]);
+
+    source.send(WatchEvent::Deleted {
+        key: "uid-idle".to_owned(),
+    });
+    wait_until(harness.cx, "the namespace to go", |cx| {
+        cx.update(|_, cx| browser.read(cx).cluster_namespaces().len() == 2)
+    });
+    harness.wait_for_options(&["dev", "idle", "prod"]);
+    assert_eq!(harness.picker_values(), ["idle"]);
+    harness.wait_for_names(&browser, &[]);
+
+    harness.select_namespaces(&[]);
+    harness.wait_for_options(&["dev", "prod"]);
+    harness.wait_for_names(&browser, &["api", "web"]);
+}
+
+#[gpui_kit::test]
+fn a_denied_namespace_list_offers_the_tables_namespaces(cx: &mut TestAppContext) {
+    let pods = vec![
+        raw("web", Some("prod"), json!({})),
+        raw("api", Some("dev"), json!({})),
+    ];
+    let source = Arc::new(ScriptedSource::default().with("Pod", pods));
+    let services = Arc::new(FakeServices::new(
+        source.clone() as Arc<dyn WatchSource>,
+        ContributionSet::default(),
+    ));
+    let mut harness = harness(cx, services, vec![pod_kind(), namespace_kind()], false);
+    harness.open_kind(&pod_kind());
+    harness.wait_for_options(&["dev", "prod"]);
+    let browser = harness.browser();
+    assert!(
+        !harness
+            .cx
+            .update(|_, cx| browser.read(cx).namespaces_incomplete())
+    );
+
+    source.send(WatchEvent::Denied {
+        reason: "namespaces are forbidden".to_owned(),
+    });
+    wait_until(harness.cx, "the denial", |cx| {
+        cx.update(|_, cx| browser.read(cx).namespaces_incomplete())
+    });
+    harness.wait_for_options(&["dev", "prod"]);
+
+    harness.click("namespace-picker".into());
+    assert!(harness.exists("namespaces-incomplete".into()));
+}
+
+#[gpui_kit::test]
+fn a_cluster_without_namespaces_says_the_list_is_incomplete(cx: &mut TestAppContext) {
+    let pods = vec![raw("web", Some("prod"), json!({}))];
+    let source = Arc::new(ScriptedSource::default().with("Pod", pods));
+    let services = Arc::new(FakeServices::new(source, ContributionSet::default()));
+    let mut harness = harness(cx, services, vec![pod_kind()], false);
+    harness.open_kind(&pod_kind());
+    harness.wait_for_options(&["prod"]);
+
+    harness.click("namespace-picker".into());
+    assert!(harness.exists("namespaces-incomplete".into()));
 }

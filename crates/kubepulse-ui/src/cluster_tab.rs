@@ -195,9 +195,8 @@ impl ClusterTab {
         let columns = columns_for(&kind, &self.services.contributions());
         self.kind = Some(kind_ref(&kind));
         self.detail = None;
-        let services = self.services.clone();
-        self.browser =
-            ResourceBrowser::open(&self.key.context, kind, columns, services, window, cx);
+        let (model, services) = (self.model.clone(), self.services.clone());
+        self.browser = ResourceBrowser::open(&self.key, kind, columns, model, services, window, cx);
         if let Some(browser) = &self.browser {
             let subscription = cx.subscribe_in(
                 browser,

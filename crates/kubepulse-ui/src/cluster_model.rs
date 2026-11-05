@@ -2,7 +2,10 @@
 //! Only an explicit connect command can start a connection, so opening tabs and
 //! restoring a layout cannot.
 
-use std::sync::Arc;
+use std::{
+    collections::{BTreeSet, HashMap},
+    sync::Arc,
+};
 
 use gpui_kit::*;
 use kubepulse_cluster::ConnectionState;
@@ -17,6 +20,8 @@ use crate::{
 pub struct ClusterModel {
     state: Arc<ClusterState>,
     identities: IdentityStore,
+    /// Selected namespaces by cluster, kept until exit. Empty means all of them.
+    namespaces: HashMap<ClusterKey, BTreeSet<String>>,
     commands: mpsc::UnboundedSender<ClusterCommand>,
 }
 
@@ -27,6 +32,7 @@ impl Global for SharedClusterModel {}
 
 pub enum ClusterModelEvent {
     IdentitiesChanged,
+    NamespacesChanged(ClusterKey),
 }
 
 impl EventEmitter<ClusterModelEvent> for ClusterModel {}
@@ -55,6 +61,7 @@ impl ClusterModel {
         Self {
             state: initial,
             identities,
+            namespaces: HashMap::new(),
             commands,
         }
     }
@@ -114,6 +121,22 @@ impl ClusterModel {
         self.identities.update(key, change);
         cx.emit(ClusterModelEvent::IdentitiesChanged);
         cx.notify();
+    }
+
+    pub fn selected_namespaces(&self, key: &ClusterKey) -> BTreeSet<String> {
+        self.namespaces.get(key).cloned().unwrap_or_default()
+    }
+
+    pub fn set_namespaces(
+        &mut self,
+        key: ClusterKey,
+        selected: BTreeSet<String>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_namespaces(&key) != selected {
+            self.namespaces.insert(key.clone(), selected);
+            cx.emit(ClusterModelEvent::NamespacesChanged(key));
+        }
     }
 }
 

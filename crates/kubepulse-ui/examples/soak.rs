@@ -13,21 +13,30 @@ use std::{
     time::{Duration, Instant},
 };
 
+use gpui_kit::AppContext as _;
 use gpui_kit::WindowOptions;
-use kubepulse_cluster::{EventRecord, ObjectError, ObjectTarget, ResourceKind};
+use kubepulse_cluster::{
+    ClusterEntry, ConnectionState, EventRecord, ObjectError, ObjectTarget, ResourceKind,
+};
 use kubepulse_extension_api::{ExtensionRequest, ExtensionResponse, KindRef};
 use kubepulse_extension_host::{CallError, ContributionSet};
 use kubepulse_store::{
     ClusterStore, StoreOptions, View, ViewQuery,
-    synthetic::{Burst, SyntheticCluster, pod_columns, pod_kind},
+    synthetic::{Burst, SyntheticCluster, namespace_kind, pod_columns, pod_kind},
 };
 use kubepulse_ui::{
+    cluster_model::ClusterModel,
     columns::{ColumnDef, KindColumns},
+    identity::{ClusterKey, IdentityStore},
     resource_browser::ResourceBrowser,
+    runtime::{ClusterState, ClusterStatus},
     services::{ClusterServices, Reply},
 };
 use serde_json::Value;
-use tokio::runtime::Runtime;
+use tokio::{
+    runtime::Runtime,
+    sync::{mpsc, watch},
+};
 
 const CONTEXT: &str = "soak";
 const PODS: usize = 10_000;
@@ -37,6 +46,8 @@ const RELEASE_DELAY: Duration = Duration::from_secs(300);
 const RELEASE_MARGIN: Duration = Duration::from_secs(30);
 const SAMPLE: Duration = Duration::from_secs(5);
 const MEMORY_LIMIT_MIB: u64 = 500;
+/// The pods the table shows and the namespaces its picker offers.
+const OPEN_WATCHES: usize = 2;
 
 struct Services {
     runtime: Runtime,
@@ -121,8 +132,29 @@ fn main() {
 
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
+        let status = ClusterStatus {
+            entry: ClusterEntry {
+                context: CONTEXT.to_owned(),
+                cluster: None,
+                server: None,
+                user: None,
+                namespace: None,
+            },
+            state: ConnectionState::Connected,
+            active_work: Vec::new(),
+            resources: Arc::new(vec![pod_kind(), namespace_kind()]),
+        };
+        let state = Arc::new(ClusterState {
+            version: 1,
+            clusters: vec![status],
+            errors: Vec::new(),
+        });
+        let (_state, state) = watch::channel(state);
+        let (commands, _) = mpsc::unbounded_channel();
+        let model = cx.new(|cx| ClusterModel::new(state, commands, IdentityStore::default(), cx));
+        let key = ClusterKey::new(CONTEXT, None);
         let (_, browser) = gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-            ResourceBrowser::open(CONTEXT, pod_kind(), columns, services, window, cx)
+            ResourceBrowser::open(&key, pod_kind(), columns, model, services, window, cx)
                 .expect("the store is open")
         })
         .expect("open the window");
@@ -149,7 +181,7 @@ fn main() {
                 }
                 if let Some(closed_at) = closed_at
                     && released_after.is_none()
-                    && watches.load(Ordering::SeqCst) == 1
+                    && watches.load(Ordering::SeqCst) == OPEN_WATCHES
                 {
                     released_after = Some(closed_at.elapsed());
                 }

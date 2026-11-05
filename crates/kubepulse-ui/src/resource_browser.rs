@@ -1,18 +1,22 @@
 //! The table for one kind. Each browser has its own view of the shared store,
-//! so two tabs keep their own filter, sort, and scroll position.
+//! so two tabs keep their own filter, sort, and scroll position. The namespace
+//! selection belongs to the cluster, so every namespaced table shares it.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     ops::Range,
     sync::Arc,
 };
 
 use gpui_kit::{
     component::{
-        ActiveTheme as _,
+        ActiveTheme as _, IndexPath,
+        combobox::{Combobox, ComboboxEvent, ComboboxState},
         input::{Input, InputEvent, InputState},
+        searchable_list::SearchableVec,
         table::{Column, ColumnSort, DataTable, TableDelegate, TableEvent, TableState},
     },
+    prelude::FluentBuilder as _,
     *,
 };
 use kubepulse_cluster::ResourceKind;
@@ -24,11 +28,15 @@ use kubepulse_store::{
 use rust_i18n::t;
 
 use crate::{
+    cluster_model::{ClusterModel, ClusterModelEvent},
     columns::{ComputedColumn, KindColumns, kind_ref},
+    identity::ClusterKey,
     services::ClusterServices,
 };
 
 const PENDING_CELL: &str = "…";
+
+type NamespacePicker = ComboboxState<SearchableVec<String>>;
 
 fn cell_text(cell: Option<&Cell>) -> String {
     match cell {
@@ -157,6 +165,15 @@ impl TableDelegate for RowsDelegate {
     }
 }
 
+fn namespace_kind(model: &Entity<ClusterModel>, context: &str, cx: &App) -> Option<ResourceKind> {
+    let status = model.read(cx).status(context)?;
+    status
+        .resources
+        .iter()
+        .find(|kind| kind.group.is_empty() && kind.kind == "Namespace")
+        .cloned()
+}
+
 pub enum BrowserEvent {
     Open(Arc<Row>),
 }
@@ -164,15 +181,24 @@ pub enum BrowserEvent {
 impl EventEmitter<BrowserEvent> for ResourceBrowser {}
 
 pub struct ResourceBrowser {
-    context: String,
+    key: ClusterKey,
     kind: ResourceKind,
+    model: Entity<ClusterModel>,
     services: Arc<dyn ClusterServices>,
     view: View,
     query: ViewQuery,
     table: Entity<TableState<RowsDelegate>>,
     filter: Entity<InputState>,
     labels: Entity<InputState>,
-    namespaces: Entity<InputState>,
+    /// Only namespaced kinds have one.
+    namespaces: Option<Entity<NamespacePicker>>,
+    /// The picker's choices, which are refreshed only when they differ.
+    namespace_options: BTreeSet<String>,
+    /// The cluster's namespaces, as far as the user may list them.
+    cluster_namespaces: Vec<String>,
+    /// Whether the cluster's namespaces are unavailable.
+    namespaces_incomplete: bool,
+    _namespace_view: Option<View>,
     snapshot: Arc<Snapshot>,
     selected: Option<Arc<str>>,
     /// Selection events still on their way from changes made here, not by the
@@ -186,25 +212,37 @@ pub struct ResourceBrowser {
 impl ResourceBrowser {
     /// Opens a browser, or `None` if the cluster is not connected.
     pub fn open(
-        context: &str,
+        key: &ClusterKey,
         kind: ResourceKind,
         columns: KindColumns,
+        model: Entity<ClusterModel>,
         services: Arc<dyn ClusterServices>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Entity<Self>> {
-        let view = services.open_view(context, &kind, ViewQuery::default())?;
+        let query = ViewQuery {
+            namespaces: if kind.namespaced {
+                model.read(cx).selected_namespaces(key)
+            } else {
+                BTreeSet::new()
+            },
+            ..Default::default()
+        };
+        let view = services.open_view(&key.context, &kind, query.clone())?;
         services.kind_opened(kind_ref(&kind));
-        let context = context.to_owned();
-        Some(cx.new(|cx| Self::new(context, kind, columns, services, view, window, cx)))
+        let key = key.clone();
+        Some(cx.new(|cx| Self::new(key, kind, columns, model, services, view, query, window, cx)))
     }
 
+    #[expect(clippy::too_many_arguments)]
     fn new(
-        context: String,
+        key: ClusterKey,
         kind: ResourceKind,
         columns: KindColumns,
+        model: Entity<ClusterModel>,
         services: Arc<dyn ClusterServices>,
         view: View,
+        query: ViewQuery,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -236,10 +274,7 @@ impl ResourceBrowser {
         let labels = cx.new(|cx| {
             InputState::new(window, cx).placeholder(t!("browser.label_selector").to_string())
         });
-        let namespaces = cx.new(|cx| {
-            InputState::new(window, cx).placeholder(t!("browser.namespaces").to_string())
-        });
-        let subscriptions = vec![
+        let mut subscriptions = vec![
             cx.subscribe(&table, Self::on_table_event),
             cx.subscribe(&filter, |this, input, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -253,19 +288,15 @@ impl ResourceBrowser {
                     this.set_labels(&text, cx);
                 }
             }),
-            cx.subscribe(&namespaces, |this, input, event: &InputEvent, cx| {
-                if matches!(event, InputEvent::Change) {
-                    let text = input.read(cx).value().to_string();
-                    this.set_namespaces(&text, cx);
-                }
-            }),
         ];
 
         let mut snapshots = view.subscribe();
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             loop {
                 let latest = snapshots.borrow_and_update().clone();
-                let applied = this.update(cx, |this, cx| this.apply_snapshot(latest, cx));
+                let applied = this.update_in(cx, |this, window, cx| {
+                    this.apply_snapshot(latest, window, cx);
+                });
                 if applied.is_err() || snapshots.changed().await.is_err() {
                     return;
                 }
@@ -273,12 +304,55 @@ impl ResourceBrowser {
         })
         .detach();
 
+        let namespaces = kind.namespaced.then(|| {
+            let selected = query.namespaces.iter().cloned().collect::<Vec<_>>();
+            let indices = (0..selected.len()).map(IndexPath::new).collect();
+            let picker = cx.new(|cx| {
+                ComboboxState::new(SearchableVec::new(selected), indices, window, cx)
+                    .multiple(true)
+                    .searchable(true)
+            });
+            subscriptions.push(cx.subscribe(
+                &picker,
+                |this, _, event: &ComboboxEvent<SearchableVec<String>>, cx| {
+                    if let ComboboxEvent::Change(selected) = event {
+                        this.set_namespaces(selected.iter().cloned().collect(), cx);
+                    }
+                },
+            ));
+            subscriptions.push(cx.subscribe_in(&model, window, Self::on_model_event));
+            picker
+        });
+        let namespace_view = namespaces.as_ref().and_then(|_| {
+            let kind = namespace_kind(&model, &key.context, cx)?;
+            let view = services.open_view(&key.context, &kind, ViewQuery::default())?;
+            let mut snapshots = view.subscribe();
+            cx.spawn_in(window, async move |this, cx| {
+                loop {
+                    let latest = snapshots.borrow_and_update().clone();
+                    let applied = this.update_in(cx, |this, window, cx| {
+                        this.apply_namespace_list(&latest, window, cx);
+                    });
+                    if applied.is_err() || snapshots.changed().await.is_err() {
+                        return;
+                    }
+                }
+            })
+            .detach();
+            Some(view)
+        });
+
         Self {
-            context,
+            namespace_options: query.namespaces.clone(),
+            namespaces_incomplete: namespace_view.is_none(),
+            _namespace_view: namespace_view,
+            cluster_namespaces: Vec::new(),
+            key,
             kind,
+            model,
             services,
             view,
-            query: ViewQuery::default(),
+            query,
             table,
             filter,
             labels,
@@ -312,6 +386,22 @@ impl ResourceBrowser {
         self.label_error.as_deref()
     }
 
+    pub fn namespace_picker(&self) -> Option<&Entity<NamespacePicker>> {
+        self.namespaces.as_ref()
+    }
+
+    pub fn namespace_options(&self) -> &BTreeSet<String> {
+        &self.namespace_options
+    }
+
+    pub fn cluster_namespaces(&self) -> &[String] {
+        &self.cluster_namespaces
+    }
+
+    pub fn namespaces_incomplete(&self) -> bool {
+        self.namespaces_incomplete
+    }
+
     fn apply_query(&mut self, cx: &mut Context<Self>) {
         self.view.set_query(self.query.clone());
         cx.notify();
@@ -343,14 +433,12 @@ impl ResourceBrowser {
         self.apply_query(cx);
     }
 
-    pub fn set_namespaces(&mut self, text: &str, cx: &mut Context<Self>) {
-        self.query.namespaces = text
-            .split(',')
-            .map(str::trim)
-            .filter(|namespace| !namespace.is_empty())
-            .map(str::to_owned)
-            .collect();
-        self.apply_query(cx);
+    /// Selects namespaces for the whole cluster. This table follows the change
+    /// the same way every other one does.
+    pub fn set_namespaces(&mut self, selected: BTreeSet<String>, cx: &mut Context<Self>) {
+        let key = self.key.clone();
+        self.model
+            .update(cx, |model, cx| model.set_namespaces(key, selected, cx));
     }
 
     pub fn set_sort(&mut self, sort: Option<(SortKey, SortDirection)>, cx: &mut Context<Self>) {
@@ -382,7 +470,13 @@ impl ResourceBrowser {
         }
     }
 
-    fn apply_snapshot(&mut self, snapshot: Arc<Snapshot>, cx: &mut Context<Self>) {
+    fn apply_snapshot(
+        &mut self,
+        snapshot: Arc<Snapshot>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let namespaces_changed = snapshot.namespaces != self.snapshot.namespaces;
         self.snapshot = snapshot.clone();
         self.table.update(cx, |table, cx| {
             table.delegate_mut().rows = snapshot.rows.clone();
@@ -390,7 +484,74 @@ impl ResourceBrowser {
         });
         self.sync_selection(cx);
         self.request_computed(cx);
+        if namespaces_changed {
+            self.sync_namespace_picker(window, cx);
+        }
         cx.notify();
+    }
+
+    fn apply_namespace_list(
+        &mut self,
+        snapshot: &Snapshot,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.namespaces_incomplete = snapshot.denied.is_some();
+        self.cluster_namespaces = snapshot
+            .rows
+            .iter()
+            .map(|row| row.name.to_string())
+            .collect();
+        self.sync_namespace_picker(window, cx);
+        cx.notify();
+    }
+
+    fn on_model_event(
+        &mut self,
+        model: &Entity<ClusterModel>,
+        event: &ClusterModelEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let ClusterModelEvent::NamespacesChanged(key) = event
+            && *key == self.key
+        {
+            self.query.namespaces = model.read(cx).selected_namespaces(key);
+            self.apply_query(cx);
+            self.sync_namespace_picker(window, cx);
+        }
+    }
+
+    /// Offers the cluster's namespaces, those in this kind, and the selection,
+    /// so that a deleted namespace stays selected until the user removes it.
+    /// The picker clears its search text when given a selection, so it gets one
+    /// only if something differs. New options always need one, because it holds
+    /// its selection by list position.
+    fn sync_namespace_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(picker) = self.namespaces.clone() else {
+            return;
+        };
+        let options: BTreeSet<String> = self
+            .cluster_namespaces
+            .iter()
+            .chain(self.snapshot.namespaces.iter())
+            .chain(&self.query.namespaces)
+            .cloned()
+            .collect();
+        let new_options = options != self.namespace_options;
+        let selected = &self.query.namespaces;
+        picker.update(cx, |picker, cx| {
+            if new_options {
+                let items = options.iter().cloned().collect::<Vec<_>>();
+                picker.set_items(SearchableVec::new(items), window, cx);
+            }
+            let shown: BTreeSet<String> = picker.selected_values().into_iter().collect();
+            if new_options || shown != *selected {
+                let values = selected.iter().cloned().collect::<Vec<_>>();
+                picker.set_selected_values(&values, window, cx);
+            }
+        });
+        self.namespace_options = options;
     }
 
     /// Puts the table's selection on the selected object. The table scrolls to
@@ -484,7 +645,7 @@ impl ResourceBrowser {
 
     fn object_ref(&self, row: &Row) -> ObjectRef {
         ObjectRef {
-            cluster: ClusterRef(self.context.clone()),
+            cluster: ClusterRef(self.key.context.clone()),
             kind: kind_ref(&self.kind),
             namespace: row.namespace.as_deref().map(str::to_owned),
             name: row.name.to_string(),
@@ -521,7 +682,27 @@ impl Render for ResourceBrowser {
                     .gap_2()
                     .child(div().flex_1().child(Input::new(&self.filter)))
                     .child(div().flex_1().child(Input::new(&self.labels)))
-                    .child(div().flex_1().child(Input::new(&self.namespaces))),
+                    .children(self.namespaces.as_ref().map(|picker| {
+                        let picker = Combobox::new(picker)
+                            .placeholder(t!("browser.all_namespaces").to_string())
+                            .search_placeholder(t!("browser.search_namespaces").to_string())
+                            .cleanable(true)
+                            .when(self.namespaces_incomplete, |this| {
+                                this.footer(|_, _| {
+                                    div()
+                                        .id("namespaces-incomplete")
+                                        .p_2()
+                                        .text_xs()
+                                        .child(t!("browser.namespaces_incomplete").to_string())
+                                        .test_support()
+                                })
+                            });
+                        div()
+                            .id("namespace-picker")
+                            .flex_1()
+                            .child(picker)
+                            .test_support()
+                    })),
             )
             .children(self.label_error.clone().map(|error| {
                 div()

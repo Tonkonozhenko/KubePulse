@@ -359,3 +359,36 @@ async fn bursts_publish_no_more_than_once_per_frame() {
         "{published} publications in {frames} frames"
     );
 }
+
+#[tokio::test]
+async fn snapshots_list_every_namespace_whatever_the_view_shows() {
+    let source = Scripted::new();
+    let store = store(source.clone());
+    let view = store.view(
+        &pod_kind(),
+        ViewQuery {
+            namespaces: ["one".to_owned()].into(),
+            ..Default::default()
+        },
+    );
+    let mut snapshots = view.subscribe();
+    source.send(restarted(None)).await;
+    source.send(listed(None, in_namespace(1, "one"))).await;
+    source.send(listed(None, in_namespace(2, "two"))).await;
+    source.send(listed(None, in_namespace(3, "two"))).await;
+    source.send(synced(None)).await;
+
+    let listed = wait_for(&mut snapshots, |s| s.synced).await;
+    assert_eq!(listed.rows.len(), 1);
+    assert_eq!(*listed.namespaces, ["one", "two"]);
+
+    for index in [2, 3] {
+        source
+            .send(WatchEvent::Deleted {
+                key: in_namespace(index, "two").key,
+            })
+            .await;
+    }
+    let emptied = wait_for(&mut snapshots, |s| s.total == 1).await;
+    assert_eq!(*emptied.namespaces, ["one"]);
+}
