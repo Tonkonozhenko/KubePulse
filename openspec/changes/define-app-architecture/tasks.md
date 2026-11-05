@@ -32,11 +32,11 @@ Stop after this group if any target is missed, and revisit the design before sta
 
 ## 4. Resource store
 
-- [ ] 4.1 Implement reference-counted watches with pagination, bookmarks, and the release delay from D5, and verify a test confirms two views share one watch
-- [ ] 4.2 Implement the row transform and string interning from D6, and verify with a benchmark that measures memory per pod
-- [ ] 4.3 Implement view queries for filter and sort with once-per-frame snapshot publication from D7, and verify 10k rows sort and filter within 100 milliseconds in a benchmark
-- [ ] 4.4 Add the synthetic load generator from D18, and verify the store converges within 2 seconds after a 1,000-changes-per-second burst
-- [ ] 4.5 Implement namespace-scoped fallback for forbidden cluster-wide lists, and verify it against a fake server that denies them
+- [x] 4.1 Implement reference-counted watches with pagination, bookmarks, and the release delay from D5, and verify a test confirms two views share one watch
+- [x] 4.2 Implement the row transform and string interning from D6, and verify with a benchmark that measures memory per pod
+- [x] 4.3 Implement view queries for filter and sort with once-per-frame snapshot publication from D7, and verify 10k rows sort and filter within 100 milliseconds in a benchmark
+- [x] 4.4 Add the synthetic load generator from D18, and verify the store converges within 2 seconds after a 1,000-changes-per-second burst
+- [x] 4.5 Implement namespace-scoped fallback for forbidden cluster-wide lists, and verify it against a fake server that denies them
 - [ ] 4.6 Add scale benchmarks to CI with regression thresholds, and verify a deliberate slowdown fails them
 
 ## 5. Extension contract and host

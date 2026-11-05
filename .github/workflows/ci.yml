@@ -41,6 +41,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: python3 scripts/check-crate-graph.py
 
+  scale:
+    name: Scale limits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p kubepulse-store --release --locked --test scale -- --ignored --nocapture --test-threads=1
+
   licenses:
     name: Dependency licenses
     runs-on: ubuntu-latest

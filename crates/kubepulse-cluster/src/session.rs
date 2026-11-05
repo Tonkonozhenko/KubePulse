@@ -13,6 +13,8 @@ use kube::{
 use tokio::{sync::watch, time};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
+use crate::resource_watch::SessionWatcher;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConnectionState {
     Disconnected,
@@ -131,6 +133,11 @@ impl ClusterSession {
     /// The client, once the session has connected.
     pub fn client(&self) -> Option<Client> {
         self.client.borrow().clone()
+    }
+
+    /// A handle for starting resource watches in this session's tree.
+    pub fn watcher(&self) -> SessionWatcher {
+        SessionWatcher::new(self.client.clone(), self.cancel.clone(), self.tasks.clone())
     }
 
     /// Runs `task` in this session's tree. It stops when the session disconnects.

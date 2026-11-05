@@ -7,10 +7,12 @@ publish.workspace = true
 
 [dependencies]
 backon.workspace = true
+futures.workspace = true
 k8s-openapi.workspace = true
 kube.workspace = true
 notify.workspace = true
 notify-debouncer-mini.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
