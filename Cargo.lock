@@ -3825,12 +3825,21 @@ dependencies = [
 [[package]]
 name = "kubepulse-extension-api"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "kubepulse-extension-host"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "kubepulse-extension-api",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

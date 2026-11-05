@@ -41,13 +41,13 @@ Stop after this group if any target is missed, and revisit the design before sta
 
 ## 5. Extension contract and host
 
-- [ ] 5.1 Define manifest, contribution, declarative UI, and host operation types in `kubepulse-extension-api`, and verify round-trip serialization tests pass for every type
-- [ ] 5.2 Implement the registry with enable and disable behavior and the built-in loader, and verify a test extension's contributions appear and disappear without a restart
-- [ ] 5.3 Implement capability handles that enforce declared permissions, and verify undeclared operations are refused in tests
-- [ ] 5.4 Implement activation triggers, and verify a test extension stays inactive until its trigger fires
-- [ ] 5.5 Implement failure handling with panic capture, time limits, and auto-disable, and verify a panicking test extension leaves the host running
-- [ ] 5.6 Implement contract version checks, and verify an incompatible manifest is refused with a clear message
-- [ ] 5.7 Write the extension authoring guide in `docs/extensions.md`, and verify its example extension builds
+- [x] 5.1 Define manifest, contribution, declarative UI, and host operation types in `kubepulse-extension-api`, and verify round-trip serialization tests pass for every type
+- [x] 5.2 Implement the registry with enable and disable behavior and the built-in loader, and verify a test extension's contributions appear and disappear without a restart
+- [x] 5.3 Implement capability handles that enforce declared permissions, and verify undeclared operations are refused in tests
+- [x] 5.4 Implement activation triggers, and verify a test extension stays inactive until its trigger fires
+- [x] 5.5 Implement failure handling with panic capture, time limits, and auto-disable, and verify a panicking test extension leaves the host running
+- [x] 5.6 Implement contract version checks, and verify an incompatible manifest is refused with a clear message
+- [x] 5.7 Write the extension authoring guide in `docs/extensions.md`, and verify its example extension builds
 
 ## 6. Application shell
 
