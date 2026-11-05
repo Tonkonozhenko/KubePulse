@@ -56,8 +56,7 @@ Stop after this group if any target is missed, and revisit the design before sta
 - [ ] 6.3 Implement the searchable cluster list showing each cluster's connection state, plus connect and disconnect actions and the active-work warning, and verify with UI tests against a fake cluster, including that opening a disconnected cluster starts no connection and closing its last tab leaves a cluster connected
 - [ ] 6.4 Implement cluster identity and protected clusters with the keys from D16, and verify a reused context name on another server does not inherit settings
 - [ ] 6.5 Implement workspace persistence and restore without automatic connection, and verify a restart test restores the layout in a disconnected state, activating a restored tab starts no connection, and disconnecting a cluster leaves its tabs open
-- [ ] 6.6 Implement the command palette, including extension commands, and verify opening a kind works using only the keyboard
-- [ ] 6.7 Add a startup time check, and verify the window appears within 1 second on the reference machine with unreachable clusters
+- [ ] 6.6 Add a startup time check, and verify the window appears within 1 second on the reference machine with unreachable clusters
 
 ## 7. Resource browsing
 
@@ -70,42 +69,46 @@ Stop after this group if any target is missed, and revisit the design before sta
 - [ ] 7.7 Implement hidden Secret values and deletion confirmation, and verify with UI tests covering a protected cluster
 - [ ] 7.8 Verify the memory limits and the 5-minute watch release with a 10-minute soak test on the reference machine
 
-## 8. Manifest editing
+## 8. Command palette
 
-- [ ] 8.1 Implement manifest loading with stripping and restoring of server-managed fields, and verify with round-trip unit tests
-- [ ] 8.2 Implement the editor surface with YAML highlighting, search, undo, and syntax errors, and verify a syntax error disables applying
-- [ ] 8.3 Implement the dry-run step, and verify a rejected change shows the server's message and leaves the cluster unchanged
-- [ ] 8.4 Implement diff review with target details and the no-change case, and verify an admission mutation appears in the diff using a fake server
-- [ ] 8.5 Implement apply with `resourceVersion` checks and conflict recovery, and verify a concurrent change is refused and can be reapplied on the newer version
-- [ ] 8.6 Implement read-only mode, the Secret reveal confirmation, and unsaved-edit protection, and verify with UI tests
-- [ ] 8.7 Route extension mutations through this flow, and verify a test extension cannot change a resource without user confirmation
+- [ ] 8.1 Implement the command palette, including extension commands, and verify opening a kind works using only the keyboard
 
-## 9. Pod logs
+## 9. Manifest editing
 
-- [ ] 9.1 Implement container selection, init containers, and previous-instance logs, and verify with a fake server
-- [ ] 9.2 Implement streaming into the ring buffer from D14, with the dropped-lines notice, and verify memory stays bounded at 10,000 lines per second
-- [ ] 9.3 Implement the log surface with follow behavior, timestamps, and search, and verify with UI tests while lines stream
-- [ ] 9.4 Implement stream resume with duplicate removal, and verify an interrupted fake stream shows no duplicated lines
+- [ ] 9.1 Implement manifest loading with stripping and restoring of server-managed fields, and verify with round-trip unit tests
+- [ ] 9.2 Implement the editor surface with YAML highlighting, search, undo, and syntax errors, and verify a syntax error disables applying
+- [ ] 9.3 Implement the dry-run step, and verify a rejected change shows the server's message and leaves the cluster unchanged
+- [ ] 9.4 Implement diff review with target details and the no-change case, and verify an admission mutation appears in the diff using a fake server
+- [ ] 9.5 Implement apply with `resourceVersion` checks and conflict recovery, and verify a concurrent change is refused and can be reapplied on the newer version
+- [ ] 9.6 Implement read-only mode, the Secret reveal confirmation, and unsaved-edit protection, and verify with UI tests
+- [ ] 9.7 Route extension mutations through this flow, and verify a test extension cannot change a resource without user confirmation
 
-## 10. Pod shell
+## 10. Pod logs
 
-- [ ] 10.1 Implement the exec stream with shell discovery and the fallback command prompt, and verify against a simulated cluster, including a container with no shell
-- [ ] 10.2 Implement the terminal element from D13 with colors, scrollback, copy and paste, and resizing, and verify a full-screen program works on all three platforms
-- [ ] 10.3 Implement session-end handling, reconnect, and the target display, and verify a dropped connection keeps the scrollback
+- [ ] 10.1 Implement container selection, init containers, and previous-instance logs, and verify with a fake server
+- [ ] 10.2 Implement streaming into the ring buffer from D14, with the dropped-lines notice, and verify memory stays bounded at 10,000 lines per second
+- [ ] 10.3 Implement the log surface with follow behavior, timestamps, and search, and verify with UI tests while lines stream
+- [ ] 10.4 Implement stream resume with duplicate removal, and verify an interrupted fake stream shows no duplicated lines
 
-## 11. Port-forwarding
+## 11. Pod shell
 
-- [ ] 11.1 Implement pod forwards with loopback-only binding and automatic port selection, and verify a test confirms the listener is not reachable on non-loopback addresses
-- [ ] 11.2 Implement service forwards through EndpointSlices with re-resolution, and verify replacing the backend pod reconnects
-- [ ] 11.3 Implement the global forward registry and its view, and verify forwards survive closing their tab and stop when their cluster disconnects
-- [ ] 11.4 Implement failure reporting and restart, and verify a deleted target pod marks the forward as failed
+- [ ] 11.1 Implement the exec stream with shell discovery and the fallback command prompt, and verify against a simulated cluster, including a container with no shell
+- [ ] 11.2 Implement the terminal element from D13 with colors, scrollback, copy and paste, and resizing, and verify a full-screen program works on all three platforms
+- [ ] 11.3 Implement session-end handling, reconnect, and the target display, and verify a dropped connection keeps the scrollback
 
-## 12. Release readiness
+## 12. Port-forwarding
 
-- [ ] 12.1 Add the About screen with the license text and third-party notices, and verify both are present in release builds
-- [ ] 12.2 Package signed builds for Linux, macOS, and Windows, and verify each installs and starts on a clean machine
-- [ ] 12.3 Verify no license check or usage reporting exists by running the application offline and capturing its outbound traffic
-- [ ] 12.4 Run the end-to-end workflow on all three platforms against simulated 10k-pod clusters: connect two clusters, browse, edit with diff, follow logs, open a shell, and forward a port
+- [ ] 12.1 Implement pod forwards with loopback-only binding and automatic port selection, and verify a test confirms the listener is not reachable on non-loopback addresses
+- [ ] 12.2 Implement service forwards through EndpointSlices with re-resolution, and verify replacing the backend pod reconnects
+- [ ] 12.3 Implement the global forward registry and its view, and verify forwards survive closing their tab and stop when their cluster disconnects
+- [ ] 12.4 Implement failure reporting and restart, and verify a deleted target pod marks the forward as failed
+
+## 13. Release readiness
+
+- [ ] 13.1 Add the About screen with the license text and third-party notices, and verify both are present in release builds
+- [ ] 13.2 Package signed builds for Linux, macOS, and Windows, and verify each installs and starts on a clean machine
+- [ ] 13.3 Verify no license check or usage reporting exists by running the application offline and capturing its outbound traffic
+- [ ] 13.4 Run the end-to-end workflow on all three platforms against simulated 10k-pod clusters: connect two clusters, browse, edit with diff, follow logs, open a shell, and forward a port
 
 ## Workflow follow-up
 

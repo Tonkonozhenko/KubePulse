@@ -1,0 +1,20 @@
+# Keep LF in the repository and in every checkout, on all platforms.
+* text=auto eol=lf
+
+# Windows scripts need CRLF to run reliably.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Never touch line endings in binary assets.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.wasm binary
