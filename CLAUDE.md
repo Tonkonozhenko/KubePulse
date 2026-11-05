@@ -52,7 +52,7 @@ Dependencies point downward, and CI enforces this graph with `scripts/check-crat
 | `kubepulse` | Binary and composition root |
 | `kubepulse-ui` | Workspace, tabs, table, editor, terminal, declarative UI renderer. The only crate that uses the UI toolkit. |
 | `kubepulse-builtin` | Built-in views, tabs, and actions. Depends only on the extension contract. |
-| `kubepulse-extension-host` | Registry, loaders, permission enforcement, activation, failure isolation |
+| `kubepulse-extension-host` | Registry, permission enforcement, activation, failure isolation |
 | `kubepulse-extension-api` | The contract. Apache-2.0, with no toolkit or Kubernetes client types. |
 | `kubepulse-store` | Per-cluster cache, row projection, sorted and filtered views |
 | `kubepulse-cluster` | Kubeconfig, sessions, auth, discovery, watches, exec, logs, port-forward |

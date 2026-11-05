@@ -148,7 +148,7 @@ fn options() -> HostOptions {
 fn host_with(extensions: Vec<Arc<dyn Extension>>) -> (ExtensionHost, Arc<FakeBackend>) {
     let backend = Arc::new(FakeBackend::default());
     let host = ExtensionHost::new(backend.clone(), options());
-    host.load(&BuiltinLoader::new(extensions));
+    host.load(extensions);
     (host, backend)
 }
 
@@ -303,7 +303,7 @@ async fn cluster_denials_are_returned_to_the_extension() {
         ..Default::default()
     });
     let host = ExtensionHost::new(backend, options());
-    host.load(&BuiltinLoader::new(vec![extension.clone()]));
+    host.load(vec![extension.clone()]);
 
     host.request("a", command()).await.unwrap();
     let result = extension.last_host_result.lock().unwrap().clone().unwrap();

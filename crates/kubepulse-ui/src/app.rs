@@ -5,7 +5,7 @@ use std::{path::PathBuf, sync::Arc, time::Instant};
 use gpui_kit::*;
 use kubepulse_cluster::{SessionOptions, default_paths};
 use kubepulse_extension_api::{ActivationTrigger, Extension};
-use kubepulse_extension_host::{BuiltinLoader, ExtensionHost, HostOptions};
+use kubepulse_extension_host::{ExtensionHost, HostOptions};
 
 use crate::{
     cluster_model::{ClusterModel, SharedClusterModel},
@@ -50,7 +50,7 @@ pub fn run_with(options: RunOptions) {
     let clusters = Arc::new(ConnectedClusters::default());
     let backend = Arc::new(ClusterBackend(clusters.clone()));
     let host = ExtensionHost::new(backend, HostOptions::default());
-    host.load(&BuiltinLoader::new(options.extensions));
+    host.load(options.extensions);
     let stores = StoreConfig::for_host(clusters.clone(), &host);
     let runtime = ClusterRuntime::start(paths, SessionOptions::default(), stores)
         .expect("failed to start background threads");

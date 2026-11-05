@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use kubepulse_cluster::{RawObject, ResourceKind, WatchEvent};
 use kubepulse_extension_api::{ColumnSource, Manifest};
-use kubepulse_extension_host::{BuiltinLoader, ExtensionHost, HostOptions};
+use kubepulse_extension_host::{ExtensionHost, HostOptions};
 use kubepulse_store::{Cell, ClusterStore, StoreOptions, ViewQuery, WatchSource};
 use kubepulse_ui::{
     columns::{columns_for, navigation},
@@ -24,7 +24,7 @@ fn manifests() -> Vec<Manifest> {
 fn host() -> ExtensionHost {
     let backend = Arc::new(ClusterBackend(Arc::default()));
     let host = ExtensionHost::new(backend, HostOptions::default());
-    host.load(&BuiltinLoader::new(kubepulse_builtin::extensions()));
+    host.load(kubepulse_builtin::extensions());
     host
 }
 

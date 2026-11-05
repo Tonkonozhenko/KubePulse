@@ -19,10 +19,7 @@ use kubepulse_extension_api::{
 };
 use tokio::{sync::watch, task::JoinSet, time};
 
-use crate::{
-    capability::{Capability, HostBackend},
-    loader::Loader,
-};
+use crate::capability::{Capability, HostBackend};
 
 #[derive(Clone, Debug)]
 pub struct HostOptions {
@@ -136,10 +133,10 @@ impl ExtensionHost {
     }
 
     /// Reads each extension's manifest. No extension code runs beyond that.
-    pub fn load(&self, loader: &dyn Loader) {
+    pub fn load(&self, extensions: Vec<Arc<dyn Extension>>) {
         {
             let mut entries = self.entries();
-            for extension in loader.load() {
+            for extension in extensions {
                 let manifest = extension.manifest();
                 let status = self.check(&manifest, &entries);
                 if let ExtensionStatus::Refused { reason } = &status {

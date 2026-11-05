@@ -14,7 +14,7 @@ use std::{
 };
 
 use kubepulse_cluster::{ConnectionState, ObjectTarget, ResourceKind, SessionOptions};
-use kubepulse_extension_host::{BuiltinLoader, ContributionSet, ExtensionHost, HostOptions};
+use kubepulse_extension_host::{ContributionSet, ExtensionHost, HostOptions};
 use kubepulse_store::{Row, View, ViewQuery};
 use kubepulse_ui::{
     columns::{NavigationGroup, columns_for, navigation},
@@ -221,7 +221,7 @@ fn browses_a_real_cluster() {
     let clusters = Arc::new(ConnectedClusters::default());
     let backend = Arc::new(ClusterBackend(clusters.clone()));
     let host = ExtensionHost::new(backend, HostOptions::default());
-    host.load(&BuiltinLoader::new(kubepulse_builtin::extensions()));
+    host.load(kubepulse_builtin::extensions());
     let contributions = host.contributions().borrow().clone();
     let stores = StoreConfig::for_host(clusters.clone(), &host);
     let runtime = ClusterRuntime::start(vec![kubeconfig], SessionOptions::default(), stores)

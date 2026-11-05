@@ -56,7 +56,7 @@ kubepulse (binary, composition root)
 | `kubepulse-cluster` | Kubeconfig, sessions, auth, discovery, watches, exec, logs, port-forward |
 | `kubepulse-store` | Per-cluster resource cache, row projection, sorted and filtered views |
 | `kubepulse-extension-api` | The contract: manifests, contribution types, declarative UI tree, host operations |
-| `kubepulse-extension-host` | Registry, loaders, permission enforcement, activation, failure isolation |
+| `kubepulse-extension-host` | Registry, permission enforcement, activation, failure isolation |
 | `kubepulse-builtin` | Resource views, detail tabs, and actions. Depends only on the contract. |
 | `kubepulse-ui` | Workspace, tabs, table, editor, terminal, and the declarative UI renderer |
 
@@ -114,10 +114,7 @@ Rows are tracked by UID, which keeps selection stable as order changes.
 
 Extensions implement Rust traits, but every value crossing the boundary is an owned, serializable type, and all calls are asynchronous. Nothing crossing it references toolkit, client, or store types. A later loader only has to carry these same messages.
 
-Two loaders are planned:
-
-1. **Built-in loader (this change):** compiled-in Rust extensions.
-2. **Sandboxed loader (later):** chosen when third-party plugins become real. WebAssembly components and `gpui-shell` are the candidates. `gpui-shell` matches the declarative model but is at an early milestone with no stable interface, so the choice stays deferred.
+Extensions are compiled in for now. A sandboxed loader comes later, chosen when third-party plugins become real. WebAssembly components and `gpui-shell` are the candidates. `gpui-shell` matches the declarative model but is at an early milestone with no stable interface, so the choice stays deferred.
 
 Round-trip serialization tests on every contract type keep this property honest.
 
