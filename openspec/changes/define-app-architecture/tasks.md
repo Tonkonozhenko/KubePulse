@@ -22,13 +22,13 @@ Stop after this group if any target is missed, and revisit the design before sta
 
 ## 3. Cluster sessions
 
-- [ ] 3.1 Implement kubeconfig discovery with `KUBECONFIG` merging, file watching, and per-file error reporting, and verify with unit tests using fixture files, including one with 500 contexts
-- [ ] 3.2 Implement the session state machine, explicit connect and disconnect, and task tree from D4, and verify with tests for each state transition against a fake API server, including that listing contexts makes no network requests and runs no credential helpers
-- [ ] 3.3 Implement auth through kubeconfig mechanisms with timeouts and cancellation, and verify a slow credential helper can be cancelled without blocking other sessions
-- [ ] 3.4 Implement reconnection with backoff, and verify a fake API server outage moves the session to degraded and back to connected
-- [ ] 3.5 Implement API discovery, including custom resource changes, and verify a kind added to the fake server appears without reconnecting
-- [ ] 3.6 Add a test that scans log output during authentication, and verify no credentials appear in it
-- [ ] 3.7 Document the session lifecycle in `docs/architecture/cluster-sessions.md`, and verify it matches the implemented states
+- [x] 3.1 Implement kubeconfig discovery with `KUBECONFIG` merging, file watching, and per-file error reporting, and verify with unit tests using fixture files, including one with 500 contexts
+- [x] 3.2 Implement the session state machine, explicit connect and disconnect, and task tree from D4, and verify with tests for each state transition against a fake API server, including that listing contexts makes no network requests and runs no credential helpers
+- [x] 3.3 Implement auth through kubeconfig mechanisms with timeouts and cancellation, and verify a slow credential helper can be cancelled without blocking other sessions
+- [x] 3.4 Implement reconnection with backoff, and verify a fake API server outage moves the session to degraded and back to connected
+- [x] 3.5 Implement API discovery, including custom resource changes, and verify a kind added to the fake server appears without reconnecting
+- [x] 3.6 Add a test that scans log output during authentication, and verify no credentials appear in it
+- [x] 3.7 Document the session lifecycle in `docs/architecture/cluster-sessions.md`, and verify it matches the implemented states
 
 ## 4. Resource store
 
