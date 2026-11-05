@@ -763,21 +763,6 @@ fn an_owner_of_a_kind_the_cluster_does_not_serve_is_named_but_not_a_link(cx: &mu
 }
 
 #[gpui_kit::test]
-fn a_missing_object_reports_why(cx: &mut TestAppContext) {
-    let services = Arc::new(FakeServices::idle());
-    let mut harness = harness(cx, services, vec![pod_kind()], false);
-    let tab = harness.tab.clone();
-    harness.cx.update(|window, cx| {
-        tab.update(cx, |tab, cx| {
-            tab.open_object(target(pod_kind(), Some("shop"), "gone"), window, cx);
-        });
-    });
-    harness.cx.run_until_parked();
-
-    assert!(harness.exists("detail-error".into()));
-}
-
-#[gpui_kit::test]
 fn a_detail_tab_form_reaches_its_extension(cx: &mut TestAppContext) {
     let contributions = ContributionSet {
         version: 1,

@@ -156,7 +156,6 @@ impl TableDelegate for RowsDelegate {
 }
 
 pub enum BrowserEvent {
-    /// The user selected an object.
     Open(Arc<Row>),
 }
 
@@ -451,7 +450,10 @@ impl ResourceBrowser {
                     let cells = match result {
                         Ok(ExtensionResponse::Cells { cells }) => cells,
                         // Failures show in the cell rather than retrying forever.
-                        _ => vec!["unavailable".to_owned(); wanted.len()],
+                        other => {
+                            tracing::warn!(column = %column.id, ?other, "computed column failed");
+                            vec!["unavailable".to_owned(); wanted.len()]
+                        }
                     };
                     this.table.update(cx, |table, cx| {
                         let computed = &mut table.delegate_mut().computed;

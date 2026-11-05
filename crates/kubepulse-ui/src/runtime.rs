@@ -41,13 +41,10 @@ pub enum ClusterCommand {
 pub struct ClusterStatus {
     pub entry: ClusterEntry,
     pub state: ConnectionState,
-    /// Running shells, port-forwards, and similar work.
     pub active_work: Vec<String>,
-    /// The kinds this cluster serves, once it has connected.
     pub resources: Arc<Vec<ResourceKind>>,
 }
 
-/// One published view of every cluster.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ClusterState {
     pub version: u64,
@@ -204,7 +201,6 @@ impl HostBackend for ClusterBackend {
     }
 }
 
-/// The services views use, backed by the runtime.
 pub struct RuntimeServices {
     clusters: Arc<ConnectedClusters>,
     host: ExtensionHost,
@@ -297,7 +293,6 @@ impl ClusterServices for RuntimeServices {
     }
 }
 
-/// How the runtime builds each cluster's store.
 #[derive(Clone)]
 pub struct StoreConfig {
     pub clusters: Arc<ConnectedClusters>,
@@ -305,7 +300,6 @@ pub struct StoreConfig {
 }
 
 impl StoreConfig {
-    /// Stores whose columns come from `host`'s current contributions.
     pub fn for_host(clusters: Arc<ConnectedClusters>, host: &ExtensionHost) -> Self {
         let contributions = host.contributions();
         let columns: ColumnResolver = Arc::new(move |kind: &ResourceKind| {
@@ -317,23 +311,6 @@ impl StoreConfig {
                 .collect()
         });
         Self { clusters, columns }
-    }
-}
-
-impl Default for StoreConfig {
-    fn default() -> Self {
-        let columns: ColumnResolver = Arc::new(|kind: &ResourceKind| {
-            let columns = columns_for(kind, &ContributionSet::default());
-            columns
-                .declared
-                .into_iter()
-                .map(|column| column.spec)
-                .collect()
-        });
-        Self {
-            clusters: Arc::default(),
-            columns,
-        }
     }
 }
 

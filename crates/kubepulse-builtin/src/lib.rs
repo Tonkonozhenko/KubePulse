@@ -266,7 +266,6 @@ impl Extension for KindGroup {
     }
 }
 
-/// Every built-in extension.
 pub fn extensions() -> Vec<Arc<dyn Extension>> {
     GROUPS
         .into_iter()

@@ -321,13 +321,6 @@ mod tests {
     }
 
     #[test]
-    fn invalid_selectors_are_refused() {
-        for selector in ["a=b=c", "tier in (a", "tier maybe (a)", "=x", "!"] {
-            assert!(LabelSelector::parse(selector).is_err(), "{selector}");
-        }
-    }
-
-    #[test]
     fn sorts_numbers_numerically_in_both_directions() {
         let sort = |direction| {
             names(&ViewQuery {

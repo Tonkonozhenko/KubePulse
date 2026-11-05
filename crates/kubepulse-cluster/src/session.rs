@@ -37,7 +37,6 @@ pub enum ConnectionState {
     },
 }
 
-/// A resource kind the cluster serves.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ResourceKind {
     pub group: String,
@@ -46,11 +45,9 @@ pub struct ResourceKind {
     pub plural: String,
     pub namespaced: bool,
     pub verbs: Vec<String>,
-    /// Columns a custom resource definition declares.
     pub printer_columns: Vec<PrinterColumn>,
 }
 
-/// One additional printer column from a custom resource definition.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PrinterColumn {
     pub name: String,
@@ -166,7 +163,6 @@ impl ClusterSession {
         self.resources.clone()
     }
 
-    /// The client, once the session has connected.
     pub fn client(&self) -> Option<Client> {
         self.client.borrow().clone()
     }
@@ -180,12 +176,10 @@ impl ClusterSession {
         }
     }
 
-    /// Labels of the work running now.
     pub fn subscribe_work(&self) -> watch::Receiver<Vec<String>> {
         self.work.subscribe()
     }
 
-    /// A handle for watches and object requests in this session.
     pub fn handle(&self) -> SessionHandle {
         SessionHandle::new(self.client.clone(), self.cancel.clone(), self.tasks.clone())
     }
@@ -326,7 +320,7 @@ async fn probe(client: &Client) -> Result<(), String> {
 
 /// Turns a client error into text for the user. Credential helper failures can
 /// carry the helper's output, so those details are dropped.
-fn describe(error: &kube::Error) -> String {
+pub(crate) fn describe(error: &kube::Error) -> String {
     match error {
         kube::Error::Api(status) => format!(
             "the API server responded {}: {}",
@@ -420,8 +414,8 @@ async fn keep_resources_current(
                 });
             }
             // The last known kinds stay in place until a refresh succeeds.
-            Ok(Err(error)) => tracing::debug!(error = %describe(&error), "discovery failed"),
-            Err(_) => tracing::debug!("discovery timed out"),
+            Ok(Err(error)) => tracing::warn!(error = %describe(&error), "discovery failed"),
+            Err(_) => tracing::warn!("discovery timed out"),
         }
     }
 }

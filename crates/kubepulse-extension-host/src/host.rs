@@ -48,7 +48,6 @@ impl Default for HostOptions {
 pub enum ExtensionStatus {
     Inactive,
     Active,
-    /// The user turned it off.
     Disabled,
     /// Turned off after repeated failures. Enabling it again clears this.
     Failed {
@@ -60,14 +59,12 @@ pub enum ExtensionStatus {
     },
 }
 
-/// One row of the extension list.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExtensionInfo {
     pub id: String,
     pub name: String,
     pub version: String,
     pub status: ExtensionStatus,
-    /// Undeclared operations the host has refused.
     pub refused_operations: u64,
 }
 
@@ -97,7 +94,6 @@ impl std::error::Error for CallError {}
 /// The contributions of every loaded, enabled extension.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ContributionSet {
-    /// Increases whenever the set changes.
     pub version: u64,
     pub extensions: Vec<(String, Contributions)>,
 }
@@ -225,11 +221,14 @@ impl ExtensionHost {
         self.publish();
         if let Some(extension) = extension {
             let limit = self.inner.options.call_timeout;
-            let _ = run_guarded(limit, async move {
+            let deactivated = run_guarded(limit, async move {
                 extension.deactivate().await;
                 Ok(())
             })
             .await;
+            if let Err(message) = deactivated {
+                tracing::warn!(extension = %id, %message, "extension failed to deactivate");
+            }
         }
         Ok(())
     }

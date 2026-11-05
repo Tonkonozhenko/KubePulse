@@ -18,7 +18,6 @@ use tokio::sync::watch;
 
 const RELOAD_DEBOUNCE: Duration = Duration::from_millis(200);
 
-/// One context in the cluster list.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClusterEntry {
     pub context: String,
@@ -28,17 +27,14 @@ pub struct ClusterEntry {
     pub namespace: Option<String>,
 }
 
-/// A kubeconfig file that could not be used.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileError {
     pub path: PathBuf,
     pub message: String,
 }
 
-/// The merged result of reading the kubeconfig files.
 #[derive(Clone, Default)]
 pub struct ClusterList {
-    /// Increases with every reload.
     pub version: u64,
     pub clusters: Vec<ClusterEntry>,
     pub errors: Vec<FileError>,

@@ -12,7 +12,6 @@ use crate::{
     session::ResourceKind,
 };
 
-/// One object of a kind.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ObjectTarget {
     pub kind: ResourceKind,
@@ -22,7 +21,6 @@ pub struct ObjectTarget {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ObjectError {
-    /// The cluster refused, because the user's account lacks access.
     Denied(String),
     NotFound(String),
     Failed(String),
@@ -51,7 +49,6 @@ fn object_error(error: kube::Error) -> ObjectError {
     }
 }
 
-/// One event about an object.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EventRecord {
     pub kind: String,
@@ -70,7 +67,7 @@ fn api(client: Client, kind: &ResourceKind, namespace: Option<&str>) -> Api<Dyna
 }
 
 fn to_value(object: DynamicObject) -> Value {
-    let metadata = serde_json::to_value(&object.metadata).unwrap_or_default();
+    let metadata = serde_json::to_value(&object.metadata).expect("object metadata serializes");
     let mut data = object.data;
     if let Some(fields) = data.as_object_mut() {
         fields.insert("metadata".to_owned(), metadata);

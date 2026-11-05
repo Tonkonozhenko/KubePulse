@@ -9,7 +9,6 @@ pub trait Loader {
     fn load(&self) -> Vec<Arc<dyn Extension>>;
 }
 
-/// Extensions compiled into the application.
 #[derive(Default)]
 pub struct BuiltinLoader(Vec<Arc<dyn Extension>>);
 

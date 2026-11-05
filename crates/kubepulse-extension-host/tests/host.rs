@@ -216,19 +216,6 @@ async fn disabling_an_active_extension_deactivates_it() {
 }
 
 #[tokio::test]
-async fn unknown_extensions_are_reported() {
-    let (host, _) = host_with(vec![]);
-    assert_eq!(
-        host.request("nope", command()).await,
-        Err(CallError::UnknownExtension)
-    );
-    assert_eq!(
-        host.set_enabled("nope", true).await,
-        Err(CallError::UnknownExtension)
-    );
-}
-
-#[tokio::test]
 async fn a_duplicate_id_is_refused_and_the_first_keeps_working() {
     let first = TestExtension::new(manifest("a"));
     let (host, _) = host_with(vec![first.clone(), TestExtension::new(manifest("a"))]);

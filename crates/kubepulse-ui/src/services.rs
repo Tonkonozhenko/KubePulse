@@ -24,7 +24,6 @@ pub trait ClusterServices: Send + Sync + 'static {
     ) -> Reply<Vec<EventRecord>>;
     fn delete_object(&self, context: &str, target: ObjectTarget) -> Reply<()>;
     fn contributions(&self) -> Arc<ContributionSet>;
-    /// Tells extensions the user opened a kind.
     fn kind_opened(&self, kind: KindRef);
     fn extension(&self, id: &str, request: ExtensionRequest)
     -> Reply<ExtensionResponse, CallError>;

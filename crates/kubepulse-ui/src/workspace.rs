@@ -146,7 +146,6 @@ impl Workspace {
     }
 }
 
-/// Writes off the UI thread.
 fn save_in_background(path: PathBuf, json: serde_json::Result<String>, cx: &AsyncApp) {
     let write = async move {
         let result = json.map_err(std::io::Error::other);

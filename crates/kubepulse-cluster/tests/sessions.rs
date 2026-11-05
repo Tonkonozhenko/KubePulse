@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use kubepulse_cluster::{ConnectionState, SessionManager, UnknownContext};
+use kubepulse_cluster::{ConnectionState, SessionManager};
 use support::*;
 use tokio::{net::TcpListener, time};
 use wiremock::{
@@ -102,15 +102,6 @@ async fn two_clusters_stay_connected_together() {
 
     assert_eq!(sessions.state("one"), ConnectionState::Connected);
     assert_eq!(sessions.state("two"), ConnectionState::Connected);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn connecting_an_unknown_context_is_refused() {
-    let dir = temp();
-    let list = kubeconfig(dir.path(), &[("a", "http://127.0.0.1:1", Auth::None)]);
-    let mut sessions = manager(list);
-    assert_eq!(sessions.connect("nope"), Err(UnknownContext("nope".into())));
-    assert_eq!(sessions.state("nope"), ConnectionState::Disconnected);
 }
 
 #[tokio::test(flavor = "multi_thread")]

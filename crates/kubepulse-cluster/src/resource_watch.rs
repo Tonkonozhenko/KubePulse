@@ -14,7 +14,7 @@ use kube::{
 use tokio::sync::{mpsc, watch};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
-use crate::session::ResourceKind;
+use crate::session::{ResourceKind, describe};
 
 const PAGE_SIZE: u32 = 500;
 
@@ -25,7 +25,6 @@ pub struct OwnerReference {
     pub uid: String,
 }
 
-/// One object as received from the cluster.
 #[derive(Clone, Debug)]
 pub struct RawObject {
     /// The UID, or `namespace/name` for the few served objects that have none.
@@ -51,7 +50,6 @@ pub enum WatchEvent {
         scope: Option<String>,
         object: RawObject,
     },
-    /// The list for `scope` is complete.
     Synced {
         scope: Option<String>,
     },
@@ -86,7 +84,6 @@ impl SessionHandle {
         }
     }
 
-    /// The session's client, once it has connected.
     pub(crate) async fn client(&self) -> Option<Client> {
         let mut client = self.client.clone();
         let ready = client.wait_for(Option::is_some).await.ok()?;
@@ -155,7 +152,10 @@ async fn accessible_namespaces(client: &Client) -> Vec<String> {
             .into_iter()
             .filter_map(|item| item.metadata.name)
             .collect(),
-        Err(_) => vec![client.default_namespace().to_owned()],
+        Err(error) => {
+            tracing::info!(error = %describe(&error), "could not list namespaces");
+            vec![client.default_namespace().to_owned()]
+        }
     }
 }
 
@@ -238,7 +238,7 @@ fn key(object: &DynamicObject) -> String {
 fn raw(mut object: DynamicObject) -> RawObject {
     let key = key(&object);
     object.metadata.managed_fields = None;
-    let metadata = serde_json::to_value(&object.metadata).unwrap_or_default();
+    let metadata = serde_json::to_value(&object.metadata).expect("object metadata serializes");
     let meta = object.metadata;
     let mut data = object.data;
     if let Some(fields) = data.as_object_mut() {

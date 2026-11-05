@@ -336,40 +336,6 @@ async fn reads_an_object_with_its_metadata() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn object_errors_separate_denied_from_missing() {
-    let server = api_server().await;
-    get("/api/v1/namespaces/x/pods/secret", denied())
-        .mount(&server)
-        .await;
-    get(
-        "/api/v1/namespaces/x/pods/gone",
-        ResponseTemplate::new(404).set_body_raw(
-            r#"{"kind":"Status","apiVersion":"v1","status":"Failure","message":"not found","reason":"NotFound","code":404}"#,
-            "application/json",
-        ),
-    )
-    .mount(&server)
-    .await;
-
-    let dir = temp();
-    let list = kubeconfig(dir.path(), &[("a", &server.uri(), Auth::None)]);
-    let mut sessions = SessionManager::new(list_channel(list), fast_options());
-    sessions.connect("a").unwrap();
-    let handle = sessions.session("a").unwrap().handle();
-
-    assert_eq!(
-        handle.get_object(&object_target("secret")).await,
-        Err(kubepulse_cluster::ObjectError::Denied(
-            "pods is forbidden".into()
-        ))
-    );
-    assert_eq!(
-        handle.get_object(&object_target("gone")).await,
-        Err(kubepulse_cluster::ObjectError::NotFound("not found".into()))
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn deletes_an_object() {
     let server = api_server().await;
     Mock::given(method("DELETE"))

@@ -44,7 +44,6 @@ pub struct ClusterSettings {
     pub protected: bool,
 }
 
-/// What every tab and confirmation shows for a cluster.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClusterIdentity {
     pub name: String,

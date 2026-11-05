@@ -33,7 +33,6 @@ pub fn pod_kind() -> ResourceKind {
     }
 }
 
-/// The default pod columns.
 pub fn pod_columns() -> Arc<[ColumnSpec]> {
     [
         ("status", ".status.phase"),
@@ -133,7 +132,6 @@ pub fn pod(index: usize, restarts: u64) -> RawObject {
     }
 }
 
-/// A burst of changes after the initial list.
 #[derive(Clone, Copy, Debug)]
 pub struct Burst {
     pub changes_per_second: usize,
@@ -144,9 +142,7 @@ pub struct Burst {
 pub struct SyntheticCluster {
     pods: usize,
     burst: Option<Burst>,
-    /// Watches ever started.
     pub started: AtomicUsize,
-    /// Watches running now.
     pub active: Arc<AtomicUsize>,
     /// Updates sent, and so the total `restarts` a view should converge to.
     pub changes_sent: Arc<AtomicUsize>,

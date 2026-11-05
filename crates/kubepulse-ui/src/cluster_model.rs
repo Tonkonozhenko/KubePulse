@@ -72,15 +72,17 @@ impl ClusterModel {
     }
 
     pub fn connect(&self, context: &str) {
-        let _ = self
-            .commands
-            .send(ClusterCommand::Connect(context.to_owned()));
+        self.send(ClusterCommand::Connect(context.to_owned()));
     }
 
     pub fn disconnect(&self, context: &str) {
-        let _ = self
-            .commands
-            .send(ClusterCommand::Disconnect(context.to_owned()));
+        self.send(ClusterCommand::Disconnect(context.to_owned()));
+    }
+
+    fn send(&self, command: ClusterCommand) {
+        if let Err(error) = self.commands.send(command) {
+            tracing::error!(%error, "the background runtime has stopped");
+        }
     }
 
     pub fn key(&self, context: &str) -> ClusterKey {
@@ -114,7 +116,6 @@ impl ClusterModel {
     }
 }
 
-/// The word shown for a connection state.
 pub fn state_label(state: &ConnectionState) -> &'static str {
     match state {
         ConnectionState::Disconnected => "Disconnected",

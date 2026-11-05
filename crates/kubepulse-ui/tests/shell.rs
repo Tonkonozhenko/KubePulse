@@ -13,7 +13,7 @@ use kubepulse_ui::{
     cluster_tab::ClusterTab,
     identity::{ClusterKey, IdentityStore},
     persistence::{ConfigPaths, write_atomic},
-    runtime::{ClusterCommand, ClusterRuntime, ClusterState, ClusterStatus},
+    runtime::{ClusterCommand, ClusterRuntime, ClusterState, ClusterStatus, StoreConfig},
     services::SharedServices,
     workspace::Workspace,
 };
@@ -515,8 +515,11 @@ fn the_ui_stays_responsive_while_a_cluster_stalls(cx: &mut TestAppContext) {
     let directory = tempfile::tempdir().unwrap();
     let (_listener, server) = stalled_server();
     let path = stalled_kubeconfig(directory.path(), &server);
-    let runtime =
-        ClusterRuntime::start(vec![path], SessionOptions::default(), Default::default()).unwrap();
+    let stores = StoreConfig {
+        clusters: Arc::default(),
+        columns: Arc::new(|_| Arc::from([])),
+    };
+    let runtime = ClusterRuntime::start(vec![path], SessionOptions::default(), stores).unwrap();
     let commands = runtime.commands();
 
     let mut state = runtime.state();

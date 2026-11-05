@@ -29,7 +29,6 @@ use crate::{
 };
 
 pub enum DetailEvent {
-    /// The user followed an owner reference.
     OpenOwner(ObjectTarget),
     Deleted,
 }
@@ -58,7 +57,6 @@ fn decode(value: &str) -> String {
         .unwrap_or_else(|| "(binary value)".to_owned())
 }
 
-/// Finds the kind an owner reference points at.
 fn owner_target(
     owner: &Value,
     namespace: Option<&str>,
@@ -88,8 +86,8 @@ pub struct DetailView {
     services: Arc<dyn ClusterServices>,
     object: Load,
     events: Vec<EventRecord>,
+    events_error: Option<String>,
     revealed: HashSet<String>,
-    /// A delete request is on its way.
     deleting: bool,
     typed_name: Entity<InputState>,
     name_matches: bool,
@@ -153,10 +151,12 @@ impl DetailView {
                 cx.notify();
             });
             if let Some(uid) = uid {
-                // Events are extra, so failing to read them leaves the list empty.
                 let events = event_services.events(&event_context, namespace, uid).await;
                 let _ = this.update(cx, |this, cx| {
-                    this.events = events.unwrap_or_default();
+                    match events {
+                        Ok(events) => this.events = events,
+                        Err(error) => this.events_error = Some(error.to_string()),
+                    }
                     cx.notify();
                 });
             }
@@ -171,6 +171,7 @@ impl DetailView {
             services,
             object: Load::Loading,
             events: Vec::new(),
+            events_error: None,
             revealed: HashSet::new(),
             deleting: false,
             typed_name,
@@ -188,7 +189,6 @@ impl DetailView {
         &self.target
     }
 
-    /// The object, once it has loaded.
     pub fn object(&self) -> Option<&Value> {
         match &self.object {
             Load::Loaded(object) => Some(object),
@@ -228,9 +228,6 @@ impl DetailView {
     }
 
     fn delete(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.deleting || !self.delete_allowed(cx) {
-            return;
-        }
         self.deleting = true;
         self.delete_error = None;
         cx.notify();
@@ -397,10 +394,6 @@ impl DetailView {
             .test_support()
     }
 
-    fn delete_allowed(&self, cx: &App) -> bool {
-        !self.model.read(cx).identity(&self.key).protected || self.name_matches
-    }
-
     /// Asks before deleting. Each opening starts clean, whichever way the last
     /// one closed.
     fn open_delete_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -431,7 +424,7 @@ impl DetailView {
             .clone()
             .unwrap_or_else(|| "(cluster-wide)".to_owned());
         let needs_name = identity.protected;
-        let confirm = (self.delete_allowed(cx) && !self.deleting).then(|| {
+        let confirm = ((!needs_name || self.name_matches) && !self.deleting).then(|| {
             Button::new("delete-confirm")
                 .label("Delete")
                 .on_click(move |_, window, cx| {
@@ -610,6 +603,12 @@ impl Render for DetailView {
                     .flex_col()
                     .child(div().text_color(muted).child("Events"))
                     .children(events)
+                    .children(self.events_error.clone().map(|error| {
+                        div()
+                            .id("events-error")
+                            .child(format!("Could not read events: {error}"))
+                            .test_support()
+                    }))
                     .test_support(),
             )
             .child(div().flex().gap_1().children(tab_buttons))

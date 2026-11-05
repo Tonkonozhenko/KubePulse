@@ -31,7 +31,6 @@ pub const PANEL_NAME: &str = "ClusterTab";
 const NAVIGATION_WIDTH: f32 = 200.;
 const DETAIL_WIDTH: f32 = 420.;
 
-/// What a saved layout remembers about a tab.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClusterTabState {
     pub key: ClusterKey,
@@ -99,7 +98,9 @@ impl ClusterTab {
     pub fn register(cx: &mut App) {
         dock::register_panel(cx, PANEL_NAME, |context: PanelBuildContext, window, cx| {
             let saved: Option<ClusterTabState> = match context.info() {
-                PanelInfo::Panel(value) => serde_json::from_value(value.clone()).ok(),
+                PanelInfo::Panel(value) => serde_json::from_value(value.clone())
+                    .inspect_err(|error| tracing::warn!(%error, "ignoring saved tab"))
+                    .ok(),
                 _ => None,
             };
             let (key, kind) = saved.map_or_else(
@@ -243,7 +244,7 @@ impl gpui_kit::base::dock::Panel for ClusterTab {
             key: self.key.clone(),
             kind: self.kind.clone(),
         };
-        state.info = PanelInfo::panel(serde_json::to_value(saved).unwrap_or_default());
+        state.info = PanelInfo::panel(serde_json::to_value(saved).expect("tab state serializes"));
         state
     }
 }

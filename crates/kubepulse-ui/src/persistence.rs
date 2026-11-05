@@ -5,7 +5,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Where this application keeps its files.
 #[derive(Clone, Debug)]
 pub struct ConfigPaths {
     pub workspace: PathBuf,
@@ -20,7 +19,6 @@ impl ConfigPaths {
         }
     }
 
-    /// The platform's configuration directory.
     pub fn platform_default() -> Option<Self> {
         let directories = directories::ProjectDirs::from("", "", "KubePulse")?;
         Some(Self::in_directory(directories.config_dir()))
@@ -43,8 +41,13 @@ pub fn read_or_default<T: Default>(
     path: &Path,
     parse: impl FnOnce(&str) -> serde_json::Result<T>,
 ) -> T {
-    let Ok(text) = fs::read_to_string(path) else {
-        return T::default();
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return T::default(),
+        Err(error) => {
+            tracing::warn!(path = %path.display(), %error, "could not read settings file");
+            return T::default();
+        }
     };
     parse(&text).unwrap_or_else(|error| {
         tracing::warn!(path = %path.display(), %error, "ignoring damaged settings file");

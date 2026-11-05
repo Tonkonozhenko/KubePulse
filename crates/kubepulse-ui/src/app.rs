@@ -22,7 +22,6 @@ use crate::{
 pub struct RunOptions {
     pub config: Option<ConfigPaths>,
     pub kubeconfig: Option<Vec<PathBuf>>,
-    /// Extensions compiled into the application.
     pub extensions: Vec<Arc<dyn Extension>>,
     /// Called once with the time to the first painted frame, then the
     /// application quits.
@@ -30,11 +29,10 @@ pub struct RunOptions {
 }
 
 /// Keeps the background threads running for the life of the application.
-struct BackgroundRuntime(#[allow(dead_code)] ClusterRuntime);
+struct BackgroundRuntime(#[expect(dead_code)] ClusterRuntime);
 
 impl Global for BackgroundRuntime {}
 
-/// Opens the main window and runs the application until it exits.
 pub fn run() {
     run_with(RunOptions::default());
 }

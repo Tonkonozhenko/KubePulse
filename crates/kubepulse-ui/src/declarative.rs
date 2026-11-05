@@ -18,7 +18,6 @@ use gpui_kit::{
 };
 use kubepulse_extension_api::{FormFieldKind, SurfaceKind, UiNode};
 
-/// A form the user submitted.
 pub struct FormSubmitted {
     pub form: String,
     pub values: BTreeMap<String, String>,
@@ -126,7 +125,6 @@ impl DeclarativeView {
         }
     }
 
-    /// The tables in tree order.
     pub fn tables(&self) -> &[Entity<TableState<StringTable>>] {
         &self.tables
     }

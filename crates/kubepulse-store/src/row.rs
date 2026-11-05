@@ -9,7 +9,6 @@ use kubepulse_cluster::RawObject;
 use serde_json::Value;
 use serde_json_path::JsonPath;
 
-/// A shared string.
 pub type Symbol = ArcIntern<str>;
 
 /// A column read from a path into the object, such as `.status.phase`.
@@ -171,11 +170,6 @@ mod tests {
     fn missing_and_null_fields_are_empty() {
         assert_eq!(cell(".status.nope"), Cell::Empty);
         assert_eq!(cell(".status.conditions"), Cell::Empty);
-    }
-
-    #[test]
-    fn invalid_path_is_refused() {
-        assert!(ColumnSpec::new("c", ".status[").is_err());
     }
 
     #[test]

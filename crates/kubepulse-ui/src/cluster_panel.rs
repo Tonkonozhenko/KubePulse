@@ -32,12 +32,10 @@ pub struct ClusterPanel {
     query: String,
     /// The cluster waiting on the active-work warning.
     confirming_disconnect: Option<String>,
-    /// The cluster whose display settings are open.
     editing: Option<ClusterKey>,
     _subscriptions: Vec<Subscription>,
 }
 
-/// Indexes of the clusters matching `query`, ignoring case.
 pub fn matching(names: &[String], query: &str) -> Vec<usize> {
     let query = query.to_lowercase();
     names
@@ -88,7 +86,6 @@ impl ClusterPanel {
         cx.notify();
     }
 
-    /// Disconnects, warning first if the cluster has running work.
     fn request_disconnect(&mut self, context: String, cx: &mut Context<Self>) {
         let model = self.model.read(cx);
         let busy = model

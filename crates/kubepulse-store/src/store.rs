@@ -44,7 +44,6 @@ impl WatchSource for SessionHandle {
     }
 }
 
-/// Supplies the columns for a kind.
 pub type ColumnResolver = Arc<dyn Fn(&ResourceKind) -> Arc<[ColumnSpec]> + Send + Sync>;
 
 #[derive(Clone, Debug)]
@@ -63,17 +62,14 @@ impl Default for StoreOptions {
     }
 }
 
-/// An immutable result for one view.
 #[derive(Clone, Debug, Default)]
 pub struct Snapshot {
-    /// Increases with every publication for this view.
     pub version: u64,
     pub rows: Vec<Arc<Row>>,
     /// Objects of this kind before filtering.
     pub total: usize,
     /// False until the first full list completes.
     pub synced: bool,
-    /// Why the user cannot list this kind, if they cannot.
     pub denied: Option<String>,
 }
 
@@ -204,7 +200,6 @@ struct ViewState {
     dirty: bool,
 }
 
-/// The cached objects for one kind.
 #[derive(Default)]
 struct Cache {
     rows: HashMap<Arc<str>, Arc<Row>>,
