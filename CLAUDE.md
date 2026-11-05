@@ -68,6 +68,19 @@ These rules hold the design together:
 - **No phoning home:** no license keys, activation, or telemetry.
 - **Platforms:** Linux (Wayland and X11), macOS, and Windows must have the same features.
 
+## Coding standards
+
+- **Simplicity:** no defensive code, no extra abstraction layers.
+- **Errors:** no fallbacks that hide failures. Show errors to the user or log them, and let a failure stop only its own cluster session or extension.
+- **Comments:** none unless the code is non-obvious.
+- **Language:** use the latest stable Rust features.
+- **Tests:** do not write tests for obvious error checks.
+
+## Agent flow
+
+- Do not create temporary files to test something. Checked-in examples and tests are fine.
+- Do shell-side data processing with `jq` (JSON) and `yq` (YAML). Never use inline Python or Perl scripts, including for in-place file edits. Checked-in scripts such as `scripts/check-crate-graph.py` are fine.
+
 ## Git
 
 - Commit and push through a subagent running the Haiku model.
