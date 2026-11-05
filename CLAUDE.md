@@ -19,7 +19,17 @@ cargo test -p <crate> <name> -- --exact  # run one test by its full path
 cargo clippy --workspace --all-targets   # lint
 cargo fmt --all --check                  # check formatting
 python3 scripts/check-crate-graph.py     # check the crate dependency graph
+python3 scripts/check-i18n.py            # check catalogs and find literals in views
+python3 scripts/check-i18n.py --write    # also regenerate the en-XA pseudo-locale
 cargo deny check licenses                # check dependency licenses
+```
+
+Cluster tests run in their own minikube profile, with its own kubeconfig:
+
+```bash
+KUBECONFIG=$PWD/target/e2e.kubeconfig minikube start -p kubepulse-e2e --driver=docker --cpus=2 --memory=2g
+KUBEPULSE_E2E_KUBECONFIG=$PWD/target/e2e.kubeconfig cargo test -p kubepulse --test real_cluster -- --ignored
+minikube delete -p kubepulse-e2e
 ```
 
 OpenSpec:
@@ -67,6 +77,7 @@ These rules hold the design together:
 - **UI stack:** use `gpui-kit` on an exact `gpui-pre` pin. Upgrade the kit and all snapshot crates together in one commit, because any snapshot can break the API. Do not substitute `gpui` or `gpui-ce`.
 - **No phoning home:** no license keys, activation, or telemetry.
 - **Platforms:** Linux (Wayland and X11), macOS, and Windows must have the same features.
+- **Cluster testing:** run every test that needs a cluster in the separate `kubepulse-e2e` minikube profile. Never test against a context from the default kubeconfig, because those can be work or production clusters.
 
 ## Coding standards
 
@@ -75,6 +86,8 @@ These rules hold the design together:
 - **Comments:** none unless the code is non-obvious.
 - **Language:** use the latest stable Rust features.
 - **Tests:** do not write tests for obvious error checks.
+- **Text:** user-visible text in `kubepulse-ui` comes from `locales/en.json` through `t!`, and titles in `kubepulse-builtin` need an entry in its `locales/en.json`. Avoid plurals, because catalogs have no plural rules. Show data from clusters and extensions exactly as received, after a translated summary if it is an error.
+- **Colors:** views take colors from `cx.theme()`. The only literal colors are cluster identity colors.
 
 ## Agent flow
 

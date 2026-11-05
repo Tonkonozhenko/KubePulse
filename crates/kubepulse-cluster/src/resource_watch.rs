@@ -2,7 +2,7 @@
 //! types stay in this crate. Paging, bookmarks, and retries come from the
 //! client library's watcher.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, time::Duration};
 
 use futures::{StreamExt as _, future::join_all, pin_mut};
 use k8s_openapi::api::core::v1::Namespace;
@@ -11,12 +11,16 @@ use kube::{
     api::{ApiResource, DynamicObject, ListParams},
     runtime::{WatchStreamExt as _, watcher, watcher::Event},
 };
-use tokio::sync::{mpsc, watch};
+use tokio::{
+    sync::{mpsc, watch},
+    time,
+};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 use crate::session::{ResourceKind, describe};
 
 const PAGE_SIZE: u32 = 500;
+const POLL_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OwnerReference {
@@ -121,6 +125,10 @@ impl SessionHandle {
 async fn run(client: Client, kind: ResourceKind, events: mpsc::Sender<WatchEvent>) {
     let resource = api_resource(&kind);
     let all: Api<DynamicObject> = Api::all_with(client.clone(), &resource);
+    if !kind.verbs.iter().any(|verb| verb == "watch") {
+        poll(all, &events).await;
+        return;
+    }
     let Ended::Denied(reason) = follow(all, None, &events).await else {
         return;
     };
@@ -173,6 +181,35 @@ pub(crate) fn api_resource(kind: &ResourceKind) -> ApiResource {
     }
 }
 
+/// Lists a kind that cannot be watched, again on every tick.
+async fn poll(api: Api<DynamicObject>, events: &mpsc::Sender<WatchEvent>) {
+    let mut ticks = time::interval(POLL_INTERVAL);
+    loop {
+        ticks.tick().await;
+        match api.list(&ListParams::default()).await {
+            Ok(list) => {
+                let listed = list.items.into_iter().map(|object| WatchEvent::Listed {
+                    scope: None,
+                    object: raw(object),
+                });
+                let restarted = WatchEvent::Restarted { scope: None };
+                let synced = WatchEvent::Synced { scope: None };
+                for event in [restarted].into_iter().chain(listed).chain([synced]) {
+                    if events.send(event).await.is_err() {
+                        return;
+                    }
+                }
+            }
+            Err(kube::Error::Api(status)) if status.code == 403 => {
+                let reason = status.message;
+                let _ = events.send(WatchEvent::Denied { reason }).await;
+                return;
+            }
+            Err(error) => tracing::warn!(error = %describe(&error), "list failed"),
+        }
+    }
+}
+
 enum Ended {
     Denied(String),
     Closed,
@@ -204,7 +241,7 @@ async fn follow(
                     return Ended::Denied(reason);
                 }
                 // The stream retries with backoff, and the session reports outages.
-                tracing::debug!("watch interrupted");
+                tracing::warn!(error = %describe_watch(&error), "watch interrupted");
                 continue;
             }
         };
@@ -213,6 +250,15 @@ async fn follow(
         }
     }
     Ended::Closed
+}
+
+fn describe_watch(error: &watcher::Error) -> String {
+    match error {
+        watcher::Error::InitialListFailed(error)
+        | watcher::Error::WatchStartFailed(error)
+        | watcher::Error::WatchFailed(error) => describe(error),
+        other => other.to_string(),
+    }
 }
 
 fn forbidden(error: &watcher::Error) -> Option<String> {

@@ -73,6 +73,14 @@ struct Watch {
 }
 
 async fn watch_pods(server: &MockServer, default_namespace: Option<&str>) -> Watch {
+    watch_kind(server, default_namespace, &pods()).await
+}
+
+async fn watch_kind(
+    server: &MockServer,
+    default_namespace: Option<&str>,
+    kind: &ResourceKind,
+) -> Watch {
     let dir = temp();
     let mut list = (*kubeconfig(dir.path(), &[("a", &server.uri(), Auth::None)])).clone();
     if let Some(namespace) = default_namespace {
@@ -89,7 +97,7 @@ async fn watch_pods(server: &MockServer, default_namespace: Option<&str>) -> Wat
     let watcher: SessionHandle = session.handle();
     let (sender, events) = mpsc::channel(64);
     let stop = CancellationToken::new();
-    watcher.watch(&pods(), sender, stop.clone());
+    watcher.watch(kind, sender, stop.clone());
     Watch {
         events,
         _sessions: sessions,
@@ -416,4 +424,23 @@ async fn discovery_attaches_printer_columns_from_definitions() {
     let widget = kinds.iter().find(|k| k.kind == "Widget").unwrap();
     assert_eq!(widget.printer_columns[0].name, "Size");
     assert_eq!(widget.printer_columns[0].path, ".spec.size");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_kind_that_cannot_be_watched_is_listed_without_a_resource_version() {
+    let server = api_server().await;
+    let body = format!(
+        r#"{{"apiVersion":"v1","kind":"PodList","metadata":{{}},"items":[{}]}}"#,
+        pod("a", "ns")
+    );
+    mount_list(&server, "/api/v1/pods", json(&body)).await;
+    let mut kind = pods();
+    kind.verbs = vec!["get".into(), "list".into()];
+
+    let mut watch = watch_kind(&server, None, &kind).await;
+
+    assert_eq!(
+        collect_until_synced(&mut watch, 1).await,
+        [(None, "a".to_owned())]
+    );
 }
