@@ -62,6 +62,8 @@ These rules hold the design together:
 - **Product names:** never name other products in specs, OpenSpec artifacts, code, or comments. Describe capabilities directly instead.
 - **Licensing:** the product is open source under Apache-2.0.
 - **Dependencies:** no GPL-family dependencies. That rules out reusing the code editor from gpui's parent project.
+- **Reuse:** prefer good open-source libraries with compatible licenses over writing our own. Build something only when no suitable library exists.
+- **Feasibility gate:** deferred. Skip the feasibility testing in task group 2 for now and do not treat it as blocking feature work.
 - **UI stack:** use `gpui-kit` on an exact `gpui-pre` pin. Upgrade the kit and all snapshot crates together in one commit, because any snapshot can break the API. Do not substitute `gpui` or `gpui-ce`.
 - **No phoning home:** no license keys, activation, or telemetry.
 - **Platforms:** Linux (Wayland and X11), macOS, and Windows must have the same features.
