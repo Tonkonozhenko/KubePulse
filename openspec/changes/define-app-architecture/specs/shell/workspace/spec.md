@@ -31,12 +31,23 @@ Every cluster-related tab SHALL belong to exactly one cluster for its whole life
 - **WHEN** the user switches to a tab on another cluster
 - **THEN** the other tabs keep showing their own cluster's data
 
+### Requirement: Tabs survive disconnection
+Disconnecting a cluster SHALL leave its tabs open in a disconnected state.
+
+#### Scenario: Disconnect a cluster with open tabs
+- **WHEN** the user disconnects a cluster that has open tabs
+- **THEN** those tabs stay open and offer a connect action, and tabs on other clusters are unaffected
+
 ### Requirement: Workspace restore
-The system SHALL restore the workspace layout on startup, and MUST NOT reconnect to clusters without user consent.
+The system SHALL restore the workspace layout on startup, and MUST NOT connect to any cluster until the user chooses to connect it.
 
 #### Scenario: Restart
 - **WHEN** the application restarts
-- **THEN** tabs and panes return to their previous layout, in a disconnected state until their cluster is connected
+- **THEN** tabs and panes return to their previous layout, in a disconnected state until the user connects their cluster
+
+#### Scenario: Activating a restored tab
+- **WHEN** the user activates a restored tab whose cluster is disconnected
+- **THEN** no connection starts, and the tab offers a connect action
 
 ### Requirement: Fast startup
 The system SHALL show a usable window within 1 second of launch on a reference machine, independent of cluster availability.

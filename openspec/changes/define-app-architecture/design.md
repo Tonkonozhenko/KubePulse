@@ -32,6 +32,7 @@ Dependency state was checked on 2026-11-05:
 
 - A sandboxed plugin loader, third-party plugin distribution, or a plugin marketplace. The contract is designed for them, but they are not built here.
 - Cross-cluster aggregate views.
+- Adding clusters by hand or importing kubeconfig files from other locations. For now, the cluster list is exactly what the default kubeconfig resolves to.
 - Helm management, metrics charts, and node shells.
 - Schema-aware completion in the editor. The first release relies on syntax checks and server-side dry runs.
 - Technical license enforcement, telemetry, and auto-update.
@@ -75,7 +76,13 @@ Cluster and store work runs on a Tokio runtime on background threads. The UI run
 
 *Alternative:* running everything on the toolkit's executor. `kube` requires Tokio, and sharing a thread pool would let a cluster stall rendering.
 
-### D4. One session per cluster
+### D4. One explicitly connected session per cluster
+
+The cluster list comes only from parsing the kubeconfig, so it stays cheap with hundreds of contexts and needs no network access or credential helpers. A `ClusterSession` is created only by the user's connect action, and destroyed only by their disconnect action or application exit. Until then, a context is a plain list entry holding no client, tasks, or cache.
+
+Automatic reconnection after a lost connection stays, because it restores a session the user chose to keep. Releasing an unused watch (D5) frees cached data but does not end the session.
+
+*Alternatives:* connecting every context at startup would run credential helpers for clusters the user never opens and trigger login prompts. Connecting on open or disconnecting when idle would change a production connection without the user asking, and credential helpers could prompt unexpectedly.
 
 A `ClusterSession` owns its client, auth state, connection state machine, watches, and streams in its own task tree. Cancelling that tree tears down everything, including shells, logs, and port-forwards, which satisfies disconnect cleanup and failure isolation.
 

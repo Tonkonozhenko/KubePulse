@@ -9,7 +9,7 @@ The first release needs a Kubernetes desktop workflow that stays fast at real cl
 ## What Changes
 
 - Establish a layered architecture with a cluster layer, a state layer, an extension layer, and a UI layer, each in its own crate with enforced dependency direction.
-- Add multi-cluster support, where every connected cluster is an isolated session and a failing cluster cannot affect the others.
+- Add multi-cluster support, where every context in the default kubeconfig is listed automatically, users connect and disconnect clusters explicitly, and every connected cluster is an isolated session that cannot affect the others.
 - Add a resource browser that covers every resource kind the cluster serves, including custom resources, and stays smooth at 10k pods in each cluster.
 - Add manifest editing with a server-side dry run, a diff review before every apply, and conflict detection.
 - Add pod logs, pod shell, and port-forwarding.
@@ -24,7 +24,7 @@ Because of that license, KubePulse is source-available rather than open source u
 
 ### New Capabilities
 
-- `general/cluster-sessions`: discovering clusters, connecting, authenticating, and isolating each connected cluster in its own session.
+- `general/cluster-sessions`: listing clusters from the kubeconfig, explicit connect and disconnect, authenticating, and isolating each connected cluster in its own session.
 - `general/resource-browsing`: listing, watching, sorting, filtering, and inspecting any resource kind at 10k pods per cluster.
 - `general/manifest-editing`: editing resource manifests through validation, diff review, apply, and conflict handling.
 - `pod/log`: streaming, following, and searching container logs.

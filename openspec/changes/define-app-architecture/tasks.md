@@ -22,8 +22,8 @@ Stop after this group if any target is missed, and revisit the design before sta
 
 ## 3. Cluster sessions
 
-- [ ] 3.1 Implement kubeconfig discovery with `KUBECONFIG` merging, file watching, and per-file error reporting, and verify with unit tests using fixture files
-- [ ] 3.2 Implement the session state machine and task tree from D4, and verify with tests for each state transition against a fake API server
+- [ ] 3.1 Implement kubeconfig discovery with `KUBECONFIG` merging, file watching, and per-file error reporting, and verify with unit tests using fixture files, including one with 500 contexts
+- [ ] 3.2 Implement the session state machine, explicit connect and disconnect, and task tree from D4, and verify with tests for each state transition against a fake API server, including that listing contexts makes no network requests and runs no credential helpers
 - [ ] 3.3 Implement auth through kubeconfig mechanisms with timeouts and cancellation, and verify a slow credential helper can be cancelled without blocking other sessions
 - [ ] 3.4 Implement reconnection with backoff, and verify a fake API server outage moves the session to degraded and back to connected
 - [ ] 3.5 Implement API discovery, including custom resource changes, and verify a kind added to the fake server appears without reconnecting
@@ -53,9 +53,9 @@ Stop after this group if any target is missed, and revisit the design before sta
 
 - [ ] 6.1 Build the main window, dock-based tabs and panes, and sidebar, and verify with headless UI tests covering splitting and tab moves
 - [ ] 6.2 Connect the UI to the background runtime using the channels and snapshots from D3, and verify a UI test stays responsive while a fake cluster stalls
-- [ ] 6.3 Implement the cluster list, connection states, and connect and disconnect actions, including the active-work warning, and verify with UI tests against a fake cluster
+- [ ] 6.3 Implement the searchable cluster list showing each cluster's connection state, plus connect and disconnect actions and the active-work warning, and verify with UI tests against a fake cluster, including that opening a disconnected cluster starts no connection and closing its last tab leaves a cluster connected
 - [ ] 6.4 Implement cluster identity and protected clusters with the keys from D16, and verify a reused context name on another server does not inherit settings
-- [ ] 6.5 Implement workspace persistence and restore without automatic reconnection, and verify a restart test restores the layout in a disconnected state
+- [ ] 6.5 Implement workspace persistence and restore without automatic connection, and verify a restart test restores the layout in a disconnected state, activating a restored tab starts no connection, and disconnecting a cluster leaves its tabs open
 - [ ] 6.6 Implement the command palette, including extension commands, and verify opening a kind works using only the keyboard
 - [ ] 6.7 Add a startup time check, and verify the window appears within 1 second on the reference machine with unreachable clusters
 

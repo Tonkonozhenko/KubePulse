@@ -50,6 +50,7 @@ Dependencies point downward, and CI is to enforce this graph:
 These rules hold the design together:
 
 - **UI thread:** it never awaits network or disk work. Cluster and store work runs on Tokio background threads. Commands go down through channels, and state comes up as immutable, versioned snapshots.
+- **Cluster connection:** every context in the default kubeconfig is listed automatically, and listing never touches the network or runs credential helpers. The user connects and disconnects clusters explicitly: nothing connects on open, and nothing disconnects when idle or when the last tab closes.
 - **Cluster isolation:** each cluster is a session with its own task tree. Cancelling the tree tears down everything it owns, including shells, logs, and port-forwards.
 - **Scale:** the target is 10k pods in each cluster. Watches are shared and reference-counted per cluster and resource kind, the store keeps compact rows rather than full objects, and snapshots publish at most once per frame.
 - **Extensions:** built-in features use the same contract as plugins, with no private access to core state. Every value crossing the contract is owned and serializable, so a sandboxed loader can be added later without changing it.
