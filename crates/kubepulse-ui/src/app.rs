@@ -18,6 +18,7 @@ use crate::{
     services::SharedServices,
     settings_tab,
     shell_state::{SharedShellState, ShellState},
+    terminal_tab,
     theme::ThemeWatcher,
     workspace::Workspace,
 };
@@ -83,6 +84,7 @@ pub fn run_with(options: RunOptions) {
         .run(move |cx| {
             gpui_kit::init(cx);
             command_palette::init(cx);
+            terminal_tab::init(cx);
             cx.set_global(SharedServices(services.clone()));
 
             let (state, commands) = (runtime.state(), runtime.commands());

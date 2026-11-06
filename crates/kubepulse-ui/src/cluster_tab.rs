@@ -188,6 +188,11 @@ impl ClusterTab {
                     this.shell
                         .update(cx, |shell, cx| shell.open_logs(key, target, cx));
                 }
+                DetailEvent::Shell(target) => {
+                    let (key, target) = (this.key.clone(), target.clone());
+                    this.shell
+                        .update(cx, |shell, cx| shell.open_terminal(key, target, cx));
+                }
                 DetailEvent::Edit(target) => {
                     let (key, target) = (this.key.clone(), target.clone());
                     this.shell

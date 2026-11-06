@@ -19,6 +19,7 @@ use kubepulse_extension_api::{
     ObjectRef, Permission, SurfaceRequest, Verb,
 };
 use kubepulse_extension_host::{ExtensionHost, HostOptions};
+use kubepulse_store::synthetic::pod_kind;
 use kubepulse_ui::{
     cluster_model::ClusterModel,
     identity::{ClusterKey, ClusterSettings, IdentityStore},
@@ -595,16 +596,23 @@ impl Extension for Changer {
             contract: CONTRACT_VERSION,
             activation: vec![],
             contributions: Contributions::default(),
-            permissions: vec![Permission {
-                kind: config_maps(),
-                verbs: vec![
-                    Verb::Create,
-                    Verb::Get,
-                    Verb::Update,
-                    Verb::Delete,
-                    Verb::Logs,
-                ],
-            }],
+            permissions: vec![
+                Permission {
+                    kind: config_maps(),
+                    verbs: vec![
+                        Verb::Create,
+                        Verb::Get,
+                        Verb::Update,
+                        Verb::Delete,
+                        Verb::Logs,
+                        Verb::Exec,
+                    ],
+                },
+                Permission {
+                    kind: KindRef::new("", "Pod"),
+                    verbs: vec![Verb::Exec],
+                },
+            ],
             translations: Default::default(),
         }
     }
@@ -805,6 +813,60 @@ fn an_extensions_new_object_is_dry_run_then_created_after_confirmation(cx: &mut 
     running.runtime.shutdown_background();
 }
 
+#[gpui_kit::test]
+fn an_extension_opens_a_shell_in_a_pod(cx: &mut TestAppContext) {
+    let status = connected("a", vec![pod_kind()]);
+    let (mut fixture, cx) = setup(cx, IdentityStore::default(), status);
+    fixture.services.add_object(
+        &pod_kind(),
+        Some("default"),
+        json!({
+            "metadata": {"name": "web", "namespace": "default"},
+            "spec": {"containers": [{"name": "app"}, {"name": "sidecar"}]},
+        }),
+    );
+    let operation = HostOperation::OpenSurface {
+        request: SurfaceRequest::Terminal {
+            target: ObjectRef {
+                cluster: ClusterRef("a".into()),
+                kind: KindRef::new("", "Pod"),
+                namespace: Some("default".into()),
+                name: "web".into(),
+            },
+            container: Some("sidecar".into()),
+        },
+    };
+
+    let running = run_extension(&mut fixture, operation, cx);
+    let services = fixture.services.clone();
+    wait_until(cx, "the shell", |_| {
+        !services.exec_feeds.lock().unwrap().is_empty()
+    });
+
+    let answer = wait_for_outcome(&running, cx);
+    assert!(answer.contains("Done"), "{answer}");
+    let feeds = fixture.services.exec_feeds.lock().unwrap();
+    assert_eq!(feeds[0].0.container, "sidecar");
+    running.runtime.shutdown_background();
+}
+
+#[gpui_kit::test]
+fn an_extension_cannot_open_a_shell_in_something_else(cx: &mut TestAppContext) {
+    let (mut fixture, cx) = with_object(cx, live("1", json!({"key": "old"})));
+    let operation = HostOperation::OpenSurface {
+        request: SurfaceRequest::Terminal {
+            target: object_ref(),
+            container: None,
+        },
+    };
+
+    let running = run_extension(&mut fixture, operation, cx);
+    let answer = wait_for_outcome(&running, cx);
+
+    assert!(answer.contains("only pods have shells"), "{answer}");
+    assert!(fixture.services.exec_feeds.lock().unwrap().is_empty());
+    running.runtime.shutdown_background();
+}
 #[gpui_kit::test]
 fn an_extension_opens_the_editor_surface(cx: &mut TestAppContext) {
     let (mut fixture, cx) = with_object(cx, live("1", json!({"key": "old"})));

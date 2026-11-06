@@ -17,7 +17,7 @@ use tokio::{
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
-use crate::session::{ResourceKind, describe};
+use crate::session::{ResourceKind, WorkGuard, describe};
 
 const PAGE_SIZE: u32 = 500;
 const POLL_INTERVAL: Duration = Duration::from_secs(30);
@@ -71,6 +71,7 @@ pub enum WatchEvent {
 #[derive(Clone)]
 pub struct SessionHandle {
     client: watch::Receiver<Option<Client>>,
+    work: watch::Sender<Vec<String>>,
     cancel: CancellationToken,
     tasks: TaskTracker,
 }
@@ -78,14 +79,20 @@ pub struct SessionHandle {
 impl SessionHandle {
     pub(crate) fn new(
         client: watch::Receiver<Option<Client>>,
+        work: watch::Sender<Vec<String>>,
         cancel: CancellationToken,
         tasks: TaskTracker,
     ) -> Self {
         Self {
             client,
+            work,
             cancel,
             tasks,
         }
+    }
+
+    pub(crate) fn track_work(&self, label: &str) -> WorkGuard {
+        WorkGuard::new(self.work.clone(), label)
     }
 
     pub(crate) async fn client(&self) -> Option<Client> {

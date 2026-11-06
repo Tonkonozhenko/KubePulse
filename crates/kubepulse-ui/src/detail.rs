@@ -36,6 +36,7 @@ pub enum DetailEvent {
     OpenOwner(ObjectTarget),
     Edit(ObjectTarget),
     Logs(ObjectTarget),
+    Shell(ObjectTarget),
     Deleted,
 }
 
@@ -693,6 +694,14 @@ impl Render for DetailView {
                         .label(t!("detail.logs").to_string())
                         .on_click(cx.listener(|this, _, _, cx| {
                             cx.emit(DetailEvent::Logs(this.target.clone()));
+                        })),
+                )
+                .child(
+                    Button::new("open-shell")
+                        .icon(IconName::SquareTerminal)
+                        .label(t!("detail.shell").to_string())
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            cx.emit(DetailEvent::Shell(this.target.clone()));
                         })),
                 )
             })

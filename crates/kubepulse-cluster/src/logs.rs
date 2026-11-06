@@ -263,24 +263,39 @@ pub enum ContainerKind {
 pub struct ContainerInfo {
     pub name: String,
     pub kind: ContainerKind,
+    pub running: bool,
 }
 
 /// The containers of a pod object, with regular containers first.
 pub fn pod_containers(pod: &Value) -> Vec<ContainerInfo> {
     let listed = [
-        ("containers", ContainerKind::Regular),
-        ("initContainers", ContainerKind::Init),
-        ("ephemeralContainers", ContainerKind::Ephemeral),
+        ("containers", "containerStatuses", ContainerKind::Regular),
+        (
+            "initContainers",
+            "initContainerStatuses",
+            ContainerKind::Init,
+        ),
+        (
+            "ephemeralContainers",
+            "ephemeralContainerStatuses",
+            ContainerKind::Ephemeral,
+        ),
     ];
     listed
         .into_iter()
-        .flat_map(|(field, kind)| {
+        .flat_map(|(field, statuses, kind)| {
             let containers = pod["spec"][field].as_array().into_iter().flatten();
+            let statuses = pod["status"][statuses].as_array();
             containers.filter_map(move |container| {
                 let name = container["name"].as_str()?;
+                let running = statuses
+                    .into_iter()
+                    .flatten()
+                    .any(|status| status["name"] == name && status["state"]["running"].is_object());
                 Some(ContainerInfo {
                     name: name.to_owned(),
                     kind,
+                    running,
                 })
             })
         })
@@ -582,5 +597,20 @@ mod tests {
                 ("setup", ContainerKind::Init),
             ]
         );
+    }
+
+    #[test]
+    fn only_a_container_in_the_running_state_counts_as_running() {
+        let pod = json!({
+            "spec": {"containers": [{"name": "web"}, {"name": "sidecar"}, {"name": "new"}]},
+            "status": {"containerStatuses": [
+                {"name": "web", "state": {"running": {"startedAt": "2026-01-01T00:00:00Z"}}},
+                {"name": "sidecar", "state": {"waiting": {"reason": "CrashLoopBackOff"}}},
+            ]},
+        });
+
+        let running: Vec<_> = pod_containers(&pod).iter().map(|c| c.running).collect();
+
+        assert_eq!(running, [true, false, false]);
     }
 }

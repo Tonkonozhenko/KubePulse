@@ -10,8 +10,9 @@ use std::{
 
 use gpui_kit::VisualTestContext;
 use kubepulse_cluster::{
-    ClusterEntry, ConnectionState, EventRecord, LogBuffer, LogFeed, LogRequest, LogStream,
-    ObjectError, ObjectTarget, RawObject, ResourceKind, UpdateAccess, WatchEvent, WriteMode,
+    ClusterEntry, ConnectionState, EventRecord, ExecFeed, ExecRequest, ExecSize, ExecStream,
+    LogBuffer, LogFeed, LogRequest, LogStream, ObjectError, ObjectTarget, RawObject, ResourceKind,
+    UpdateAccess, WatchEvent, WriteMode,
 };
 use kubepulse_extension_api::{ExtensionRequest, ExtensionResponse, KindRef, UiNode};
 use kubepulse_extension_host::{CallError, ContributionSet};
@@ -148,6 +149,7 @@ pub struct FakeServices {
     pub write_results: Mutex<Vec<Result<Value, ObjectError>>>,
     /// One feed per opened log stream, newest last.
     pub log_feeds: Mutex<Vec<(LogRequest, LogFeed)>>,
+    pub exec_feeds: Mutex<Vec<(ExecRequest, ExecFeed)>>,
     /// Limits for the buffers of streams opened from now on.
     pub log_limits: Mutex<Option<(usize, usize)>>,
     /// Makes `open_logs` report a disconnected cluster.
@@ -200,6 +202,7 @@ impl FakeServices {
             writes: Mutex::default(),
             write_results: Mutex::default(),
             log_feeds: Mutex::default(),
+            exec_feeds: Mutex::default(),
             log_limits: Mutex::default(),
             logs_disconnected: Mutex::default(),
             access: Mutex::default(),
@@ -313,6 +316,12 @@ impl ClusterServices for FakeServices {
         };
         let (feed, stream) = kubepulse_cluster::log_channel(buffer);
         self.log_feeds.lock().unwrap().push((request, feed));
+        Some(stream)
+    }
+
+    fn open_exec(&self, _: &str, request: ExecRequest, size: ExecSize) -> Option<ExecStream> {
+        let (feed, stream) = kubepulse_cluster::exec_channel(size);
+        self.exec_feeds.lock().unwrap().push((request, feed));
         Some(stream)
     }
 

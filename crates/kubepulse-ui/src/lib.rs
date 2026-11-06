@@ -27,6 +27,8 @@ pub mod services;
 pub mod settings_tab;
 pub mod shell_state;
 pub mod tab_connection;
+pub mod terminal;
+pub mod terminal_tab;
 pub mod theme;
 pub mod workspace;
 

@@ -11,9 +11,9 @@ use std::{
 
 use async_trait::async_trait;
 use kubepulse_cluster::{
-    ClusterEntry, ClusterList, ConnectionState, EventRecord, FileError, KubeconfigWatcher,
-    LogRequest, LogStream, ObjectError, ObjectTarget, ResourceKind, SessionHandle, SessionManager,
-    SessionOptions, UpdateAccess, WriteMode, load,
+    ClusterEntry, ClusterList, ConnectionState, EventRecord, ExecRequest, ExecSize, ExecStream,
+    FileError, KubeconfigWatcher, LogRequest, LogStream, ObjectError, ObjectTarget, ResourceKind,
+    SessionHandle, SessionManager, SessionOptions, UpdateAccess, WriteMode, load,
 };
 use kubepulse_extension_api::{
     ChangeOutcome, ChangeRequest, ClusterRef, ExtensionRequest, ExtensionResponse, HostError,
@@ -21,6 +21,7 @@ use kubepulse_extension_api::{
 };
 use kubepulse_extension_host::{CallError, ContributionSet, ExtensionHost, HostBackend};
 use kubepulse_store::{ClusterStore, ColumnResolver, StoreOptions, View, ViewQuery};
+use rust_i18n::t;
 use serde_json::Value;
 use tokio::{
     runtime::{Builder, Handle, Runtime},
@@ -110,6 +111,11 @@ fn host_error(error: ObjectError) -> HostError {
 /// change or open a tab. Dropping `reply` unanswered means the user declined.
 pub enum HostRequest {
     OpenLogs {
+        target: ObjectRef,
+        container: Option<String>,
+        reply: oneshot::Sender<Result<(), HostError>>,
+    },
+    OpenTerminal {
         target: ObjectRef,
         container: Option<String>,
         reply: oneshot::Sender<Result<(), HostError>>,
@@ -257,9 +263,21 @@ impl HostBackend for ClusterBackend {
                 })??;
                 Ok(HostResponse::Surface { reference })
             }
-            HostOperation::OpenSurface { .. } => Err(HostError::Failed {
-                message: "surfaces are not available yet".into(),
-            }),
+            HostOperation::OpenSurface {
+                request: SurfaceRequest::Terminal { target, container },
+            } => {
+                let reference = SurfaceRef(format!("shell/{}/{}", target.cluster.0, target.name));
+                let (reply, answer) = oneshot::channel();
+                self.ask_interface(HostRequest::OpenTerminal {
+                    target,
+                    container,
+                    reply,
+                })?;
+                answer.await.map_err(|_| HostError::Failed {
+                    message: "the application is closing".into(),
+                })??;
+                Ok(HostResponse::Surface { reference })
+            }
             HostOperation::GetLanguage => unreachable!("the capability answers this"),
             HostOperation::Notify { message } => {
                 tracing::info!(%message, "extension notification");
@@ -361,6 +379,17 @@ impl ClusterServices for RuntimeServices {
         let cluster = self.clusters.get(context)?;
         let _runtime = self.runtime.enter();
         Some(cluster.handle.stream_logs(request))
+    }
+
+    fn open_exec(&self, context: &str, request: ExecRequest, size: ExecSize) -> Option<ExecStream> {
+        let cluster = self.clusters.get(context)?;
+        let _runtime = self.runtime.enter();
+        let label = t!(
+            "shell.work",
+            pod = request.pod,
+            container = request.container
+        );
+        Some(cluster.handle.open_exec(request, size, &label))
     }
 
     fn contributions(&self) -> Arc<ContributionSet> {

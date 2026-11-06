@@ -42,6 +42,7 @@ use crate::{
     services::SharedServices,
     settings_tab::{OpenSettings, SettingsTab},
     shell_state::{Placement, SharedShellState, ShellEvent, ShellState, place_kind},
+    terminal_tab::TerminalTab,
     theme::{self, SharedThemes, ThemeCatalog},
 };
 
@@ -85,6 +86,10 @@ impl Workspace {
                 ShellEvent::OpenLogs { key, target } => {
                     let (key, target) = (key.clone(), (**target).clone());
                     this.open_logs(key, target, None, window, cx);
+                }
+                ShellEvent::OpenTerminal { key, target } => {
+                    let (key, target) = (key.clone(), (**target).clone());
+                    this.open_terminal(key, target, None, window, cx);
                 }
                 ShellEvent::OpenEditor { key, target } => {
                     let (key, target) = (key.clone(), (**target).clone());
@@ -361,22 +366,25 @@ impl Workspace {
         let shell = self.shell.read(cx);
         let (tab, editor, settings) = (shell.tab(id), shell.editor(id), shell.settings_tab());
         let logs = shell.log_tab(id);
+        let terminal = shell.terminal_tab(id);
         if let Some(editor) = &editor
             && editor.read(cx).has_unapplied_changes(cx)
         {
             self.confirm_discard(editor.clone(), window, cx);
             return;
         }
-        self.dock
-            .update(cx, |dock, cx| match (tab, editor, logs, settings) {
+        self.dock.update(cx, |dock, cx| {
+            match (tab, editor, logs, terminal, settings) {
                 (Some(tab), ..) => dock.remove_panel(tab, window, cx),
                 (_, Some(editor), ..) => dock.remove_panel(editor, window, cx),
-                (_, _, Some(logs), _) => dock.remove_panel(logs, window, cx),
-                (None, None, None, Some(settings)) if settings.entity_id() == id => {
+                (_, _, Some(logs), ..) => dock.remove_panel(logs, window, cx),
+                (_, _, _, Some(terminal), _) => dock.remove_panel(terminal, window, cx),
+                (None, None, None, None, Some(settings)) if settings.entity_id() == id => {
                     dock.remove_panel(settings, window, cx);
                 }
                 _ => {}
-            });
+            }
+        });
     }
 
     fn confirm_discard(
@@ -467,6 +475,23 @@ impl Workspace {
         tab
     }
 
+    /// Opens a shell. Each gets a tab of its own, because several shells in one
+    /// pod are a normal way to work.
+    pub fn open_terminal(
+        &mut self,
+        key: ClusterKey,
+        target: ObjectTarget,
+        container: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<TerminalTab> {
+        let model = self.model.clone();
+        let tab = cx.new(|cx| TerminalTab::new(key, target, container, model, window, cx));
+        self.add_to_dock(panel_handle(tab.clone()), window, cx);
+        tab.update(cx, |tab, cx| tab.focus_grid(window, cx));
+        tab
+    }
+
     /// Serves what extensions ask of the interface, for the life of the window.
     pub fn listen(
         &self,
@@ -485,6 +510,28 @@ impl Workspace {
             }
         })
         .detach();
+    }
+
+    fn resolve_pod(
+        &self,
+        target: ObjectRef,
+        not_a_pod: &str,
+        cx: &App,
+    ) -> Result<(ClusterKey, ObjectTarget), HostError> {
+        let ObjectRef {
+            cluster,
+            kind,
+            namespace,
+            name,
+        } = target;
+        let (key, target) = self.resolve(&cluster, &kind, namespace, name, cx)?;
+        if target.kind.group.is_empty() && target.kind.kind == "Pod" {
+            Ok((key, target))
+        } else {
+            Err(HostError::Failed {
+                message: not_a_pod.to_owned(),
+            })
+        }
     }
 
     fn serve(&mut self, request: HostRequest, window: &mut Window, cx: &mut Context<Self>) {
@@ -507,26 +554,23 @@ impl Workspace {
                 container,
                 reply,
             } => {
-                let ObjectRef {
-                    cluster,
-                    kind,
-                    namespace,
-                    name,
-                } = target;
-                let resolved =
-                    self.resolve(&cluster, &kind, namespace, name, cx)
-                        .and_then(|resolved| {
-                            if resolved.1.kind.group.is_empty() && resolved.1.kind.kind == "Pod" {
-                                Ok(resolved)
-                            } else {
-                                Err(HostError::Failed {
-                                    message: "only pods have logs".into(),
-                                })
-                            }
+                let opened =
+                    self.resolve_pod(target, "only pods have logs", cx)
+                        .map(|(key, target)| {
+                            self.open_logs(key, target, container, window, cx);
                         });
-                let opened = resolved.map(|(key, target)| {
-                    self.open_logs(key, target, container, window, cx);
-                });
+                let _ = reply.send(opened);
+            }
+            HostRequest::OpenTerminal {
+                target,
+                container,
+                reply,
+            } => {
+                let opened =
+                    self.resolve_pod(target, "only pods have shells", cx)
+                        .map(|(key, target)| {
+                            self.open_terminal(key, target, container, window, cx);
+                        });
                 let _ = reply.send(opened);
             }
             HostRequest::OpenEditor { target, reply } => {

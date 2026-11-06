@@ -104,6 +104,16 @@ pub struct WorkGuard {
     label: String,
 }
 
+impl WorkGuard {
+    pub(crate) fn new(work: watch::Sender<Vec<String>>, label: &str) -> Self {
+        work.send_modify(|work| work.push(label.to_owned()));
+        Self {
+            work,
+            label: label.to_owned(),
+        }
+    }
+}
+
 impl Drop for WorkGuard {
     fn drop(&mut self) {
         self.work.send_modify(|work| {
@@ -173,11 +183,7 @@ impl ClusterSession {
 
     /// Records running work, so the user can be warned before disconnecting.
     pub fn track_work(&self, label: &str) -> WorkGuard {
-        self.work.send_modify(|work| work.push(label.to_owned()));
-        WorkGuard {
-            work: self.work.clone(),
-            label: label.to_owned(),
-        }
+        WorkGuard::new(self.work.clone(), label)
     }
 
     pub fn subscribe_work(&self) -> watch::Receiver<Vec<String>> {
@@ -185,7 +191,12 @@ impl ClusterSession {
     }
 
     pub fn handle(&self) -> SessionHandle {
-        SessionHandle::new(self.client.clone(), self.cancel.clone(), self.tasks.clone())
+        SessionHandle::new(
+            self.client.clone(),
+            self.work.clone(),
+            self.cancel.clone(),
+            self.tasks.clone(),
+        )
     }
 
     /// Runs `task` in this session's tree. It stops when the session disconnects.

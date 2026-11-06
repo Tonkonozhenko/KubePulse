@@ -92,9 +92,9 @@ Stop after this group if any target is missed, and revisit the design before sta
 
 ## 11. Pod shell
 
-- [ ] 11.1 Implement the exec stream with shell discovery and the fallback command prompt, and verify against a simulated cluster, including a container with no shell
+- [x] 11.1 Implement the exec stream with shell discovery and the fallback command prompt, and verify against a simulated cluster, including a container with no shell
 - [ ] 11.2 Implement the terminal element from D13 with colors, scrollback, copy and paste, and resizing, and verify a full-screen program works on all three platforms, and that named ANSI colors come from the active theme's `base.*` colors
-- [ ] 11.3 Implement session-end handling, reconnect, and the target display, and verify a dropped connection keeps the scrollback
+- [x] 11.3 Implement session-end handling, reconnect, and the target display, and verify a dropped connection keeps the scrollback
 
 ## 12. Port-forwarding
 

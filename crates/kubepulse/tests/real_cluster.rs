@@ -13,7 +13,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use kubepulse_cluster::{ConnectionState, ObjectTarget, ResourceKind, SessionOptions};
+use kubepulse_cluster::{
+    ConnectionState, ExecRequest, ExecSize, ExecState, ExecStream, ObjectTarget, ResourceKind,
+    SessionOptions,
+};
 use kubepulse_extension_host::{ContributionSet, ExtensionHost, HostOptions};
 use kubepulse_store::{Row, View, ViewQuery};
 use kubepulse_ui::{
@@ -23,8 +26,12 @@ use kubepulse_ui::{
         RuntimeServices, StoreConfig,
     },
     services::ClusterServices,
+    terminal::{Emulator, Palette},
 };
-use tokio::sync::watch;
+use tokio::{
+    sync::{mpsc, watch},
+    time,
+};
 
 const CONTEXT: &str = "kubepulse-e2e";
 const NAMESPACE: &str = "kubepulse-e2e";
@@ -177,6 +184,72 @@ impl Browser {
 
     fn wait<T>(&self, reply: impl Future<Output = T>) -> T {
         self.runtime.handle().block_on(reply)
+    }
+
+    fn within<T>(&self, work: impl Future<Output = T>) -> Option<T> {
+        self.wait(async { time::timeout(WAIT, work).await.ok() })
+    }
+
+    fn shell(&self, pod: &str, command: Option<Vec<String>>) -> ExecStream {
+        let request = ExecRequest {
+            namespace: NAMESPACE.to_owned(),
+            pod: pod.to_owned(),
+            container: pod.to_owned(),
+            command,
+        };
+        let size = ExecSize { cols: 80, rows: 24 };
+        self.services
+            .open_exec(CONTEXT, request, size)
+            .expect("the cluster is connected")
+    }
+
+    #[track_caller]
+    fn wait_for_state(
+        &self,
+        shell: &ExecStream,
+        reached: impl FnMut(&ExecState) -> bool,
+    ) -> ExecState {
+        let mut states = shell.subscribe();
+        self.within(async { states.wait_for(reached).await.map(|state| state.clone()) })
+            .expect("the shell reaches the state")
+            .expect("the shell is still open")
+    }
+
+    fn show_until(
+        &self,
+        shell: &ExecStream,
+        output: &mut mpsc::Receiver<Vec<u8>>,
+        screen: &Emulator,
+        wanted: &str,
+    ) {
+        let shown = || {
+            screen
+                .visible_lines()
+                .iter()
+                .any(|line| line.contains(wanted))
+        };
+        self.within(async {
+            while !shown() {
+                let bytes = output.recv().await.expect("the output is open");
+                let replies = screen.advance(&bytes);
+                if !replies.is_empty() {
+                    shell.input().send(replies).expect("the shell is open");
+                }
+            }
+        })
+        .unwrap_or_else(|| panic!("no {wanted:?} in {:?}", screen.visible_lines()));
+    }
+
+    fn read_until(&self, output: &mut mpsc::Receiver<Vec<u8>>, wanted: &str) -> String {
+        let mut text = String::new();
+        self.within(async {
+            while !text.contains(wanted) {
+                let bytes = output.recv().await.expect("the output is open");
+                text.push_str(&String::from_utf8_lossy(&bytes));
+            }
+        })
+        .unwrap_or_else(|| panic!("no {wanted:?} in {text:?}"));
+        text
     }
 }
 
@@ -351,10 +424,137 @@ fn browses_a_real_cluster() {
     let widget = wait_for("the widget", WAIT, || row(&table, "big"));
     assert!(cell(&widgets, &contributions, &widget, "Size").contains('7'));
 
+    // Real container runtimes decide what a missing shell looks like.
+    for (pod, image) in [
+        (
+            "shelly",
+            "--image=registry.k8s.io/e2e-test-images/busybox:1.36.1-1",
+        ),
+        ("silent", "--image=registry.k8s.io/pause:3.9"),
+    ] {
+        kubectl.run(&["run", pod, image, "-n", NAMESPACE, "--", "sleep", "3600"]);
+    }
+    kubectl.run(&[
+        "wait",
+        "pod/shelly",
+        "--for=condition=Ready",
+        "--timeout=120s",
+        "-n",
+        NAMESPACE,
+    ]);
+
+    let mut shell = browser.shell("shelly", None);
+    let mut output = shell.take_output().expect("the output is free");
+    browser.wait_for_state(&shell, |state| *state == ExecState::Running);
+    assert!(
+        browser.read_until(&mut output, "#").contains('#'),
+        "busybox has no bash, so ash or sh opened"
+    );
+    wait_for("the shell to count as work", WAIT, || {
+        let work = state.borrow().status(CONTEXT)?.active_work.clone();
+        (work.len() == 1).then_some(())
+    });
+    let type_line = |shell: &ExecStream, line: &str| {
+        shell
+            .input()
+            .send(line.as_bytes().to_vec())
+            .expect("the shell is open");
+    };
+    type_line(&shell, "echo pulse-$((40+2))\n");
+    browser.read_until(&mut output, "pulse-42");
+    shell.resize(ExecSize {
+        cols: 101,
+        rows: 33,
+    });
+    // The size travels apart from what is typed, so it must land first.
+    thread::sleep(Duration::from_secs(1));
+    type_line(&shell, "stty size\n");
+    browser.read_until(&mut output, "33 101");
+    type_line(&shell, "echo term=$TERM.\n");
+    let term = browser.read_until(&mut output, "term=xterm");
+    assert!(term.contains("term=xterm"), "{term:?}");
+    type_line(&shell, "exit 7\n");
+    assert_eq!(
+        browser.wait_for_state(&shell, |state| *state != ExecState::Running),
+        ExecState::Exited(7)
+    );
+
+    // Full-screen programs run through the real emulator, which answers their
+    // terminal queries the way a tab does.
+    let vi = vec!["vi".to_owned(), "/tmp/pulse.txt".to_owned()];
+    let mut editor = browser.shell("shelly", Some(vi));
+    let mut output = editor.take_output().expect("the output is free");
+    let screen = Emulator::new(80, 24, Palette::default());
+    browser.show_until(&editor, &mut output, &screen, "~");
+    // Sent together, an escape and what follows it read as one special key.
+    type_line(&editor, "ipulse-from-vi");
+    thread::sleep(Duration::from_secs(1));
+    type_line(&editor, "\x1b");
+    thread::sleep(Duration::from_secs(1));
+    type_line(&editor, ":wq\r");
+    assert_eq!(
+        browser.wait_for_state(&editor, |state| !matches!(
+            state,
+            ExecState::Connecting | ExecState::Running
+        )),
+        ExecState::Exited(0)
+    );
+    let mut reader = browser.shell(
+        "shelly",
+        Some(vec!["cat".to_owned(), "/tmp/pulse.txt".to_owned()]),
+    );
+    let mut output = reader.take_output().expect("the output is free");
+    browser.read_until(&mut output, "pulse-from-vi");
+
+    let mut top = browser.shell("shelly", Some(vec!["top".to_owned()]));
+    let mut output = top.take_output().expect("the output is free");
+    let screen = Emulator::new(80, 24, Palette::default());
+    browser.show_until(&top, &mut output, &screen, "PID");
+    assert!(
+        screen
+            .visible_lines()
+            .iter()
+            .any(|line| line.contains("top")),
+        "{:?}",
+        screen.visible_lines()
+    );
+    type_line(&top, "q");
+    assert_eq!(
+        browser.wait_for_state(&top, |state| !matches!(
+            state,
+            ExecState::Connecting | ExecState::Running
+        )),
+        ExecState::Exited(0)
+    );
+
+    let no_shell = browser.shell("silent", None);
+    assert_eq!(
+        browser.wait_for_state(&no_shell, |state| *state != ExecState::Connecting),
+        ExecState::NoShell
+    );
+    let missing = browser.shell("silent", Some(vec!["/not/here".to_owned()]));
+    let ended = browser.wait_for_state(&missing, |state| {
+        !matches!(state, ExecState::Connecting | ExecState::Running)
+    });
+    assert!(
+        matches!(ended, ExecState::Failed(_) | ExecState::Exited(1..)),
+        "{ended:?}"
+    );
+
+    let open_shell = browser.shell("shelly", None);
+    browser.wait_for_state(&open_shell, |state| *state == ExecState::Running);
+    let mut shell_states = open_shell.subscribe();
+
     commands
         .send(ClusterCommand::Disconnect(CONTEXT.to_owned()))
         .expect("the runtime is running");
     wait_for("the disconnect", WAIT, || {
         (state.borrow().status(CONTEXT)?.state == ConnectionState::Disconnected).then_some(())
     });
+    assert!(
+        browser
+            .within(async { while shell_states.changed().await.is_ok() {} })
+            .is_some(),
+        "disconnecting ends the shell"
+    );
 }

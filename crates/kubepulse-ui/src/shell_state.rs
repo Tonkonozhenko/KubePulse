@@ -16,7 +16,7 @@ use rust_i18n::t;
 
 use crate::{
     cluster_tab::ClusterTab, identity::ClusterKey, log_tab::LogTab, manifest_tab::ManifestTab,
-    settings_tab::SettingsTab,
+    settings_tab::SettingsTab, terminal_tab::TerminalTab,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -88,6 +88,10 @@ pub enum ShellEvent {
         key: ClusterKey,
         target: Box<ObjectTarget>,
     },
+    OpenTerminal {
+        key: ClusterKey,
+        target: Box<ObjectTarget>,
+    },
     OpenEditor {
         key: ClusterKey,
         target: Box<ObjectTarget>,
@@ -105,6 +109,8 @@ pub struct ShellState {
     settings_tab: Option<WeakEntity<SettingsTab>>,
     editors: Vec<EditorEntry>,
     log_tabs: Vec<LogEntry>,
+    /// One pod can have several shells, so these are found by tab alone.
+    terminal_tabs: Vec<(EntityId, WeakEntity<TerminalTab>)>,
 }
 
 /// Lets tabs find the shell state.
@@ -208,6 +214,22 @@ impl ShellState {
         cx.emit(ShellEvent::OpenLogs { key, target });
     }
 
+    pub fn add_terminal_tab(&mut self, id: EntityId, tab: WeakEntity<TerminalTab>) {
+        if !self.terminal_tabs.iter().any(|(known, _)| *known == id) {
+            self.terminal_tabs.push((id, tab));
+        }
+    }
+
+    pub fn terminal_tab(&self, id: EntityId) -> Option<Entity<TerminalTab>> {
+        let (_, tab) = self.terminal_tabs.iter().find(|(known, _)| *known == id)?;
+        tab.upgrade()
+    }
+
+    pub fn open_terminal(&self, key: ClusterKey, target: ObjectTarget, cx: &mut Context<Self>) {
+        let target = Box::new(target);
+        cx.emit(ShellEvent::OpenTerminal { key, target });
+    }
+
     pub fn active_tab(&self) -> Option<&TabSummary> {
         self.tabs
             .iter()
@@ -261,6 +283,7 @@ impl ShellState {
         self.tabs.retain(|entry| entry.summary.id != id);
         self.editors.retain(|entry| entry.id != id);
         self.log_tabs.retain(|entry| entry.id != id);
+        self.terminal_tabs.retain(|(known, _)| *known != id);
         if self.active == Some(id) {
             self.active = None;
         }
