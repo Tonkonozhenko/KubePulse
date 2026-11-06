@@ -97,6 +97,7 @@ These rules hold the design together:
 ## Git
 
 - Commit and push through a subagent running the Haiku model.
+- Do not add a session link or Claude signature, such as `Co-Authored-By` or `Claude-Session`, to commit messages.
 
 ## OpenSpec conventions
 
