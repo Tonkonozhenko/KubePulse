@@ -130,8 +130,10 @@ async fn each_built_in_kind_lists_with_its_default_columns() {
                 .collect();
             let mut object = json!({});
             for column in &declared {
-                let ColumnSource::Path { path } = &column.source else {
-                    panic!("{} is not declarative", column.id);
+                let path = match &column.source {
+                    ColumnSource::Path { path } => path,
+                    ColumnSource::Status { paths } => paths.last().expect("a status path"),
+                    ColumnSource::Computed => panic!("{} is not declarative", column.id),
                 };
                 fill(&mut object, path, "shown");
             }

@@ -142,6 +142,7 @@ fn main() {
             .map(|spec| ColumnDef {
                 title: spec.id.clone(),
                 spec: spec.clone(),
+                status: false,
             })
             .collect(),
         computed: Vec::new(),

@@ -124,6 +124,9 @@ pub enum ColumnSource {
     /// A path into the object, such as `.status.phase`. The host evaluates it
     /// without calling the extension, so it cannot affect table scale.
     Path { path: String },
+    /// A status. The host shows the first path with a value, without calling
+    /// the extension, and chooses its color from the text.
+    Status { paths: Vec<String> },
     /// Requested from the extension for visible rows only, with
     /// [`ExtensionRequest::ComputeColumn`](crate::ExtensionRequest::ComputeColumn).
     Computed,

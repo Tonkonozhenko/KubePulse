@@ -20,6 +20,7 @@ use rust_i18n::t;
 use crate::{
     cluster_model::{ClusterModel, can_connect},
     columns::{columns_for, kind_icon, kind_ref, kind_title},
+    delete_dialog::DeleteDialog,
     detail::{DetailEvent, DetailView},
     icons::view_glyph,
     identity::ClusterKey,
@@ -51,6 +52,7 @@ pub struct ClusterTab {
     services: Arc<dyn ClusterServices>,
     browser: Option<Entity<ResourceBrowser>>,
     detail: Option<Entity<DetailView>>,
+    delete_dialog: WeakEntity<DeleteDialog>,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -79,6 +81,7 @@ impl ClusterTab {
             services,
             browser: None,
             detail: None,
+            delete_dialog: WeakEntity::new_invalid(),
             focus: cx.focus_handle(),
             _subscriptions: vec![subscription],
         }
@@ -94,6 +97,10 @@ impl ClusterTab {
 
     pub fn detail(&self) -> Option<&Entity<DetailView>> {
         self.detail.as_ref()
+    }
+
+    pub fn delete_dialog(&self) -> Option<Entity<DeleteDialog>> {
+        self.delete_dialog.upgrade()
     }
 
     pub fn pinned(&self) -> bool {
@@ -164,6 +171,12 @@ impl ClusterTab {
                         };
                         this.open_object(target, window, cx);
                     }
+                    BrowserEvent::Close => this.close_detail(cx),
+                    BrowserEvent::Logs(target) => this.open_logs(target.clone(), cx),
+                    BrowserEvent::Edit(target) => this.open_editor(target.clone(), cx),
+                    BrowserEvent::Delete(targets) => {
+                        this.confirm_delete(targets.clone(), window, cx);
+                    }
                 },
             );
             self._subscriptions.push(subscription);
@@ -179,34 +192,81 @@ impl ClusterTab {
         cx: &mut Context<Self>,
     ) {
         let (key, model, services) = (self.key.clone(), self.model.clone(), self.services.clone());
-        let detail = cx.new(|cx| DetailView::new(key, target, model, services, window, cx));
+        let detail = cx.new(|cx| DetailView::new(key, target, model, services, cx));
         let subscription =
             cx.subscribe_in(&detail, window, |this, _, event, window, cx| match event {
                 DetailEvent::OpenOwner(target) => this.open_object(target.clone(), window, cx),
-                DetailEvent::Logs(target) => {
-                    let (key, target) = (this.key.clone(), target.clone());
-                    this.shell
-                        .update(cx, |shell, cx| shell.open_logs(key, target, cx));
+                DetailEvent::Logs(target) => this.open_logs(target.clone(), cx),
+                DetailEvent::Edit(target) => this.open_editor(target.clone(), cx),
+                DetailEvent::Delete(target) => {
+                    this.confirm_delete(vec![target.clone()], window, cx);
                 }
-                DetailEvent::Edit(target) => {
-                    let (key, target) = (this.key.clone(), target.clone());
-                    this.shell
-                        .update(cx, |shell, cx| shell.open_editor(key, target, cx));
-                }
-                DetailEvent::Deleted => {
-                    this.detail = None;
-                    cx.notify();
-                }
+                DetailEvent::Close => this.close_detail(cx),
             });
         self._subscriptions.push(subscription);
         self.detail = Some(detail);
         cx.notify();
+    }
+
+    fn open_logs(&mut self, target: ObjectTarget, cx: &mut Context<Self>) {
+        let key = self.key.clone();
+        self.shell
+            .update(cx, |shell, cx| shell.open_logs(key, target, cx));
+    }
+
+    fn open_editor(&mut self, target: ObjectTarget, cx: &mut Context<Self>) {
+        let key = self.key.clone();
+        self.shell
+            .update(cx, |shell, cx| shell.open_editor(key, target, cx));
+    }
+
+    fn close_detail(&mut self, cx: &mut Context<Self>) {
+        self.detail = None;
+        if let Some(browser) = &self.browser {
+            browser.update(cx, |browser, cx| browser.clear_open(cx));
+        }
+        cx.notify();
+    }
+
+    fn confirm_delete(
+        &mut self,
+        targets: Vec<ObjectTarget>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tab = cx.weak_entity();
+        let dialog = DeleteDialog::open(
+            self.key.clone(),
+            targets,
+            self.model.clone(),
+            self.services.clone(),
+            move |deleted, _, cx| {
+                let _ = tab.update(cx, |tab, cx| tab.objects_deleted(&deleted, cx));
+            },
+            window,
+            cx,
+        );
+        self.delete_dialog = dialog.downgrade();
+    }
+
+    fn objects_deleted(&mut self, deleted: &[ObjectTarget], cx: &mut Context<Self>) {
+        if let Some(browser) = &self.browser {
+            browser.update(cx, |browser, cx| browser.uncheck(deleted, cx));
+        }
+        let open = self.detail.as_ref().map(|detail| detail.read(cx).target());
+        if open.is_some_and(|open| deleted.contains(open)) {
+            self.close_detail(cx);
+        }
     }
 }
 
 impl gpui_kit::base::dock::Panel for ClusterTab {
     fn panel_name(&self) -> &'static str {
         PANEL_NAME
+    }
+
+    fn zoomable(&self, _: &App) -> bool {
+        false
     }
 
     fn closable(&self, _: &App) -> bool {

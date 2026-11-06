@@ -11,11 +11,12 @@ use serde_json_path::JsonPath;
 
 pub type Symbol = ArcIntern<str>;
 
-/// A column read from a path into the object, such as `.status.phase`.
+/// A column read from paths into the object, such as `.status.phase`. The first
+/// path with a value wins.
 #[derive(Clone, Debug)]
 pub struct ColumnSpec {
     pub id: Arc<str>,
-    path: JsonPath,
+    paths: Vec<JsonPath>,
 }
 
 #[derive(Debug)]
@@ -31,12 +32,29 @@ impl std::error::Error for ColumnError {}
 
 impl ColumnSpec {
     pub fn new(id: &str, path: &str) -> Result<Self, ColumnError> {
-        let path =
-            JsonPath::parse(&format!("${path}")).map_err(|_| ColumnError(path.to_owned()))?;
+        Self::first_of(id, &[path])
+    }
+
+    pub fn first_of(id: &str, paths: &[impl AsRef<str>]) -> Result<Self, ColumnError> {
+        let paths = paths
+            .iter()
+            .map(|path| {
+                let path = path.as_ref();
+                JsonPath::parse(&format!("${path}")).map_err(|_| ColumnError(path.to_owned()))
+            })
+            .collect::<Result<_, _>>()?;
         Ok(Self {
             id: id.into(),
-            path,
+            paths,
         })
+    }
+
+    pub fn evaluate(&self, object: &Value) -> Cell {
+        self.paths
+            .iter()
+            .map(|path| Cell::from_value(path.query(object).first()))
+            .find(|cell| *cell != Cell::Empty)
+            .unwrap_or(Cell::Empty)
     }
 }
 
@@ -104,7 +122,7 @@ impl Row {
             created: object.created.as_deref().map(Symbol::from),
             cells: columns
                 .iter()
-                .map(|column| Cell::from_value(column.path.query(&object.data).first()))
+                .map(|column| column.evaluate(&object.data))
                 .collect(),
         }
     }
@@ -170,6 +188,48 @@ mod tests {
     fn missing_and_null_fields_are_empty() {
         assert_eq!(cell(".status.nope"), Cell::Empty);
         assert_eq!(cell(".status.conditions"), Cell::Empty);
+    }
+
+    fn first_of(paths: &[&str], data: &Value) -> Cell {
+        ColumnSpec::first_of("c", paths).unwrap().evaluate(data)
+    }
+
+    #[test]
+    fn the_first_path_with_a_value_wins() {
+        let data = object().data;
+        let phase = Cell::Text("Running".into());
+        assert_eq!(first_of(&[".status.phase", ".nope"], &data), phase);
+        assert_eq!(first_of(&[".nope", ".status.phase"], &data), phase);
+        assert_eq!(
+            first_of(&[".status.conditions", ".status.phase"], &data),
+            phase
+        );
+        assert_eq!(first_of(&[".nope", ".status.nope"], &data), Cell::Empty);
+    }
+
+    #[test]
+    fn a_waiting_container_reason_comes_before_the_phase() {
+        let paths = [
+            ".status.containerStatuses[?(@.state.waiting)].state.waiting.reason",
+            ".status.phase",
+        ];
+        let crashing = json!({"status": {"phase": "Running", "containerStatuses": [
+            {"state": {"running": {}}},
+            {"state": {"waiting": {"reason": "CrashLoopBackOff"}}},
+        ]}});
+        let healthy = json!({"status": {"phase": "Running", "containerStatuses": [
+            {"state": {"running": {}}},
+        ]}});
+        assert_eq!(
+            first_of(&paths, &crashing),
+            Cell::Text("CrashLoopBackOff".into())
+        );
+        assert_eq!(first_of(&paths, &healthy), Cell::Text("Running".into()));
+    }
+
+    #[test]
+    fn an_invalid_path_anywhere_rejects_the_column() {
+        assert!(ColumnSpec::first_of("c", &[".status.phase", "["]).is_err());
     }
 
     #[test]

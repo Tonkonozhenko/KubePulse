@@ -12,15 +12,18 @@ use gpui_kit::{
     assets::IconName,
     component::{
         ActiveTheme as _, Icon, IndexPath, Sizable as _,
+        button::{Button, ButtonVariants as _},
+        checkbox::Checkbox,
         combobox::{Combobox, ComboboxEvent, ComboboxState},
         input::{Input, InputEvent, InputState},
+        menu::{PopupMenu, PopupMenuItem},
         searchable_list::SearchableVec,
         table::{Column, ColumnSort, DataTable, TableDelegate, TableEvent, TableState},
     },
     prelude::FluentBuilder as _,
     *,
 };
-use kubepulse_cluster::ResourceKind;
+use kubepulse_cluster::{ObjectTarget, ResourceKind};
 use kubepulse_extension_api::{ClusterRef, ExtensionRequest, ExtensionResponse, ObjectRef};
 use kubepulse_store::{
     Cell, LabelSelector, Row, Snapshot, SortDirection, SortKey, View, ViewQuery,
@@ -30,16 +33,80 @@ use rust_i18n::t;
 
 use crate::{
     cluster_model::{ClusterModel, ClusterModelEvent},
-    columns::{ComputedColumn, KindColumns, kind_ref},
+    columns::{ComputedColumn, KindColumns, is_pod, kind_ref},
     identity::ClusterKey,
     services::ClusterServices,
+    status::{Tone, status_tag, status_tone},
 };
 
 const PENDING_CELL: &str = "…";
 
+const SELECT_COLUMN: usize = 0;
+const ACTIONS_COLUMN: usize = 1;
+const SELECT_WIDTH: f32 = 40.;
+const ACTION_WIDTH: f32 = 28.;
+/// The padding around the buttons of the actions column.
+const ACTIONS_PADDING: f32 = 24.;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowAction {
+    Logs,
+    Edit,
+    Delete,
+}
+
+impl RowAction {
+    fn button_id(self) -> &'static str {
+        match self {
+            Self::Logs => "row-logs",
+            Self::Edit => "row-edit",
+            Self::Delete => "row-delete",
+        }
+    }
+
+    fn icon(self) -> IconName {
+        match self {
+            Self::Logs => IconName::SquareTerminal,
+            Self::Edit => IconName::Pencil,
+            Self::Delete => IconName::Trash,
+        }
+    }
+
+    fn label(self) -> String {
+        match self {
+            Self::Logs => t!("detail.logs"),
+            Self::Edit => t!("detail.edit"),
+            Self::Delete => t!("detail.delete"),
+        }
+        .to_string()
+    }
+}
+
+fn row_actions(kind: &ResourceKind) -> &'static [RowAction] {
+    if is_pod(kind) {
+        &[RowAction::Logs, RowAction::Edit, RowAction::Delete]
+    } else {
+        &[RowAction::Edit, RowAction::Delete]
+    }
+}
+
+/// A fixed column that takes no part in sorting, moving, or selection.
+fn control_column(key: &'static str, width: f32) -> Column {
+    Column::new(key, "")
+        .width(px(width))
+        .fixed_left()
+        .movable(false)
+        .resizable(false)
+        .selectable(false)
+}
+
+fn display_only_checkbox(id: impl Into<ElementId>, checked: bool) -> Checkbox {
+    Checkbox::new(id).checked(checked).tab_stop(false)
+}
+
 type NamespacePicker = ComboboxState<SearchableVec<String>>;
 
-fn cell_text(cell: Option<&Cell>) -> String {
+pub fn cell_text(cell: Option<&Cell>) -> String {
     match cell {
         Some(Cell::Text(text)) => text.to_string(),
         Some(Cell::Number(number)) => number.to_string(),
@@ -62,23 +129,157 @@ pub struct RowsDelegate {
     browser: WeakEntity<ResourceBrowser>,
     computed: HashMap<(usize, Arc<str>), ComputedCell>,
     visible: Range<usize>,
+    actions: &'static [RowAction],
+    /// Only ever holds rows in `rows`, so nothing hidden can be deleted.
+    checked: HashSet<Arc<str>>,
+    /// The row a Shift+click extends from.
+    anchor: Option<Arc<str>>,
 }
 
 impl RowsDelegate {
+    /// The columns before the declared ones: the checkbox, the actions, the
+    /// name, and for namespaced kinds the namespace.
     fn leading_columns(&self) -> usize {
-        if self.namespaced { 2 } else { 1 }
+        if self.namespaced { 4 } else { 3 }
+    }
+
+    fn name_column(&self) -> usize {
+        ACTIONS_COLUMN + 1
     }
 
     fn sort_key(&self, col_ix: usize) -> Option<SortKey> {
         let lead = self.leading_columns();
         match col_ix {
-            0 => Some(SortKey::Name),
-            1 if self.namespaced => Some(SortKey::Namespace),
+            SELECT_COLUMN | ACTIONS_COLUMN => None,
+            index if index == self.name_column() => Some(SortKey::Name),
+            index if index < lead => Some(SortKey::Namespace),
             index if index - lead < self.columns.declared.len() => {
                 Some(SortKey::Column(index - lead))
             }
             _ => None,
         }
+    }
+
+    fn is_status_column(&self, col_ix: usize) -> bool {
+        col_ix
+            .checked_sub(self.leading_columns())
+            .and_then(|index| self.columns.declared.get(index))
+            .is_some_and(|column| column.status)
+    }
+
+    /// How a status cell is colored, or `None` for any other cell.
+    pub fn cell_tone(&self, row_ix: usize, col_ix: usize, cx: &App) -> Option<Tone> {
+        let text = self.cell_text(row_ix, col_ix, cx);
+        (self.is_status_column(col_ix) && !text.is_empty()).then(|| status_tone(&text))
+    }
+
+    pub fn checked(&self) -> &HashSet<Arc<str>> {
+        &self.checked
+    }
+
+    fn all_checked(&self) -> bool {
+        !self.rows.is_empty() && self.checked.len() == self.rows.len()
+    }
+
+    fn click_checkbox(&mut self, row_ix: usize, shift: bool) {
+        let Some(key) = self.rows.get(row_ix).map(|row| row.key.clone()) else {
+            return;
+        };
+        if shift {
+            let anchor = self
+                .anchor
+                .as_ref()
+                .and_then(|anchor| self.rows.iter().position(|row| row.key == *anchor));
+            if let Some(anchor) = anchor {
+                let range = anchor.min(row_ix)..=anchor.max(row_ix);
+                let keys = self.rows[range].iter().map(|row| row.key.clone());
+                self.checked.extend(keys);
+                return;
+            }
+            self.checked.insert(key.clone());
+        } else if !self.checked.remove(&key) {
+            self.checked.insert(key.clone());
+        }
+        self.anchor = Some(key);
+    }
+
+    pub fn click_header_checkbox(&mut self) {
+        if self.all_checked() {
+            self.checked.clear();
+        } else {
+            self.checked = self.rows.iter().map(|row| row.key.clone()).collect();
+        }
+    }
+
+    fn drop_missing_rows(&mut self) {
+        if !self.checked.is_empty() {
+            self.checked = self
+                .rows
+                .iter()
+                .filter(|row| self.checked.contains(&row.key))
+                .map(|row| row.key.clone())
+                .collect();
+        }
+        if let Some(anchor) = &self.anchor
+            && !self.rows.iter().any(|row| row.key == *anchor)
+        {
+            self.anchor = None;
+        }
+    }
+
+    fn render_row_checkbox(
+        &self,
+        row_ix: usize,
+        cx: &mut Context<TableState<Self>>,
+    ) -> impl IntoElement + use<> {
+        let checked = self
+            .rows
+            .get(row_ix)
+            .is_some_and(|row| self.checked.contains(&row.key));
+        let browser = self.browser.clone();
+        div()
+            .id(("row-check", row_ix))
+            .size_full()
+            .flex()
+            .items_center()
+            .child(display_only_checkbox(("row-check-box", row_ix), checked))
+            // The checkbox's own click cannot see Shift.
+            .on_click(cx.listener(move |table, event: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                table
+                    .delegate_mut()
+                    .click_checkbox(row_ix, event.modifiers().shift);
+                cx.notify();
+                let _ = browser.update(cx, |_, cx| cx.notify());
+            }))
+            .test_support()
+    }
+
+    fn render_row_actions(&self, row_ix: usize) -> impl IntoElement + use<> {
+        let row = self.rows.get(row_ix).cloned();
+        let browser = self.browser.clone();
+        div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .children(row.into_iter().flat_map(|row| {
+                let browser = browser.clone();
+                self.actions.iter().map(move |&action| {
+                    let (browser, row) = (browser.clone(), row.clone());
+                    Button::new((action.button_id(), row_ix))
+                        .icon(action.icon())
+                        .ghost()
+                        .xsmall()
+                        .tab_stop(false)
+                        .tooltip(action.label())
+                        .on_click(move |_, _, cx| {
+                            cx.stop_propagation();
+                            let _ = browser.update(cx, |browser, cx| {
+                                browser.run_action(action, &row, cx);
+                            });
+                        })
+                })
+            }))
     }
 
     fn computed_cell(&self, column: usize, row: &Arc<Row>) -> Option<&str> {
@@ -138,6 +339,35 @@ impl TableDelegate for RowsDelegate {
         });
     }
 
+    fn render_th(
+        &mut self,
+        col_ix: usize,
+        _: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> impl IntoElement {
+        if col_ix != SELECT_COLUMN {
+            return div()
+                .size_full()
+                .child(self.column(col_ix, cx).name.clone())
+                .into_any_element();
+        }
+        let browser = self.browser.clone();
+        div()
+            .id("select-all")
+            .size_full()
+            .flex()
+            .items_center()
+            .child(display_only_checkbox("select-all-box", self.all_checked()))
+            .on_click(cx.listener(move |table, _: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                table.delegate_mut().click_header_checkbox();
+                cx.notify();
+                let _ = browser.update(cx, |_, cx| cx.notify());
+            }))
+            .test_support()
+            .into_any_element()
+    }
+
     fn render_td(
         &mut self,
         row_ix: usize,
@@ -145,7 +375,42 @@ impl TableDelegate for RowsDelegate {
         _: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
-        div().child(self.cell_text(row_ix, col_ix, cx))
+        match col_ix {
+            SELECT_COLUMN => self.render_row_checkbox(row_ix, cx).into_any_element(),
+            ACTIONS_COLUMN => self.render_row_actions(row_ix).into_any_element(),
+            _ => {
+                let text = self.cell_text(row_ix, col_ix, cx);
+                if self.is_status_column(col_ix) && !text.is_empty() {
+                    status_tag(text).into_any_element()
+                } else {
+                    div().child(text).into_any_element()
+                }
+            }
+        }
+    }
+
+    fn context_menu(
+        &mut self,
+        row_ix: usize,
+        menu: PopupMenu,
+        _: &mut Window,
+        _: &mut Context<TableState<Self>>,
+    ) -> PopupMenu {
+        let Some(row) = self.rows.get(row_ix).cloned() else {
+            return menu;
+        };
+        self.actions.iter().fold(menu, |menu, &action| {
+            let (browser, row) = (self.browser.clone(), row.clone());
+            menu.item(
+                PopupMenuItem::new(action.label())
+                    .icon(action.icon())
+                    .on_click(move |_, _, cx| {
+                        let _ = browser.update(cx, |browser, cx| {
+                            browser.run_action(action, &row, cx);
+                        });
+                    }),
+            )
+        })
     }
 
     fn cell_text(&self, row_ix: usize, col_ix: usize, _: &App) -> String {
@@ -155,8 +420,9 @@ impl TableDelegate for RowsDelegate {
         let lead = self.leading_columns();
         let declared = self.columns.declared.len();
         match col_ix {
-            0 => row.name.to_string(),
-            1 if self.namespaced => row.namespace.as_deref().unwrap_or_default().to_owned(),
+            SELECT_COLUMN | ACTIONS_COLUMN => String::new(),
+            index if index == self.name_column() => row.name.to_string(),
+            index if index < lead => row.namespace.as_deref().unwrap_or_default().to_owned(),
             index if index - lead < declared => cell_text(row.cells.get(index - lead)),
             index => self
                 .computed_cell(index - lead - declared, row)
@@ -177,6 +443,11 @@ fn namespace_kind(model: &Entity<ClusterModel>, context: &str, cx: &App) -> Opti
 
 pub enum BrowserEvent {
     Open(Arc<Row>),
+    /// The user dismissed the open object from the table.
+    Close,
+    Logs(ObjectTarget),
+    Edit(ObjectTarget),
+    Delete(Vec<ObjectTarget>),
 }
 
 impl EventEmitter<BrowserEvent> for ResourceBrowser {}
@@ -247,7 +518,13 @@ impl ResourceBrowser {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut table_columns = vec![Column::new("name", t!("column.name").to_string()).sortable()];
+        let actions = row_actions(&kind);
+        let actions_width = ACTIONS_PADDING + ACTION_WIDTH * actions.len() as f32;
+        let mut table_columns = vec![
+            control_column("select", SELECT_WIDTH),
+            control_column("actions", actions_width),
+            Column::new("name", t!("column.name").to_string()).sortable(),
+        ];
         if kind.namespaced {
             table_columns
                 .push(Column::new("namespace", t!("column.namespace").to_string()).sortable());
@@ -267,6 +544,9 @@ impl ResourceBrowser {
             browser: cx.weak_entity(),
             computed: HashMap::new(),
             visible: 0..0,
+            actions,
+            checked: HashSet::new(),
+            anchor: None,
         };
         let table = cx.new(|cx| TableState::new(delegate, window, cx));
 
@@ -447,6 +727,70 @@ impl ResourceBrowser {
         self.apply_query(cx);
     }
 
+    fn target(&self, row: &Row) -> ObjectTarget {
+        ObjectTarget {
+            kind: self.kind.clone(),
+            namespace: row.namespace.as_deref().map(str::to_owned),
+            name: row.name.to_string(),
+        }
+    }
+
+    pub fn run_action(&mut self, action: RowAction, row: &Row, cx: &mut Context<Self>) {
+        let target = self.target(row);
+        cx.emit(match action {
+            RowAction::Logs => BrowserEvent::Logs(target),
+            RowAction::Edit => BrowserEvent::Edit(target),
+            RowAction::Delete => BrowserEvent::Delete(vec![target]),
+        });
+    }
+
+    fn checked_targets(&self, cx: &App) -> Vec<ObjectTarget> {
+        let delegate = self.table.read(cx).delegate();
+        delegate
+            .rows
+            .iter()
+            .filter(|row| delegate.checked.contains(&row.key))
+            .map(|row| self.target(row))
+            .collect()
+    }
+
+    pub fn clear_checked(&mut self, cx: &mut Context<Self>) {
+        self.table.update(cx, |table, cx| {
+            table.delegate_mut().checked.clear();
+            cx.notify();
+        });
+        cx.notify();
+    }
+
+    /// Unchecks objects that are gone, or going, though their rows may stay
+    /// until the cluster finishes removing them.
+    pub fn uncheck(&mut self, targets: &[ObjectTarget], cx: &mut Context<Self>) {
+        let gone: HashSet<_> = targets
+            .iter()
+            .map(|target| (target.namespace.as_deref(), target.name.as_str()))
+            .collect();
+        self.table.update(cx, |table, cx| {
+            let delegate = table.delegate_mut();
+            let keys: Vec<_> = delegate
+                .rows
+                .iter()
+                .filter(|row| gone.contains(&(row.namespace.as_deref(), &*row.name)))
+                .map(|row| row.key.clone())
+                .collect();
+            for key in keys {
+                delegate.checked.remove(&key);
+            }
+            cx.notify();
+        });
+        cx.notify();
+    }
+
+    /// Stops showing a row as open, so clicking it opens it again.
+    pub fn clear_open(&mut self, cx: &mut Context<Self>) {
+        self.selected = None;
+        self.sync_selection(cx);
+    }
+
     fn on_table_event(
         &mut self,
         table: Entity<TableState<RowsDelegate>>,
@@ -466,7 +810,10 @@ impl ResourceBrowser {
                     cx.emit(BrowserEvent::Open(row));
                 }
             }
-            TableEvent::ClearSelection => self.selected = None,
+            TableEvent::ClearSelection => {
+                self.selected = None;
+                cx.emit(BrowserEvent::Close);
+            }
             _ => {}
         }
     }
@@ -480,7 +827,9 @@ impl ResourceBrowser {
         let namespaces_changed = snapshot.namespaces != self.snapshot.namespaces;
         self.snapshot = snapshot.clone();
         self.table.update(cx, |table, cx| {
-            table.delegate_mut().rows = snapshot.rows.clone();
+            let delegate = table.delegate_mut();
+            delegate.rows = snapshot.rows.clone();
+            delegate.drop_missing_rows();
             cx.notify();
         });
         self.sync_selection(cx);
@@ -671,6 +1020,7 @@ impl Render for ResourceBrowser {
         };
         let denied = snapshot.denied.clone();
         let muted = cx.theme().muted_foreground;
+        let checked = self.table.read(cx).delegate().checked.len();
         div()
             .id("resource-browser")
             .size_full()
@@ -720,11 +1070,42 @@ impl Render for ResourceBrowser {
             }))
             .child(
                 div()
-                    .id("resource-summary")
-                    .text_xs()
-                    .text_color(muted)
-                    .child(summary)
-                    .test_support(),
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id("resource-summary")
+                            .text_xs()
+                            .text_color(muted)
+                            .child(summary)
+                            .test_support(),
+                    )
+                    .when(checked > 0, |this| {
+                        this.child(
+                            div()
+                                .id("checked-count")
+                                .text_xs()
+                                .child(t!("browser.checked", count = checked).to_string())
+                                .test_support(),
+                        )
+                        .child(
+                            Button::new("delete-checked")
+                                .icon(IconName::Trash)
+                                .xsmall()
+                                .label(t!("browser.delete_checked").to_string())
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    cx.emit(BrowserEvent::Delete(this.checked_targets(cx)));
+                                })),
+                        )
+                        .child(
+                            Button::new("clear-checked")
+                                .ghost()
+                                .xsmall()
+                                .label(t!("browser.clear_checked").to_string())
+                                .on_click(cx.listener(|this, _, _, cx| this.clear_checked(cx))),
+                        )
+                    }),
             )
             .children(denied.map(|reason| {
                 div()
@@ -732,6 +1113,17 @@ impl Render for ResourceBrowser {
                     .child(t!("browser.access_denied", reason = reason).to_string())
                     .test_support()
             }))
-            .child(div().flex_1().w_full().child(DataTable::new(&self.table)))
+            .child(
+                div()
+                    .flex_1()
+                    .w_full()
+                    // The table passes Escape on when the open row is off screen.
+                    .on_key_down(cx.listener(|_, event: &KeyDownEvent, _, cx| {
+                        if event.keystroke.key == "escape" {
+                            cx.emit(BrowserEvent::Close);
+                        }
+                    }))
+                    .child(DataTable::new(&self.table)),
+            )
     }
 }

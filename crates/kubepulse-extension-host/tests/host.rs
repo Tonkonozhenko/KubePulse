@@ -548,7 +548,7 @@ async fn an_incompatible_manifest_is_refused_with_a_clear_message() {
     };
     assert_eq!(
         reason,
-        "built for contract 2.0, but this application provides 1.2"
+        "built for contract 2.0, but this application provides 1.3"
     );
     assert!(contributed(&host).is_empty());
     assert_eq!(
@@ -556,6 +556,19 @@ async fn an_incompatible_manifest_is_refused_with_a_clear_message() {
         Err(CallError::UnknownExtension)
     );
     assert_eq!(extension.activations.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn an_extension_built_for_an_earlier_minor_contract_loads() {
+    let earlier = ContractVersion { major: 1, minor: 2 };
+    let (host, _) = host_with(vec![TestExtension::new(Manifest {
+        contract: earlier,
+        ..manifest("a")
+    })]);
+    assert!(!matches!(
+        status(&host, "a"),
+        ExtensionStatus::Refused { .. }
+    ));
 }
 
 #[tokio::test]
@@ -716,7 +729,7 @@ async fn a_newer_minor_contract_is_refused_by_an_older_host() {
     };
     assert_eq!(
         reason,
-        "built for contract 1.2, but this application provides 1.0"
+        "built for contract 1.3, but this application provides 1.0"
     );
 }
 

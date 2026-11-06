@@ -141,6 +141,10 @@ pub struct FakeServices {
     pub objects: Mutex<Vec<(ObjectTarget, Value)>>,
     pub events: Mutex<Vec<EventRecord>>,
     pub deleted: Mutex<Vec<ObjectTarget>>,
+    /// How deleting the object of this name fails.
+    pub delete_errors: Mutex<HashMap<String, ObjectError>>,
+    /// Holds delete replies back until it has permits.
+    pub delete_gate: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
     /// Every write, in order.
     pub writes: Mutex<Vec<(WriteMode, Value)>>,
     /// What the next writes answer, oldest first. With none left, a write
@@ -197,6 +201,8 @@ impl FakeServices {
             objects: Mutex::default(),
             events: Mutex::default(),
             deleted: Mutex::default(),
+            delete_errors: Mutex::default(),
+            delete_gate: Mutex::default(),
             writes: Mutex::default(),
             write_results: Mutex::default(),
             log_feeds: Mutex::default(),
@@ -267,9 +273,19 @@ impl ClusterServices for FakeServices {
     }
 
     fn delete_object(&self, _: &str, target: ObjectTarget) -> Reply<()> {
+        let named = self.delete_errors.lock().unwrap().remove(&target.name);
         self.deleted.lock().unwrap().push(target);
         let failure = self.delete_failure.lock().unwrap().take();
-        Box::pin(async move { failure.map_or(Ok(()), |message| Err(ObjectError::Failed(message))) })
+        let gate = self.delete_gate.lock().unwrap().clone();
+        Box::pin(async move {
+            if let Some(gate) = gate {
+                let _permit = gate.acquire().await;
+            }
+            if let Some(error) = named {
+                return Err(error);
+            }
+            failure.map_or(Ok(()), |message| Err(ObjectError::Failed(message)))
+        })
     }
 
     fn replace_object(

@@ -13,6 +13,8 @@ use rust_i18n::t;
 pub struct ColumnDef {
     pub title: Arc<str>,
     pub spec: ColumnSpec,
+    /// Shown as a tag colored by health.
+    pub status: bool,
 }
 
 /// A column an extension computes, requested for visible rows only.
@@ -33,11 +35,16 @@ pub fn kind_ref(kind: &ResourceKind) -> KindRef {
     KindRef::new(&kind.group, &kind.kind)
 }
 
-fn declared(id: &str, title: &str, path: &str) -> Option<ColumnDef> {
-    match ColumnSpec::new(id, path) {
+pub fn is_pod(kind: &ResourceKind) -> bool {
+    kind.group.is_empty() && kind.kind == "Pod"
+}
+
+fn declared(id: &str, title: &str, paths: &[impl AsRef<str>], status: bool) -> Option<ColumnDef> {
+    match ColumnSpec::first_of(id, paths) {
         Ok(spec) => Some(ColumnDef {
             title: title.into(),
             spec,
+            status,
         }),
         Err(error) => {
             tracing::warn!(%error, "skipping column");
@@ -59,7 +66,12 @@ pub fn columns_for(kind: &ResourceKind, contributions: &ContributionSet) -> Kind
                 ColumnSource::Path { path } => {
                     columns
                         .declared
-                        .extend(declared(&column.id, &column.title, path));
+                        .extend(declared(&column.id, &column.title, &[path], false));
+                }
+                ColumnSource::Status { paths } => {
+                    columns
+                        .declared
+                        .extend(declared(&column.id, &column.title, paths, true));
                 }
                 ColumnSource::Computed => columns.computed.push(ComputedColumn {
                     extension: extension.clone(),
@@ -72,17 +84,27 @@ pub fn columns_for(kind: &ResourceKind, contributions: &ContributionSet) -> Kind
     for column in &kind.printer_columns {
         // The table always shows these two itself.
         if column.name != "Name" && column.name != "Age" {
-            columns
-                .declared
-                .extend(declared(&column.name, &column.name, &column.path));
+            columns.declared.extend(declared(
+                &column.name,
+                &column.name,
+                &[&column.path],
+                is_status_name(&column.name),
+            ));
         }
     }
     columns.declared.extend(declared(
         "created",
         &t!("column.created"),
-        ".metadata.creationTimestamp",
+        &[".metadata.creationTimestamp"],
+        false,
     ));
     columns
+}
+
+fn is_status_name(name: &str) -> bool {
+    ["status", "phase", "state"]
+        .iter()
+        .any(|status| name.eq_ignore_ascii_case(status))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -281,6 +303,64 @@ mod tests {
 
         let other = columns_for(&kind("", "Service", vec![]), &set(pods()));
         assert_eq!(titles(&other), ["Created"]);
+    }
+
+    fn status_flags(columns: &KindColumns) -> Vec<(&str, bool)> {
+        columns
+            .declared
+            .iter()
+            .map(|column| (&*column.title, column.status))
+            .collect()
+    }
+
+    #[test]
+    fn a_status_column_is_marked_and_an_invalid_path_skips_it() {
+        let mut contributed = pods();
+        contributed.columns.push(ColumnContribution {
+            id: "health".into(),
+            title: "Health".into(),
+            kind: KindRef::new("", "Pod"),
+            source: ColumnSource::Status {
+                paths: vec![".status.reason".into(), ".status.phase".into()],
+            },
+        });
+        contributed.columns.push(ColumnContribution {
+            id: "broken".into(),
+            title: "Broken".into(),
+            kind: KindRef::new("", "Pod"),
+            source: ColumnSource::Status {
+                paths: vec![".status.phase".into(), "[".into()],
+            },
+        });
+        let columns = columns_for(&kind("", "Pod", vec![]), &set(contributed));
+        assert_eq!(
+            status_flags(&columns),
+            [("Status", false), ("Health", true), ("Created", false)]
+        );
+    }
+
+    #[test]
+    fn printer_columns_named_like_a_status_are_statuses_in_any_case() {
+        let printer = ["Status", "PHASE", "state", "Size"]
+            .map(|name| PrinterColumn {
+                name: name.into(),
+                path: ".spec.size".into(),
+            })
+            .to_vec();
+        let columns = columns_for(
+            &kind("example.com", "Widget", printer),
+            &ContributionSet::default(),
+        );
+        assert_eq!(
+            status_flags(&columns),
+            [
+                ("Status", true),
+                ("PHASE", true),
+                ("state", true),
+                ("Size", false),
+                ("Created", false),
+            ]
+        );
     }
 
     #[test]

@@ -3,11 +3,12 @@ mod support;
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use gpui_kit::{
-    AppContext as _, Entity, SharedString, TestAppContext, VisualTestContext, WindowOptions,
-    component::WindowExt as _, test::TestWindowExt as _,
+    AppContext as _, ElementId, Entity, Modifiers, SharedString, TestAppContext, VisualTestContext,
+    WindowOptions, component::WindowExt as _, test::TestWindowExt as _,
 };
 use kubepulse_cluster::{
-    ConnectionState, EventRecord, ObjectTarget, PrinterColumn, ResourceKind, WatchEvent,
+    ConnectionState, EventRecord, ObjectError, ObjectTarget, PrinterColumn, ResourceKind,
+    WatchEvent,
 };
 use kubepulse_extension_api::{
     ColumnContribution, ColumnSource, Contributions, DetailTabContribution, ExtensionRequest,
@@ -28,6 +29,7 @@ use kubepulse_ui::{
     services::SharedServices,
     settings_tab,
     shell_state::{SharedShellState, ShellState},
+    status::Tone,
     workspace::Workspace,
 };
 use serde_json::{Value, json};
@@ -36,6 +38,7 @@ use tokio::sync::{mpsc, watch};
 
 const CONTEXT: &str = "test";
 const TEN_THOUSAND: usize = 10_000;
+const CONTROL_COLUMNS: usize = 2;
 
 fn key() -> ClusterKey {
     ClusterKey::new(CONTEXT, Some("https://test.example"))
@@ -168,8 +171,12 @@ impl Harness<'_> {
     /// The first `rows` rows as the table shows them.
     fn cells(&mut self, rows: usize) -> (Vec<String>, Vec<Vec<String>>) {
         let browser = self.browser();
-        self.cx
-            .update(|_, cx| browser.read(cx).table().read(cx).dump_range(0..rows, cx))
+        let (headers, rows) = self
+            .cx
+            .update(|_, cx| browser.read(cx).table().read(cx).dump_range(0..rows, cx));
+        // The checkbox and action columns hold no text.
+        let data = |cells: Vec<String>| cells[CONTROL_COLUMNS..].to_vec();
+        (data(headers), rows.into_iter().map(data).collect())
     }
 
     fn click(&mut self, id: String) {
@@ -396,7 +403,7 @@ fn a_header_click_reaches_the_view(cx: &mut TestAppContext) {
 
     harness.cx.update(|window, cx| {
         window.render_frame(cx);
-        window.click(("icon-sort", 0usize), cx);
+        window.click(("icon-sort", 2usize), cx);
     });
     let browser = harness.browser();
     wait_until(harness.cx, "the sorted rows", |cx| {
@@ -451,7 +458,7 @@ fn the_selection_follows_its_object_as_rows_arrive_above_it(cx: &mut TestAppCont
     let (mut harness, source) = selectable(cx);
     harness.cx.update(|window, cx| window.render_frame(cx));
 
-    harness.click("table-cell-3:0".into());
+    harness.click("table-cell-3:2".into());
     let browser = harness.browser();
     let selected = harness
         .cx
@@ -488,7 +495,7 @@ fn the_selection_survives_scrolling_away_while_rows_change(cx: &mut TestAppConte
     let (mut harness, source) = selectable(cx);
     harness.cx.update(|window, cx| window.render_frame(cx));
 
-    harness.click("table-cell-3:0".into());
+    harness.click("table-cell-3:2".into());
     let browser = harness.browser();
     let selected = harness
         .cx
@@ -768,7 +775,7 @@ fn opening_a_deployment_owned_pod_shows_its_details_and_events(cx: &mut TestAppC
     harness.wait_for_rows(1);
     harness.cx.update(|window, cx| window.render_frame(cx));
 
-    harness.click("table-cell-0:0".into());
+    harness.click("table-cell-0:2".into());
     harness.wait_for_detail();
 
     let detail = harness.detail().unwrap();
@@ -948,10 +955,11 @@ fn dialog_open(harness: &mut Harness<'_>) -> bool {
 }
 
 fn type_name(harness: &mut Harness<'_>, text: &str) {
-    let detail = harness.detail().unwrap();
-    harness
-        .cx
-        .update(|_, cx| detail.update(cx, |detail, cx| detail.type_name(text, cx)));
+    let tab = harness.tab();
+    harness.cx.update(|_, cx| {
+        let dialog = tab.read(cx).delete_dialog().expect("an open dialog");
+        dialog.update(cx, |dialog, cx| dialog.type_name(text, cx));
+    });
     harness.cx.run_until_parked();
 }
 
@@ -1481,4 +1489,759 @@ fn a_cluster_without_namespaces_says_the_list_is_incomplete(cx: &mut TestAppCont
 
     harness.click("namespace-picker".into());
     assert!(harness.exists("namespaces-incomplete".into()));
+}
+
+// Status colors
+
+fn status_column(paths: &[&str]) -> ColumnContribution {
+    ColumnContribution {
+        id: "status".into(),
+        title: "Status".into(),
+        kind: KindRef::new("", "Pod"),
+        source: ColumnSource::Status {
+            paths: paths.iter().map(|path| (*path).to_owned()).collect(),
+        },
+    }
+}
+
+const WAITING: &str = ".status.containerStatuses[?(@.state.waiting)].state.waiting.reason";
+
+fn crashing_pod() -> Value {
+    json!({
+        "metadata": {"name": "crashing", "uid": "uid-crashing"},
+        "status": {"phase": "Running", "containerStatuses": [
+            {"state": {"waiting": {"reason": "CrashLoopBackOff"}}},
+        ]},
+    })
+}
+
+#[gpui_kit::test]
+fn a_crash_looping_pod_reads_the_same_in_the_table_and_the_panel(cx: &mut TestAppContext) {
+    let objects = vec![
+        raw("crashing", Some("shop"), crashing_pod()),
+        raw(
+            "healthy",
+            Some("shop"),
+            json!({"status": {"phase": "Running"}}),
+        ),
+        raw(
+            "strange",
+            Some("shop"),
+            json!({"status": {"phase": "Reticulating"}}),
+        ),
+    ];
+    let services = Arc::new(FakeServices::new(
+        Arc::new(ScriptedSource::default().with("Pod", objects)),
+        contributed(vec![status_column(&[WAITING, ".status.phase"])]),
+    ));
+    services.add_object(&pod_kind(), Some("shop"), crashing_pod());
+    let mut harness = harness(cx, services, vec![pod_kind()], false);
+    harness.open_kind(&pod_kind());
+    harness.wait_for_rows(3);
+    harness.update_browser(|browser, cx| {
+        browser.set_sort(Some((SortKey::Name, SortDirection::Ascending)), cx);
+    });
+    harness.settle();
+
+    let browser = harness.browser();
+    let tone = |row: usize, column: usize, harness: &mut Harness<'_>| {
+        harness.cx.update(|_, cx| {
+            let table = browser.read(cx).table().read(cx);
+            table.delegate().cell_tone(row, column, cx)
+        })
+    };
+    // After the checkbox, actions, name, and namespace columns.
+    assert_eq!(harness.cells(3).1[0][2], "CrashLoopBackOff");
+    assert_eq!(tone(0, 4, &mut harness), Some(Tone::Danger));
+    assert_eq!(tone(1, 4, &mut harness), Some(Tone::Success));
+    assert_eq!(tone(2, 4, &mut harness), Some(Tone::Neutral));
+    assert_eq!(tone(0, 2, &mut harness), None, "the name is not a status");
+
+    harness.open_object(target(pod_kind(), Some("shop"), "crashing"));
+    let detail = harness.detail().unwrap();
+    let status = harness
+        .cx
+        .update(|_, cx| detail.read(cx).status().map(str::to_owned));
+    assert_eq!(status.as_deref(), Some("CrashLoopBackOff"));
+}
+
+// Row actions and selection
+
+/// Pods `pod-00` onward in `shop`, sorted by name, all of which can be opened.
+fn few_pods<'a>(
+    cx: &'a mut TestAppContext,
+    count: usize,
+    protected: bool,
+) -> (Harness<'a>, Arc<FakeServices>, Arc<ScriptedSource>) {
+    let names = (0..count).map(|index| format!("pod-{index:02}"));
+    let objects = names
+        .clone()
+        .map(|name| raw(&name, Some("shop"), json!({})))
+        .collect();
+    let source = Arc::new(ScriptedSource::default().with("Pod", objects));
+    let services = Arc::new(FakeServices::new(
+        source.clone() as Arc<dyn WatchSource>,
+        ContributionSet::default(),
+    ));
+    for name in names {
+        services.add_object(&pod_kind(), Some("shop"), owned(&name, None));
+    }
+    let mut harness = harness(cx, services.clone(), vec![pod_kind()], protected);
+    harness.open_kind(&pod_kind());
+    harness.wait_for_rows(count);
+    harness.update_browser(|browser, cx| {
+        browser.set_sort(Some((SortKey::Name, SortDirection::Ascending)), cx);
+    });
+    harness.settle();
+    (harness, services, source)
+}
+
+impl Harness<'_> {
+    /// Lets snapshots from a query or a watch reach the table.
+    fn settle(&mut self) {
+        self.cx.executor().advance_clock(Duration::from_millis(50));
+        self.cx.run_until_parked();
+        std::thread::sleep(Duration::from_millis(30));
+        self.cx.run_until_parked();
+    }
+
+    fn click_at(&mut self, id: impl Into<ElementId>) {
+        let id = id.into();
+        self.cx.update(|window, cx| {
+            window.render_frame(cx);
+            window.click(id, cx);
+        });
+        self.cx.run_until_parked();
+    }
+
+    fn exists_at(&mut self, id: impl Into<ElementId>) -> bool {
+        let id = id.into();
+        self.cx.update(|window, cx| {
+            window.render_frame(cx);
+            window.try_find(id).is_some()
+        })
+    }
+
+    fn check(&mut self, row: usize) {
+        self.click_at(("row-check", row));
+    }
+
+    fn shift_check(&mut self, row: usize) {
+        self.cx.update(|window, cx| {
+            window.render_frame(cx);
+            let shift = Modifiers {
+                shift: true,
+                ..Modifiers::default()
+            };
+            window.click_with_modifiers(("row-check", row), shift, cx);
+        });
+        self.cx.run_until_parked();
+    }
+
+    /// The names of the checked rows, in table order.
+    fn checked(&mut self) -> Vec<String> {
+        let browser = self.browser();
+        self.cx.update(|_, cx| {
+            let browser = browser.read(cx);
+            let delegate = browser.table().read(cx).delegate();
+            browser
+                .snapshot()
+                .rows
+                .iter()
+                .filter(|row| delegate.checked().contains(&row.key))
+                .map(|row| row.name.to_string())
+                .collect()
+        })
+    }
+
+    fn deleted_names(&self, services: &FakeServices) -> Vec<String> {
+        let mut names: Vec<_> = deletions(services)
+            .into_iter()
+            .map(|target| target.name)
+            .collect();
+        names.sort();
+        names
+    }
+}
+
+fn names(indices: impl IntoIterator<Item = usize>) -> Vec<String> {
+    indices
+        .into_iter()
+        .map(|index| format!("pod-{index:02}"))
+        .collect()
+}
+
+#[gpui_kit::test]
+fn pods_offer_logs_and_other_kinds_do_not(cx: &mut TestAppContext) {
+    let source = ScriptedSource::default()
+        .with("Pod", vec![raw("web", Some("shop"), json!({}))])
+        .with("Secret", vec![raw("key", Some("shop"), json!({}))]);
+    let services = Arc::new(FakeServices::new(
+        Arc::new(source),
+        ContributionSet::default(),
+    ));
+    let mut harness = harness(cx, services, vec![pod_kind(), secret_kind()], false);
+
+    harness.open_kind(&pod_kind());
+    assert!(harness.exists_at(("row-logs", 0usize)));
+    assert!(harness.exists_at(("row-edit", 0usize)));
+    assert!(harness.exists_at(("row-delete", 0usize)));
+
+    harness.open_kind(&secret_kind());
+    assert!(!harness.exists_at(("row-logs", 0usize)));
+    assert!(harness.exists_at(("row-edit", 0usize)));
+    assert!(harness.exists_at(("row-delete", 0usize)));
+}
+
+#[gpui_kit::test]
+fn row_buttons_act_without_opening_the_panel_or_changing_checks(cx: &mut TestAppContext) {
+    let (mut harness, services, _) = few_pods(cx, 3, false);
+    harness.check(0);
+
+    harness.click_at(("row-delete", 1usize));
+    assert!(dialog_open(&mut harness));
+    harness.click("delete-confirm".into());
+    assert_eq!(harness.deleted_names(&services), names([1]));
+
+    assert!(harness.detail().is_none());
+    assert_eq!(harness.checked(), names([0]));
+}
+
+fn open_panels(harness: &mut Harness<'_>) -> usize {
+    let workspace = harness.workspace.clone();
+    harness.cx.update(|_, cx| {
+        let dock = workspace.read(cx).dock().read(cx);
+        let tree = dock.layout(gpui_kit::component::dock::DockPlacement::Center);
+        tree.map_or(0, |tree| tree.panels().count())
+    })
+}
+
+#[gpui_kit::test]
+fn the_logs_and_edit_buttons_open_their_tabs_and_not_the_panel(cx: &mut TestAppContext) {
+    let (mut harness, _, _) = few_pods(cx, 2, false);
+    let tab = harness.tab();
+    let before = open_panels(&mut harness);
+
+    harness.click_at(("row-logs", 1usize));
+    assert_eq!(open_panels(&mut harness), before + 1);
+
+    let panel = gpui_kit::component::dock::PanelId::from(tab.entity_id());
+    let workspace = harness.workspace.clone();
+    harness.cx.update(|window, cx| {
+        let dock = workspace.read(cx).dock().clone();
+        dock.update(cx, |dock, cx| dock.select_panel(panel, window, cx));
+    });
+    harness.cx.run_until_parked();
+    harness.click_at(("row-edit", 1usize));
+    assert_eq!(open_panels(&mut harness), before + 2);
+
+    let detail = harness.cx.update(|_, cx| tab.read(cx).detail().cloned());
+    assert!(detail.is_none());
+}
+
+#[gpui_kit::test]
+fn the_right_click_menu_keeps_its_object_when_rows_move(cx: &mut TestAppContext) {
+    let (mut harness, services, source) = few_pods(cx, 3, false);
+    harness.cx.update(|window, cx| {
+        window.render_frame(cx);
+        window.right_click(SharedString::from("table-cell-1:2"), cx);
+    });
+    harness.cx.run_until_parked();
+
+    let mut first = raw("aaa-first", Some("shop"), json!({}));
+    first.key = "uid-first".into();
+    source.send(WatchEvent::Applied(first));
+    harness.wait_for_rows(4);
+
+    harness.cx.update(|window, cx| {
+        window.render_frame(cx);
+        window.within("popup-menu").click(ElementId::Integer(2), cx);
+    });
+    harness.cx.run_until_parked();
+    assert!(dialog_open(&mut harness));
+    harness.click("delete-confirm".into());
+
+    assert_eq!(harness.deleted_names(&services), names([1]));
+}
+
+#[gpui_kit::test]
+fn a_checkbox_toggles_its_row_and_opens_nothing(cx: &mut TestAppContext) {
+    let (mut harness, _, _) = few_pods(cx, 5, false);
+
+    harness.check(2);
+    assert_eq!(harness.checked(), names([2]));
+    assert!(harness.detail().is_none());
+
+    harness.check(2);
+    assert!(harness.checked().is_empty());
+
+    harness.check(1);
+    harness.click("table-cell-3:2".into());
+    assert!(harness.detail().is_some(), "a row click still opens it");
+    assert_eq!(harness.checked(), names([1]));
+}
+
+#[gpui_kit::test]
+fn shift_selects_a_range_in_either_direction(cx: &mut TestAppContext) {
+    let (mut harness, _, _) = few_pods(cx, 9, false);
+
+    harness.check(3);
+    harness.shift_check(7);
+    assert_eq!(harness.checked(), names(3..=7));
+
+    harness.update_browser(|browser, cx| browser.clear_checked(cx));
+    harness.check(6);
+    harness.shift_check(2);
+    assert_eq!(harness.checked(), names(2..=6));
+    assert!(harness.detail().is_none());
+}
+
+#[gpui_kit::test]
+fn shift_adds_to_the_selection_and_never_unchecks(cx: &mut TestAppContext) {
+    let (mut harness, _, _) = few_pods(cx, 9, false);
+
+    harness.check(0);
+    harness.check(4);
+    harness.shift_check(6);
+    assert_eq!(harness.checked(), names([0, 4, 5, 6]));
+
+    harness.shift_check(5);
+    assert_eq!(harness.checked(), names([0, 4, 5, 6]));
+}
+
+#[gpui_kit::test]
+fn shift_follows_the_order_shown_after_sorting(cx: &mut TestAppContext) {
+    let (mut harness, _, _) = few_pods(cx, 6, false);
+
+    harness.check(1);
+    harness.update_browser(|browser, cx| {
+        browser.set_sort(Some((SortKey::Name, SortDirection::Descending)), cx);
+    });
+    harness.settle();
+    // Descending, so pod-01 is at row 4 and row 2 is pod-03.
+    harness.shift_check(2);
+
+    assert_eq!(harness.checked(), ["pod-03", "pod-02", "pod-01"]);
+}
+
+#[gpui_kit::test]
+fn shift_with_no_earlier_click_checks_only_that_row(cx: &mut TestAppContext) {
+    let (mut harness, _, _) = few_pods(cx, 6, false);
+
+    harness.shift_check(3);
+    assert_eq!(harness.checked(), names([3]));
+}
+
+#[gpui_kit::test]
+fn shift_after_the_earlier_row_left_checks_only_that_row(cx: &mut TestAppContext) {
+    let (mut harness, _, _) = few_pods(cx, 6, false);
+
+    harness.check(1);
+    harness.update_browser(|browser, cx| browser.set_filter("pod-0", cx));
+    harness.settle();
+    harness.update_browser(|browser, cx| browser.set_filter("pod-05", cx));
+    harness.settle();
+    harness.update_browser(|browser, cx| browser.set_filter("", cx));
+    harness.settle();
+
+    harness.shift_check(4);
+    assert_eq!(harness.checked(), names([4]));
+}
+
+#[gpui_kit::test]
+fn the_header_checkbox_selects_every_row_shown_and_clears(cx: &mut TestAppContext) {
+    let (mut harness, _, _) = few_pods(cx, 5, false);
+    harness.update_browser(|browser, cx| browser.set_filter("pod-0", cx));
+    harness.settle();
+
+    harness.check(1);
+    harness.click("select-all".into());
+    assert_eq!(harness.checked(), names(0..5));
+
+    harness.click("select-all".into());
+    assert!(harness.checked().is_empty());
+}
+
+#[gpui_kit::test]
+fn checks_stay_on_their_objects_as_rows_arrive(cx: &mut TestAppContext) {
+    let (mut harness, _, source) = few_pods(cx, 4, false);
+    harness.check(2);
+
+    let mut first = raw("aaa-first", Some("shop"), json!({}));
+    first.key = "uid-first".into();
+    source.send(WatchEvent::Applied(first));
+    harness.wait_for_rows(5);
+
+    assert_eq!(harness.checked(), names([2]));
+}
+
+#[gpui_kit::test]
+fn a_row_hidden_by_a_filter_stops_being_checked(cx: &mut TestAppContext) {
+    let (mut harness, _, _) = few_pods(cx, 4, false);
+    harness.check(0);
+    harness.check(1);
+
+    harness.update_browser(|browser, cx| browser.set_filter("pod-01", cx));
+    harness.settle();
+    assert_eq!(harness.checked(), names([1]));
+
+    harness.update_browser(|browser, cx| browser.set_filter("", cx));
+    harness.settle();
+    assert_eq!(harness.checked(), names([1]));
+}
+
+#[gpui_kit::test]
+fn a_checked_object_deleted_elsewhere_leaves_the_count(cx: &mut TestAppContext) {
+    let (mut harness, _, source) = few_pods(cx, 4, false);
+    harness.check(0);
+    harness.check(1);
+    assert!(harness.exists("checked-count".into()));
+
+    source.send(WatchEvent::Deleted {
+        key: "uid-pod-01".into(),
+    });
+    harness.wait_for_rows(3);
+
+    assert_eq!(harness.checked(), names([0]));
+}
+
+#[gpui_kit::test]
+fn the_selection_bar_appears_with_checks_and_clears_them(cx: &mut TestAppContext) {
+    let (mut harness, _, _) = few_pods(cx, 3, false);
+    assert!(!harness.exists("checked-count".into()));
+
+    harness.check(0);
+    assert!(harness.exists("checked-count".into()));
+
+    harness.click("clear-checked".into());
+    assert!(harness.checked().is_empty());
+    assert!(!harness.exists("checked-count".into()));
+}
+
+#[gpui_kit::test]
+fn selecting_every_row_of_ten_thousand_is_quick(cx: &mut TestAppContext) {
+    let (mut harness, _) = selectable(cx);
+    let browser = harness.browser();
+    harness.cx.update(|window, cx| window.render_frame(cx));
+
+    // Timed without the simulated mouse, which is most of a click in a test.
+    let table = harness.cx.update(|_, cx| browser.read(cx).table().clone());
+    let started = std::time::Instant::now();
+    harness.cx.update(|window, cx| {
+        table.update(cx, |table, cx| {
+            table.delegate_mut().click_header_checkbox();
+            cx.notify();
+        });
+        window.render_frame(cx);
+    });
+    let elapsed = started.elapsed();
+
+    let checked = harness.cx.update(|_, cx| {
+        let table = browser.read(cx).table().read(cx);
+        table.delegate().checked().len()
+    });
+    assert_eq!(checked, TEN_THOUSAND);
+    assert!(elapsed < Duration::from_millis(100), "{elapsed:?}");
+}
+
+// Deleting several objects
+
+#[gpui_kit::test]
+fn several_objects_are_listed_and_nothing_goes_until_confirmed(cx: &mut TestAppContext) {
+    let (mut harness, services, _) = few_pods(cx, 4, false);
+    harness.check(0);
+    harness.shift_check(2);
+
+    harness.click("delete-checked".into());
+
+    assert!(harness.exists("delete-confirmation".into()));
+    assert!(harness.exists("delete-list".into()));
+    for row in 0..3usize {
+        assert!(harness.exists_at(("delete-item", row)));
+    }
+    assert!(!harness.exists_at(("delete-item", 3usize)));
+
+    harness.cx.update(|window, cx| window.press("enter", cx));
+    harness.cx.run_until_parked();
+    assert!(deletions(&services).is_empty());
+
+    harness.click("delete-confirm".into());
+    assert_eq!(harness.deleted_names(&services), names(0..3));
+    assert!(!dialog_open(&mut harness));
+    assert!(harness.checked().is_empty());
+}
+
+#[gpui_kit::test]
+fn several_objects_on_a_protected_cluster_need_the_cluster_name(cx: &mut TestAppContext) {
+    let (mut harness, services, _) = few_pods(cx, 3, true);
+    harness.check(0);
+    harness.check(1);
+    harness.click("delete-checked".into());
+
+    assert!(!harness.exists("delete-confirm".into()));
+    type_name(&mut harness, "pod-00");
+    assert!(!harness.exists("delete-confirm".into()));
+
+    type_name(&mut harness, CONTEXT);
+    assert!(harness.exists("delete-confirm".into()));
+    assert!(deletions(&services).is_empty());
+}
+
+#[gpui_kit::test]
+fn a_row_delete_on_a_protected_cluster_needs_the_object_name(cx: &mut TestAppContext) {
+    let (mut harness, _, _) = few_pods(cx, 3, true);
+    harness.click_at(("row-delete", 1usize));
+
+    type_name(&mut harness, CONTEXT);
+    assert!(!harness.exists("delete-confirm".into()));
+
+    type_name(&mut harness, "pod-01");
+    assert!(harness.exists("delete-confirm".into()));
+}
+
+#[gpui_kit::test]
+fn a_failure_leaves_the_rest_deleted_and_only_it_is_retried(cx: &mut TestAppContext) {
+    let (mut harness, services, _) = few_pods(cx, 3, false);
+    services
+        .delete_errors
+        .lock()
+        .unwrap()
+        .insert("pod-01".into(), ObjectError::Denied("forbidden".into()));
+    harness.click("select-all".into());
+    harness.click("delete-checked".into());
+
+    harness.click("delete-confirm".into());
+
+    assert!(dialog_open(&mut harness), "the failure keeps it open");
+    assert_eq!(harness.deleted_names(&services), names(0..3));
+    assert!(harness.exists_at(("delete-item", 0usize)));
+    assert!(!harness.exists_at(("delete-item", 1usize)));
+    assert_eq!(harness.checked(), names([1]));
+
+    services.deleted.lock().unwrap().clear();
+    harness.click("delete-confirm".into());
+
+    assert_eq!(harness.deleted_names(&services), names([1]));
+    assert!(!dialog_open(&mut harness));
+    assert!(harness.checked().is_empty());
+}
+
+#[gpui_kit::test]
+fn an_object_already_gone_counts_as_deleted(cx: &mut TestAppContext) {
+    let (mut harness, services, _) = few_pods(cx, 2, false);
+    services
+        .delete_errors
+        .lock()
+        .unwrap()
+        .insert("pod-00".into(), ObjectError::NotFound("gone".into()));
+    harness.click("select-all".into());
+    harness.click("delete-checked".into());
+
+    harness.click("delete-confirm".into());
+
+    assert!(!dialog_open(&mut harness));
+    assert!(harness.checked().is_empty());
+}
+
+#[gpui_kit::test]
+fn cancelling_starts_no_more_deletions(cx: &mut TestAppContext) {
+    let (mut harness, services, _) = few_pods(cx, 12, false);
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    *services.delete_gate.lock().unwrap() = Some(gate.clone());
+    harness.click("select-all".into());
+    harness.click("delete-checked".into());
+
+    harness.click("delete-confirm".into());
+    assert_eq!(deletions(&services).len(), 8, "at most eight at once");
+    assert!(harness.exists("delete-progress".into()));
+
+    harness.click("delete-cancel".into());
+    gate.add_permits(12);
+    harness.settle();
+
+    assert_eq!(deletions(&services).len(), 8);
+    assert!(!dialog_open(&mut harness));
+}
+
+#[gpui_kit::test]
+fn escape_during_deletion_starts_no_more_of_them(cx: &mut TestAppContext) {
+    let (mut harness, services, _) = few_pods(cx, 12, false);
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    *services.delete_gate.lock().unwrap() = Some(gate.clone());
+    harness.click("select-all".into());
+    harness.click("delete-checked".into());
+    harness.click("delete-confirm".into());
+
+    harness.cx.update(|window, cx| window.press("escape", cx));
+    harness.cx.run_until_parked();
+    gate.add_permits(12);
+    harness.settle();
+
+    assert_eq!(deletions(&services).len(), 8);
+    assert!(!dialog_open(&mut harness));
+}
+
+#[gpui_kit::test]
+fn deleting_the_open_object_with_others_closes_the_panel(cx: &mut TestAppContext) {
+    let (mut harness, _, _) = few_pods(cx, 3, false);
+    harness.click("table-cell-1:2".into());
+    harness.wait_for_detail();
+    harness.click("select-all".into());
+    harness.click("delete-checked".into());
+
+    harness.click("delete-confirm".into());
+
+    assert!(harness.detail().is_none());
+}
+
+// Detail panel
+
+#[gpui_kit::test]
+fn the_panel_closes_and_the_same_row_opens_again(cx: &mut TestAppContext) {
+    let (mut harness, _, _) = few_pods(cx, 3, false);
+    harness.check(0);
+    harness.click("table-cell-1:2".into());
+    harness.wait_for_detail();
+
+    harness.click("close-detail".into());
+
+    assert!(harness.detail().is_none());
+    let browser = harness.browser();
+    let open = harness
+        .cx
+        .update(|_, cx| browser.read(cx).selected().cloned());
+    assert!(open.is_none());
+    assert_eq!(selected_row(&browser, &mut harness), None);
+    assert_eq!(harness.checked(), names([0]), "checks survive closing");
+
+    harness.click("table-cell-1:2".into());
+    harness.wait_for_detail();
+    assert!(harness.detail().is_some());
+}
+
+#[gpui_kit::test]
+fn escape_in_the_table_closes_the_panel(cx: &mut TestAppContext) {
+    let (mut harness, _, _) = few_pods(cx, 3, false);
+    harness.click("table-cell-1:2".into());
+    harness.wait_for_detail();
+
+    harness.cx.update(|window, cx| window.press("escape", cx));
+    harness.cx.run_until_parked();
+
+    assert!(harness.detail().is_none());
+}
+
+#[gpui_kit::test]
+fn escape_closes_the_panel_while_its_row_is_scrolled_away(cx: &mut TestAppContext) {
+    let (mut harness, _) = selectable(cx);
+    harness.cx.update(|window, cx| window.render_frame(cx));
+    harness.click("table-cell-3:2".into());
+    harness.wait_for_detail();
+    let browser = harness.browser();
+
+    harness.cx.update(|window, cx| {
+        browser.update(cx, |browser, cx| {
+            browser
+                .table()
+                .update(cx, |table, cx| table.scroll_to_row(5_000, cx));
+        });
+        window.render_frame(cx);
+    });
+    harness.cx.update(|window, cx| window.render_frame(cx));
+    harness.cx.run_until_parked();
+    assert_eq!(selected_row(&browser, &mut harness), None);
+
+    harness.cx.update(|window, cx| window.press("escape", cx));
+    harness.cx.run_until_parked();
+
+    assert!(harness.detail().is_none());
+}
+
+fn detailed_pod() -> Value {
+    json!({
+        "metadata": {
+            "name": "web",
+            "uid": "uid-web",
+            "labels": {"app": "web", "tier": "front"},
+            "annotations": {"note": "kept in full"},
+        },
+        "status": {"conditions": [
+            {"type": "Ready", "status": "False", "reason": "Crash", "message": "back-off"},
+            {"type": "DiskPressure", "status": "True"},
+        ]},
+    })
+}
+
+fn detailed(cx: &mut TestAppContext, object: Value, kind: ResourceKind) -> Harness<'_> {
+    let services = Arc::new(FakeServices::idle());
+    services.add_object(&kind, Some("shop"), object);
+    services.events.lock().unwrap().push(EventRecord {
+        kind: "Warning".into(),
+        reason: "BackOff".into(),
+        message: "restarting failed container".into(),
+        count: 3,
+        last_seen: None,
+    });
+    let mut harness = harness(cx, services, vec![pod_kind(), secret_kind()], false);
+    harness.open_object(target(kind, Some("shop"), "web"));
+    harness
+}
+
+#[gpui_kit::test]
+fn labels_conditions_and_events_have_their_sections(cx: &mut TestAppContext) {
+    let mut harness = detailed(cx, detailed_pod(), pod_kind());
+    let detail = harness.detail().unwrap();
+    wait_until(harness.cx, "the events", |cx| {
+        cx.update(|_, cx| !detail.read(cx).events().is_empty())
+    });
+
+    assert!(harness.exists("detail-labels".into()));
+    assert!(harness.exists("detail-conditions".into()));
+    assert!(harness.exists_at(("detail-event", 0usize)));
+    assert!(harness.exists("detail-header".into()));
+    let tones = harness.cx.update(|_, cx| {
+        let conditions = detail.read(cx).conditions();
+        conditions.iter().map(|c| c.tone).collect::<Vec<_>>()
+    });
+    assert_eq!(tones, [Tone::Warning, Tone::Danger]);
+}
+
+#[gpui_kit::test]
+fn annotations_start_collapsed_and_show_values(cx: &mut TestAppContext) {
+    let mut harness = detailed(cx, detailed_pod(), pod_kind());
+    let detail = harness.detail().unwrap();
+
+    harness.click("toggle-annotations".into());
+
+    assert!(harness.exists("detail-annotations".into()));
+    let shown = harness.cx.update(|_, cx| {
+        let detail = detail.read(cx);
+        detail.annotations(detail.object().unwrap())
+    });
+    assert_eq!(
+        shown,
+        [("note".to_owned(), Some("kept in full".to_owned()))]
+    );
+}
+
+#[gpui_kit::test]
+fn a_secret_shows_annotation_keys_but_never_their_values(cx: &mut TestAppContext) {
+    let secret = json!({
+        "metadata": {
+            "name": "web",
+            "uid": "uid-web",
+            "annotations": {"last-applied": "{\"data\":{\"password\":\"c2VjcmV0\"}}"},
+        },
+        "data": {"password": "c2VjcmV0"},
+    });
+    let mut harness = detailed(cx, secret, secret_kind());
+    let detail = harness.detail().unwrap();
+
+    harness.click("toggle-annotations".into());
+
+    let shown = harness.cx.update(|_, cx| {
+        let detail = detail.read(cx);
+        detail.annotations(detail.object().unwrap())
+    });
+    assert_eq!(shown, [("last-applied".to_owned(), None)]);
 }

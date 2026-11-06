@@ -221,7 +221,8 @@ fn a_live_workspace_shows_no_english_catalog_text(cx: &mut TestAppContext) {
         let browser = tab.read(cx).browser().unwrap().clone();
         browser.read(cx).table().read(cx).dump_range(0..1, cx)
     });
-    assert!(is_pseudo(&headers[0]), "{headers:?}");
+    // After the checkbox and action columns, which have no title.
+    assert!(is_pseudo(&headers[2]), "{headers:?}");
     let status = headers.iter().position(|title| title == "Phase").unwrap();
     assert!(!is_pseudo(&rows[0][status]), "cluster data stays verbatim");
 
