@@ -816,6 +816,10 @@ impl gpui_kit::base::dock::Panel for TerminalTab {
         PANEL_NAME
     }
 
+    fn zoomable(&self, _: &App) -> bool {
+        false
+    }
+
     fn closable(&self, _: &App) -> bool {
         false
     }

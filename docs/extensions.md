@@ -117,6 +117,8 @@ Disabling an extension removes all of its contributions without a restart.
 
 Prefer `ColumnSource::Path`. The host evaluates the path, so your code never runs per row and the column cannot slow a table. `.status.phase`, `.spec.containers[0].image`, and `.metadata.labels['app.kubernetes.io/name']` are all valid paths.
 
+Use `ColumnSource::Status` for a column that reports health. It takes paths, and the host shows the first one with a value, so `.status.reason` can fall back to `.status.phase`. Your code still never runs per row. The host shows the value as received and picks a color from the text, and a value it does not recognize stays neutral. Extensions cannot choose colors.
+
 Use `ColumnSource::Computed` only when a value needs your logic. The host requests visible rows in batches with `ExtensionRequest::ComputeColumn`, and shows a placeholder until your answer arrives. Return one cell per target, in order.
 
 ## Declarative UI

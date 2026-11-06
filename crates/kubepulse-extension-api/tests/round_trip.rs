@@ -66,6 +66,14 @@ fn manifest() -> Manifest {
                     },
                 },
                 ColumnContribution {
+                    id: "s".into(),
+                    title: "S".into(),
+                    kind: kind(),
+                    source: ColumnSource::Status {
+                        paths: vec![".status.reason".into(), ".status.phase".into()],
+                    },
+                },
+                ColumnContribution {
                     id: "d".into(),
                     title: "D".into(),
                     kind: kind(),

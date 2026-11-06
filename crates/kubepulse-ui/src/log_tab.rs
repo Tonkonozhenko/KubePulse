@@ -737,6 +737,10 @@ impl gpui_kit::base::dock::Panel for LogTab {
         PANEL_NAME
     }
 
+    fn zoomable(&self, _: &App) -> bool {
+        false
+    }
+
     fn closable(&self, _: &App) -> bool {
         false
     }

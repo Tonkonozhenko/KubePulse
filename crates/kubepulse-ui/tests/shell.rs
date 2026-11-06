@@ -8,7 +8,9 @@ use gpui_kit::{
     component::dock::{DockAreaState, DockPlacement, PanelId, PanelInfo, PanelState},
     test::{ClickOptions, TestWindowExt as _},
 };
-use kubepulse_cluster::{ClusterEntry, ConnectionState, FileError, ResourceKind, SessionOptions};
+use kubepulse_cluster::{
+    ClusterEntry, ConnectionState, FileError, ObjectTarget, ResourceKind, SessionOptions,
+};
 use kubepulse_extension_api::{CommandContribution, Contributions, ExtensionRequest};
 use kubepulse_extension_host::ContributionSet;
 use kubepulse_store::synthetic::pod_kind;
@@ -302,6 +304,54 @@ fn split_off_last_tab(workspace: &Entity<Workspace>, cx: &mut VisualTestContext)
 }
 
 // Tabs and panes
+
+/// Asks the dock to zoom each pane's panels, and reports whether any did.
+fn any_panel_zooms(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) -> bool {
+    let dock = cx.update(|_, cx| workspace.read(cx).dock().clone());
+    panel_ids(workspace, cx).into_iter().any(|panel| {
+        let node = cx.update(|_, cx| {
+            let tree = dock.read(cx).layout(DockPlacement::Center).unwrap();
+            tree.find_panel_node(panel).unwrap()
+        });
+        cx.update(|window, cx| {
+            dock.update(cx, |dock, cx| {
+                dock.select_panel(panel, window, cx);
+                dock.set_zoomed_in(node, window, cx);
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| dock.read(cx).is_zoomed())
+    })
+}
+
+#[gpui_kit::test]
+fn no_kind_of_tab_zooms_in_one_pane_or_when_split(cx: &mut TestAppContext) {
+    let harness = harness(cx, vec![serving("a", kinds())]);
+    let (workspace, cx) = window(cx, &harness.model, None);
+    open_kind(&workspace, "a", pod_kind(), cx);
+    let target = ObjectTarget {
+        kind: pod_kind(),
+        namespace: Some("shop".into()),
+        name: "web".into(),
+    };
+    let shell = harness.shell.clone();
+    cx.update(|_, cx| {
+        shell.update(cx, |shell, cx| {
+            shell.open_logs(key("a"), target.clone(), cx);
+            shell.open_terminal(key("a"), target.clone(), cx);
+            shell.open_editor(key("a"), target, cx);
+        });
+    });
+    cx.update(|window, cx| window.dispatch_action(Box::new(settings_tab::OpenSettings), cx));
+    cx.run_until_parked();
+    assert_eq!(panel_ids(&workspace, cx).len(), 5);
+
+    assert!(!any_panel_zooms(&workspace, cx), "one pane");
+
+    split_off_last_tab(&workspace, cx);
+    assert_eq!(group_count(&workspace, cx), 2);
+    assert!(!any_panel_zooms(&workspace, cx), "split");
+}
 
 #[gpui_kit::test]
 fn tabs_open_on_several_clusters_and_stay_bound(cx: &mut TestAppContext) {

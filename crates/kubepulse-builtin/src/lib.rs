@@ -271,6 +271,22 @@ const GROUPS: [KindGroup; 5] = [
     },
 ];
 
+const WAITING_REASON: &str = ".status.containerStatuses[?(@.state.waiting)].state.waiting.reason";
+
+fn column_source(kind: &str, title: &str, path: &str) -> ColumnSource {
+    match (kind, title) {
+        ("Pod", "Status") => ColumnSource::Status {
+            paths: vec![WAITING_REASON.to_owned(), path.to_owned()],
+        },
+        (_, "Status") => ColumnSource::Status {
+            paths: vec![path.to_owned()],
+        },
+        _ => ColumnSource::Path {
+            path: path.to_owned(),
+        },
+    }
+}
+
 #[async_trait]
 impl Extension for KindGroup {
     fn manifest(&self) -> Manifest {
@@ -290,9 +306,7 @@ impl Extension for KindGroup {
                     id: format!("{}.{}", view.kind.to_lowercase(), title.to_lowercase()),
                     title: (*title).to_owned(),
                     kind: kind.clone(),
-                    source: ColumnSource::Path {
-                        path: (*path).to_owned(),
-                    },
+                    source: column_source(view.kind, title, path),
                 });
             }
             permissions.push(Permission {
@@ -383,7 +397,7 @@ mod tests {
                 contributions
                     .columns
                     .iter()
-                    .all(|column| matches!(column.source, ColumnSource::Path { .. }))
+                    .all(|column| !matches!(column.source, ColumnSource::Computed))
             );
             for view in &contributions.resource_views {
                 assert!(
@@ -392,6 +406,32 @@ mod tests {
                     view.kind.kind
                 );
             }
+        }
+    }
+
+    #[test]
+    fn status_columns_are_statuses_and_pods_try_the_waiting_reason_first() {
+        let manifests = manifests();
+        let status_of = |kind: &str| {
+            manifests
+                .iter()
+                .flat_map(|manifest| &manifest.contributions.columns)
+                .find(|column| column.kind.kind == kind && column.title == "Status")
+                .map(|column| column.source.clone())
+        };
+        assert_eq!(
+            status_of("Pod"),
+            Some(ColumnSource::Status {
+                paths: vec![WAITING_REASON.to_owned(), ".status.phase".to_owned()],
+            })
+        );
+        for kind in ["PersistentVolumeClaim", "PersistentVolume"] {
+            assert_eq!(
+                status_of(kind),
+                Some(ColumnSource::Status {
+                    paths: vec![".status.phase".to_owned()],
+                })
+            );
         }
     }
 

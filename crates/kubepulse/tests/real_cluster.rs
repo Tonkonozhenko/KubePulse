@@ -282,6 +282,13 @@ fn browses_a_real_cluster() {
         NAMESPACE,
     ]);
     kubectl.run(&[
+        "run",
+        "unpullable",
+        "--image=kubepulse.invalid/none:1",
+        "-n",
+        NAMESPACE,
+    ]);
+    kubectl.run(&[
         "create",
         "secret",
         "generic",
@@ -357,6 +364,14 @@ fn browses_a_real_cluster() {
     });
     assert!(pod.name.starts_with("web-"), "{}", pod.name);
     assert!(!cell(&pods, &contributions, &pod, "Created").contains("Empty"));
+
+    // A pod whose phase is Pending shows why its container is waiting.
+    wait_for("the waiting reason", WAIT, || {
+        let unpullable = row(&table, "unpullable")?;
+        let status = cell(&pods, &contributions, &unpullable, "Status");
+        (status.contains("ErrImagePull") || status.contains("ImagePullBackOff")).then_some(())
+    });
+
     let target = ObjectTarget {
         kind: pods.clone(),
         namespace: Some(NAMESPACE.to_owned()),

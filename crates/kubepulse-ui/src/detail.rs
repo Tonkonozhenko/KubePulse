@@ -1,19 +1,18 @@
 //! One object: its metadata, status, events, and owners. Secret values stay
 //! hidden until revealed, and deleting always names the target first.
 
-use std::{cell::Cell, collections::HashSet, sync::Arc};
+use std::{collections::HashSet, sync::Arc};
 
 use base64::Engine as _;
 use gpui_kit::{
     assets::IconName,
     component::{
-        ActiveTheme as _, WindowExt as _,
-        button::Button,
+        ActiveTheme as _, Sizable as _,
+        button::{Button, ButtonVariants as _},
+        collapsible::Collapsible,
         description_list::DescriptionList,
-        dialog::Dialog,
-        input::{Input, InputEvent, InputState},
+        tag::Tag,
     },
-    prelude::FluentBuilder as _,
     *,
 };
 use kubepulse_cluster::{EventRecord, ObjectTarget, ResourceKind};
@@ -26,10 +25,12 @@ use rust_i18n::t;
 
 use crate::{
     cluster_model::ClusterModel,
-    columns::kind_ref,
+    columns::{columns_for, is_pod, kind_ref},
     declarative::{DeclarativeView, FormSubmitted},
     identity::ClusterKey,
+    resource_browser::cell_text,
     services::ClusterServices,
+    status::{Tone, condition_tone, event_tone, status_tag, tone_tag},
 };
 
 pub enum DetailEvent {
@@ -37,7 +38,8 @@ pub enum DetailEvent {
     Edit(ObjectTarget),
     Logs(ObjectTarget),
     Shell(ObjectTarget),
-    Deleted,
+    Delete(ObjectTarget),
+    Close,
 }
 
 impl EventEmitter<DetailEvent> for DetailView {}
@@ -56,8 +58,48 @@ struct Owner {
     target: Option<ObjectTarget>,
 }
 
-fn is_pod(target: &ObjectTarget) -> bool {
-    target.kind.group.is_empty() && target.kind.kind == "Pod"
+pub struct Condition {
+    pub kind: String,
+    pub status: String,
+    pub reason: String,
+    pub message: String,
+    pub tone: Tone,
+}
+
+fn conditions(object: &Value) -> Vec<Condition> {
+    let text = |value: &Value| value.as_str().unwrap_or_default().to_owned();
+    object["status"]["conditions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|condition| {
+            let (kind, status) = (text(&condition["type"]), text(&condition["status"]));
+            Condition {
+                tone: condition_tone(&kind, &status),
+                kind,
+                status,
+                reason: text(&condition["reason"]),
+                message: text(&condition["message"]),
+            }
+        })
+        .collect()
+}
+
+/// The same status the object's table shows. A kind with no status column
+/// falls back to its phase, if it has one.
+fn status_text(
+    target: &ObjectTarget,
+    object: &Value,
+    services: &dyn ClusterServices,
+) -> Option<String> {
+    let columns = columns_for(&target.kind, &services.contributions());
+    let column = columns.declared.iter().find(|column| column.status);
+    match column {
+        Some(column) => {
+            Some(cell_text(Some(&column.spec.evaluate(object)))).filter(|text| !text.is_empty())
+        }
+        None => object["status"]["phase"].as_str().map(str::to_owned),
+    }
 }
 
 fn decode(value: &str) -> String {
@@ -91,23 +133,19 @@ fn owner_target(
 
 pub struct DetailView {
     context: String,
-    key: ClusterKey,
     target: ObjectTarget,
     model: Entity<ClusterModel>,
     services: Arc<dyn ClusterServices>,
     object: Load,
+    status: Option<String>,
     events: Vec<EventRecord>,
     events_error: Option<String>,
     revealed: HashSet<String>,
-    deleting: bool,
-    typed_name: Entity<InputState>,
-    name_matches: bool,
-    delete_error: Option<String>,
+    annotations_open: bool,
     tabs: Vec<(String, DetailTabContribution)>,
     extension_tab: Option<Entity<DeclarativeView>>,
     extension_error: Option<String>,
     extension_form: Option<Subscription>,
-    _subscription: Subscription,
 }
 
 impl DetailView {
@@ -116,7 +154,6 @@ impl DetailView {
         target: ObjectTarget,
         model: Entity<ClusterModel>,
         services: Arc<dyn ClusterServices>,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let wanted = kind_ref(&target.kind);
@@ -133,16 +170,7 @@ impl DetailView {
             .filter(|(_, tab)| tab.kind == wanted)
             .collect();
 
-        let typed_name = cx
-            .new(|cx| InputState::new(window, cx).placeholder(t!("detail.type_name").to_string()));
-        let subscription = cx.subscribe(&typed_name, |this, input, event: &InputEvent, cx| {
-            if matches!(event, InputEvent::Change) {
-                let text = input.read(cx).value().to_string();
-                this.type_name(&text, cx);
-            }
-        });
-
-        let context = key.context.clone();
+        let context = key.context;
         let reply = services.get_object(&context, target.clone());
         let event_services = services.clone();
         let event_context = context.clone();
@@ -156,7 +184,10 @@ impl DetailView {
                 .map(str::to_owned);
             let _ = this.update(cx, |this, cx| {
                 this.object = match result {
-                    Ok(object) => Load::Loaded(object),
+                    Ok(object) => {
+                        this.status = status_text(&this.target, &object, &*this.services);
+                        Load::Loaded(object)
+                    }
                     Err(error) => Load::Failed(t!("detail.load_failed", error = error).to_string()),
                 };
                 cx.notify();
@@ -176,23 +207,19 @@ impl DetailView {
 
         Self {
             context,
-            key,
             target,
             model,
             services,
             object: Load::Loading,
+            status: None,
             events: Vec::new(),
             events_error: None,
             revealed: HashSet::new(),
-            deleting: false,
-            typed_name,
-            name_matches: false,
-            delete_error: None,
+            annotations_open: false,
             tabs,
             extension_tab: None,
             extension_error: None,
             extension_form: None,
-            _subscription: subscription,
         }
     }
 
@@ -209,6 +236,29 @@ impl DetailView {
 
     pub fn events(&self) -> &[EventRecord] {
         &self.events
+    }
+
+    pub fn status(&self) -> Option<&str> {
+        self.status.as_deref()
+    }
+
+    pub fn conditions(&self) -> Vec<Condition> {
+        self.object().map(conditions).unwrap_or_default()
+    }
+
+    /// Each key with its value, as shown. A Secret's values stay out, because
+    /// an annotation can hold a copy of its data.
+    pub fn annotations(&self, object: &Value) -> Vec<(String, Option<String>)> {
+        let shown = !self.is_secret();
+        object["metadata"]["annotations"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|(key, value)| {
+                let value = value.as_str().unwrap_or_default().to_owned();
+                (key.clone(), shown.then_some(value))
+            })
+            .collect()
     }
 
     pub fn extension_tab(&self) -> Option<&Entity<DeclarativeView>> {
@@ -229,40 +279,8 @@ impl DetailView {
         })
     }
 
-    pub fn type_name(&mut self, text: &str, cx: &mut Context<Self>) {
-        self.name_matches = text == self.target.name;
-        cx.notify();
-    }
-
     fn is_secret(&self) -> bool {
         self.target.kind.kind == "Secret" && self.target.kind.group.is_empty()
-    }
-
-    fn delete(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.deleting = true;
-        self.delete_error = None;
-        cx.notify();
-        let reply = self
-            .services
-            .delete_object(&self.context, self.target.clone());
-        cx.spawn_in(window, async move |this, cx| {
-            let result = reply.await;
-            let _ = this.update_in(cx, |this, window, cx| {
-                this.deleting = false;
-                match result {
-                    Ok(()) => {
-                        window.close_dialog(cx);
-                        cx.emit(DetailEvent::Deleted);
-                    }
-                    Err(error) => {
-                        this.delete_error =
-                            Some(t!("detail.delete_failed", error = error).to_string());
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
     }
 
     fn open_tab(
@@ -423,104 +441,240 @@ impl DetailView {
             .children(rows)
             .test_support()
     }
+}
 
-    /// Asks before deleting. Each opening starts clean, whichever way the last
-    /// one closed.
-    fn open_delete_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.delete_error = None;
-        self.name_matches = false;
-        self.typed_name
-            .update(cx, |input, cx| input.set_value("", window, cx));
-        let view = cx.weak_entity();
-        let input = self.typed_name.clone();
-        let focus_input = Cell::new(self.model.read(cx).identity(&self.key).protected);
-        window.open_dialog(cx, move |dialog, window, cx| {
-            if focus_input.replace(false) {
-                input.focus_handle(cx).focus(window, cx);
-            }
-            match view.upgrade() {
-                Some(view) => view.read(cx).delete_dialog(dialog, view.downgrade(), cx),
-                // The cluster disconnected behind the dialog.
-                None => dialog.title(t!("detail.gone").to_string()),
-            }
-        });
-    }
-
-    fn delete_dialog(&self, dialog: Dialog, view: WeakEntity<Self>, cx: &App) -> Dialog {
-        let identity = self.model.read(cx).identity(&self.key);
-        let namespace = self
-            .target
-            .namespace
-            .clone()
-            .unwrap_or_else(|| t!("detail.cluster_wide").to_string());
-        let needs_name = identity.protected;
-        let confirm = ((!needs_name || self.name_matches) && !self.deleting).then(|| {
-            Button::new("delete-confirm")
-                .icon(IconName::Trash)
-                .label(t!("detail.delete").to_string())
-                .on_click(move |_, window, cx| {
-                    let _ = view.update(cx, |this, cx| this.delete(window, cx));
-                })
-        });
-        dialog
-            .title(
-                t!(
-                    "detail.delete_title",
-                    kind = self.target.kind.kind,
-                    name = self.target.name
-                )
-                .to_string(),
-            )
-            .overlay_closable(false)
-            // Enter never deletes, so deleting always takes a deliberate click.
-            .on_ok(|_, _, _| false)
+impl DetailView {
+    fn render_header(&self, loaded: bool, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let close = Button::new("close-detail")
+            .icon(IconName::X)
+            .ghost()
+            .xsmall()
+            .tab_stop(false)
+            .tooltip(t!("detail.close").to_string())
+            .on_click(cx.listener(|_, _, _, cx| cx.emit(DetailEvent::Close)));
+        let title = div()
+            .flex()
+            .items_center()
+            .gap_2()
             .child(
                 div()
-                    .id("delete-confirmation")
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_color(rgb(identity.color))
-                            .child(t!("detail.cluster", name = identity.name).to_string()),
-                    )
-                    .child(t!("detail.namespace_line", namespace = namespace).to_string())
-                    .children(needs_name.then(|| t!("detail.protected").to_string()))
-                    .children(needs_name.then(|| Input::new(&self.typed_name)))
-                    .children(
-                        self.delete_error
-                            .clone()
-                            .map(|error| div().id("delete-error").child(error).test_support()),
-                    )
-                    .test_support(),
+                    .flex_1()
+                    .min_w_0()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(format!("{} {}", self.target.kind.kind, self.target.name)),
             )
-            .footer(
+            .children(self.status.clone().map(status_tag))
+            .child(close);
+        let logs = (loaded && is_pod(&self.target.kind)).then(|| {
+            Button::new("view-logs")
+                .icon(IconName::SquareTerminal)
+                .small()
+                .label(t!("detail.logs").to_string())
+                .on_click(cx.listener(|this, _, _, cx| {
+                    cx.emit(DetailEvent::Logs(this.target.clone()));
+                }))
+        });
+        let shell = (loaded && is_pod(&self.target.kind)).then(|| {
+            Button::new("open-shell")
+                .icon(IconName::SquareTerminal)
+                .small()
+                .label(t!("detail.shell").to_string())
+                .on_click(cx.listener(|this, _, _, cx| {
+                    cx.emit(DetailEvent::Shell(this.target.clone()));
+                }))
+        });
+        let actions = loaded.then(|| {
+            div()
+                .flex()
+                .gap_2()
+                .children(logs)
+                .children(shell)
+                .child(
+                    Button::new("edit-object")
+                        .icon(IconName::Pencil)
+                        .small()
+                        .label(t!("detail.edit").to_string())
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            cx.emit(DetailEvent::Edit(this.target.clone()));
+                        })),
+                )
+                .child(
+                    Button::new("delete-object")
+                        .icon(IconName::Trash)
+                        .small()
+                        .label(t!("detail.delete").to_string())
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            cx.emit(DetailEvent::Delete(this.target.clone()));
+                        })),
+                )
+        });
+        div()
+            .id("detail-header")
+            .flex()
+            .flex_none()
+            .flex_col()
+            .gap_2()
+            .child(title)
+            .children(actions)
+            .test_support()
+    }
+
+    fn render_labels(&self, object: &Value, muted: Hsla) -> Option<impl IntoElement + use<>> {
+        let labels = object["metadata"]["labels"]
+            .as_object()
+            .filter(|labels| !labels.is_empty())?;
+        let tags = labels.iter().map(|(key, value)| {
+            let value = value.as_str().unwrap_or_default();
+            Tag::secondary().small().child(format!("{key}={value}"))
+        });
+        Some(
+            section("detail-labels", t!("detail.labels").to_string(), muted)
+                .child(div().flex().flex_wrap().gap_1().children(tags))
+                .test_support(),
+        )
+    }
+
+    fn render_conditions(&self, object: &Value, muted: Hsla) -> Option<impl IntoElement + use<>> {
+        let conditions = conditions(object);
+        if conditions.is_empty() {
+            return None;
+        }
+        let rows = conditions.into_iter().map(move |condition| {
+            div()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap_2()
+                        .child(tone_tag(condition.tone).child(condition.kind))
+                        .child(condition.status)
+                        .child(condition.reason),
+                )
+                .child(div().text_xs().text_color(muted).child(condition.message))
+        });
+        Some(
+            section(
+                "detail-conditions",
+                t!("detail.conditions").to_string(),
+                muted,
+            )
+            .children(rows)
+            .test_support(),
+        )
+    }
+
+    fn render_annotations(
+        &self,
+        object: &Value,
+        muted: Hsla,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement + use<>> {
+        let annotations = self.annotations(object);
+        if annotations.is_empty() {
+            return None;
+        }
+        let open = self.annotations_open;
+        let rows = annotations
+            .into_iter()
+            .filter(|_| open)
+            .map(move |(key, value)| {
                 div()
                     .flex()
-                    .justify_end()
-                    .gap_2()
-                    .child(
-                        Button::new("delete-cancel")
-                            .label(t!("common.cancel").to_string())
-                            .on_click(|_, window, cx| window.close_dialog(cx)),
-                    )
-                    .children(confirm),
-            )
+                    .flex_col()
+                    .child(div().text_xs().text_color(muted).child(key))
+                    .children(value)
+            });
+        Some(
+            Collapsible::new()
+                .open(open)
+                .child(
+                    Button::new("toggle-annotations")
+                        .icon(if open {
+                            IconName::ChevronDown
+                        } else {
+                            IconName::ChevronRight
+                        })
+                        .ghost()
+                        .xsmall()
+                        .label(t!("detail.annotations").to_string())
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.annotations_open = !this.annotations_open;
+                            cx.notify();
+                        })),
+                )
+                .content(
+                    div()
+                        .id("detail-annotations")
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .children(rows)
+                        .test_support(),
+                ),
+        )
     }
+
+    fn render_events(&self, muted: Hsla) -> impl IntoElement + use<> {
+        let events: Vec<_> = self
+            .events
+            .iter()
+            .enumerate()
+            .map(|(index, event)| {
+                let count = t!("detail.event_count", count = event.count).to_string();
+                div()
+                    .id(("detail-event", index))
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .gap_2()
+                            .child(tone_tag(event_tone(&event.kind)).child(event.kind.clone()))
+                            .child(event.reason.clone())
+                            .child(div().text_xs().text_color(muted).child(count)),
+                    )
+                    .child(event.message.clone())
+                    .test_support()
+            })
+            .collect();
+        section("detail-events", t!("detail.events").to_string(), muted)
+            .children(events)
+            .children(self.events_error.clone().map(|error| {
+                div()
+                    .id("events-error")
+                    .child(t!("detail.events_failed", error = error).to_string())
+                    .test_support()
+            }))
+            .test_support()
+    }
+}
+
+/// A titled block of the panel.
+fn section(id: &'static str, title: String, muted: Hsla) -> Stateful<Div> {
+    div()
+        .id(id)
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(div().text_color(muted).child(title))
 }
 
 impl Render for DetailView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
+        let loaded = matches!(self.object, Load::Loaded(_));
         let root = div()
             .id("detail-view")
             .size_full()
             .flex()
             .flex_col()
             .gap_3()
-            .overflow_y_scroll()
-            .child(format!("{} {}", self.target.kind.kind, self.target.name));
+            .child(self.render_header(loaded, cx));
 
         let object = match &self.object {
             Load::Loading => return root.child(t!("common.loading").to_string()).test_support(),
@@ -539,7 +693,6 @@ impl Render for DetailView {
 
         let metadata = &object["metadata"];
         let text = |value: &Value| value.as_str().unwrap_or("-").to_owned();
-        let phase = object["status"]["phase"].as_str().map(str::to_owned);
         let list = DescriptionList::new()
             .columns(1)
             .item(
@@ -552,25 +705,7 @@ impl Render for DetailView {
                 text(&metadata["creationTimestamp"]),
                 1,
             )
-            .item(t!("detail.uid").to_string(), text(&metadata["uid"]), 1)
-            .item(
-                t!("detail.status").to_string(),
-                phase.unwrap_or_else(|| "-".to_owned()),
-                1,
-            );
-
-        let labels: Vec<String> = metadata["labels"]
-            .as_object()
-            .into_iter()
-            .flatten()
-            .map(|(key, value)| format!("{key}={}", value.as_str().unwrap_or_default()))
-            .collect();
-        let conditions: Vec<String> = object["status"]["conditions"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(|c| format!("{}: {}", text(&c["type"]), text(&c["status"])))
-            .collect();
+            .item(t!("detail.uid").to_string(), text(&metadata["uid"]), 1);
 
         let owners = self.owners(&object, cx);
         let owner_rows: Vec<AnyElement> = owners
@@ -585,23 +720,6 @@ impl Render for DetailView {
                 None => div()
                     .child(format!("{} {}", owner.kind, owner.name))
                     .into_any_element(),
-            })
-            .collect();
-
-        let events: Vec<_> = self
-            .events
-            .iter()
-            .map(|event| {
-                div().child(
-                    t!(
-                        "detail.event",
-                        kind = event.kind,
-                        reason = event.reason,
-                        count = event.count,
-                        message = event.message
-                    )
-                    .to_string(),
-                )
             })
             .collect();
 
@@ -620,107 +738,65 @@ impl Render for DetailView {
 
         let secret = self.is_secret().then(|| self.render_secret(&object, cx));
 
-        root.child(list)
-            .children((!labels.is_empty()).then(|| {
-                div()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .text_color(muted)
-                            .child(t!("detail.labels").to_string()),
-                    )
-                    .children(labels.into_iter().map(|label| div().child(label)))
-            }))
-            .children((!conditions.is_empty()).then(|| {
-                div()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .text_color(muted)
-                            .child(t!("detail.conditions").to_string()),
-                    )
-                    .children(
-                        conditions
-                            .into_iter()
-                            .map(|condition| div().child(condition)),
-                    )
-            }))
-            .children((!owner_rows.is_empty()).then(|| {
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_start()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_color(muted)
-                            .child(t!("detail.owners").to_string()),
-                    )
-                    .children(owner_rows)
-            }))
-            .children(secret)
-            .child(
-                div()
-                    .id("detail-events")
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .text_color(muted)
-                            .child(t!("detail.events").to_string()),
-                    )
-                    .children(events)
-                    .children(self.events_error.clone().map(|error| {
-                        div()
-                            .id("events-error")
-                            .child(t!("detail.events_failed", error = error).to_string())
-                            .test_support()
-                    }))
-                    .test_support(),
-            )
-            .child(div().flex().gap_1().children(tab_buttons))
-            .children(self.extension_tab.clone())
-            .children(
-                self.extension_error
-                    .clone()
-                    .map(|error| div().id("detail-tab-error").child(error).test_support()),
-            )
-            .when(is_pod(&self.target), |this| {
-                this.child(
-                    Button::new("view-logs")
-                        .icon(IconName::SquareTerminal)
-                        .label(t!("detail.logs").to_string())
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            cx.emit(DetailEvent::Logs(this.target.clone()));
-                        })),
-                )
-                .child(
-                    Button::new("open-shell")
-                        .icon(IconName::SquareTerminal)
-                        .label(t!("detail.shell").to_string())
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            cx.emit(DetailEvent::Shell(this.target.clone()));
-                        })),
-                )
-            })
-            .child(
-                Button::new("edit-object")
-                    .icon(IconName::Pencil)
-                    .label(t!("detail.edit").to_string())
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        cx.emit(DetailEvent::Edit(this.target.clone()));
-                    })),
-            )
-            .child(
-                Button::new("delete-object")
-                    .icon(IconName::Trash)
-                    .label(t!("detail.delete").to_string())
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.open_delete_dialog(window, cx);
-                    })),
-            )
-            .test_support()
+        root.child(
+            div()
+                .id("detail-body")
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .overflow_y_scroll()
+                .child(list)
+                .children(self.render_labels(&object, muted))
+                .children(self.render_conditions(&object, muted))
+                .children(self.render_annotations(&object, muted, cx))
+                .children((!owner_rows.is_empty()).then(|| {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_start()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_color(muted)
+                                .child(t!("detail.owners").to_string()),
+                        )
+                        .children(owner_rows)
+                }))
+                .children(secret)
+                .child(self.render_events(muted))
+                .child(div().flex().gap_1().children(tab_buttons))
+                .children(self.extension_tab.clone())
+                .children(
+                    self.extension_error
+                        .clone()
+                        .map(|error| div().id("detail-tab-error").child(error).test_support()),
+                ),
+        )
+        .test_support()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{Tone, conditions};
+
+    #[test]
+    fn conditions_keep_their_text_and_read_their_health() {
+        let object = json!({"status": {"conditions": [
+            {"type": "Ready", "status": "False", "reason": "Crash", "message": "no"},
+            {"type": "DiskPressure", "status": "False"},
+        ]}});
+        let conditions = conditions(&object);
+        assert_eq!(conditions[0].kind, "Ready");
+        assert_eq!(conditions[0].status, "False");
+        assert_eq!(conditions[0].reason, "Crash");
+        assert_eq!(conditions[0].message, "no");
+        assert_eq!(conditions[0].tone, Tone::Warning);
+        assert_eq!(conditions[1].tone, Tone::Success);
+        assert_eq!(conditions[1].reason, "");
     }
 }

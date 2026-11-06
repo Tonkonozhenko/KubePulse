@@ -4466,6 +4466,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "directories",
+ "futures",
  "gpui-kit",
  "image",
  "kubepulse-cluster",

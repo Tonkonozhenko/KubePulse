@@ -28,7 +28,7 @@ pub use ui::{
 };
 
 /// The contract version this build provides.
-pub const CONTRACT_VERSION: ContractVersion = ContractVersion { major: 1, minor: 2 };
+pub const CONTRACT_VERSION: ContractVersion = ContractVersion { major: 1, minor: 3 };
 
 // Compiles the authoring guide's examples as doctests.
 #[cfg(doctest)]
