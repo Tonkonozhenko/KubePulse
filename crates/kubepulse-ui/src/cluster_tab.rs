@@ -199,6 +199,11 @@ impl ClusterTab {
         let subscription =
             cx.subscribe_in(&detail, window, |this, _, event, window, cx| match event {
                 DetailEvent::OpenOwner(target) => this.open_object(target.clone(), window, cx),
+                DetailEvent::Edit(target) => {
+                    let (key, target) = (this.key.clone(), target.clone());
+                    this.shell
+                        .update(cx, |shell, cx| shell.open_editor(key, target, cx));
+                }
                 DetailEvent::Deleted => {
                     this.detail = None;
                     cx.notify();

@@ -219,7 +219,7 @@ fn browses_a_real_cluster() {
     ]);
 
     let clusters = Arc::new(ConnectedClusters::default());
-    let backend = Arc::new(ClusterBackend(clusters.clone()));
+    let backend = Arc::new(ClusterBackend::new(clusters.clone()).0);
     let host = ExtensionHost::new(backend, HostOptions::default());
     host.load(kubepulse_builtin::extensions());
     let contributions = host.contributions().borrow().clone();

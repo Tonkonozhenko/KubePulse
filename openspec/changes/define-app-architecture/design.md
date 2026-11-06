@@ -148,6 +148,8 @@ open ─► strip server fields ─► edit ─► dry run ─► diff ─► co
 - The diff compares the normalized live object with the normalized dry-run result, so admission changes are visible.
 - Changes are applied by a full replace carrying the original `resourceVersion`, so the server rejects stale writes.
 - Opening a Secret's manifest counts as an explicit reveal and asks for confirmation first.
+- After a conflict, the user's edits are merged onto the newer version field by field, and lists merge as one value. Where both sides changed a value the user's wins, and the diff review shows it against the newer version.
+- An extension's create, update, or delete opens the same tab. Time spent in that review does not count against the extension's call limit from D10.
 
 *Alternative:* server-side apply. A field the user deleted but another manager owns would survive, which is surprising for an editor showing the whole object. Forcing ownership could overwrite other actors' changes.
 

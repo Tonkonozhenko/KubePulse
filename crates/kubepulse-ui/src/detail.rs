@@ -33,6 +33,7 @@ use crate::{
 
 pub enum DetailEvent {
     OpenOwner(ObjectTarget),
+    Edit(ObjectTarget),
     Deleted,
 }
 
@@ -678,6 +679,14 @@ impl Render for DetailView {
                 self.extension_error
                     .clone()
                     .map(|error| div().id("detail-tab-error").child(error).test_support()),
+            )
+            .child(
+                Button::new("edit-object")
+                    .icon(IconName::Pencil)
+                    .label(t!("detail.edit").to_string())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        cx.emit(DetailEvent::Edit(this.target.clone()));
+                    })),
             )
             .child(
                 Button::new("delete-object")

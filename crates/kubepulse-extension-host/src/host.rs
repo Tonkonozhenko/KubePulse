@@ -20,7 +20,7 @@ use kubepulse_extension_api::{
 };
 use tokio::{sync::watch, task::JoinSet, time};
 
-use crate::capability::{Capability, HostBackend};
+use crate::capability::{Capability, HostBackend, ReviewClock};
 
 #[derive(Clone, Debug)]
 pub struct HostOptions {
@@ -161,6 +161,7 @@ struct Entry {
     failures: u32,
     refused: Arc<AtomicU64>,
     capability: Arc<Capability>,
+    reviews: Arc<ReviewClock>,
     /// Held while activating, so concurrent triggers activate once.
     activation: Arc<tokio::sync::Mutex<()>>,
 }
@@ -202,12 +203,14 @@ impl ExtensionHost {
                     tracing::warn!(extension = %manifest.id, %reason, "extension refused");
                 }
                 let refused = Arc::new(AtomicU64::new(0));
+                let reviews = Arc::<ReviewClock>::default();
                 let capability = Arc::new(Capability::new(
                     manifest.id.clone(),
                     manifest.permissions.clone(),
                     self.inner.backend.clone(),
                     refused.clone(),
                     self.inner.options.language.clone(),
+                    reviews.clone(),
                 ));
                 entries.push(Entry {
                     manifest,
@@ -216,6 +219,7 @@ impl ExtensionHost {
                     failures: 0,
                     refused,
                     capability,
+                    reviews,
                     activation: Arc::default(),
                 });
             }
@@ -278,7 +282,7 @@ impl ExtensionHost {
         self.publish();
         if let Some(extension) = extension {
             let limit = self.inner.options.call_timeout;
-            let deactivated = run_guarded(limit, async move {
+            let deactivated = run_guarded(limit, &ReviewClock::default(), async move {
                 extension.deactivate().await;
                 Ok(())
             })
@@ -316,7 +320,7 @@ impl ExtensionHost {
             find(&mut entries, id)?.activation.clone()
         };
         let _guard = lock.lock().await;
-        let (extension, capability) = {
+        let (extension, capability, reviews) = {
             let mut entries = self.entries();
             let entry = find(&mut entries, id)?;
             match entry.status {
@@ -324,11 +328,15 @@ impl ExtensionHost {
                 ExtensionStatus::Inactive => {}
                 _ => return Err(CallError::Unavailable),
             }
-            (entry.extension.clone(), entry.capability.clone())
+            (
+                entry.extension.clone(),
+                entry.capability.clone(),
+                entry.reviews.clone(),
+            )
         };
 
         let limit = self.inner.options.activation_timeout;
-        let result = run_guarded(limit, async move {
+        let result = run_guarded(limit, &reviews, async move {
             extension.activate(capability as Arc<dyn Host>).await
         })
         .await;
@@ -353,17 +361,21 @@ impl ExtensionHost {
         request: ExtensionRequest,
     ) -> Result<ExtensionResponse, CallError> {
         self.activate(id).await?;
-        let (extension, capability) = {
+        let (extension, capability, reviews) = {
             let mut entries = self.entries();
             let entry = find(&mut entries, id)?;
             if entry.status != ExtensionStatus::Active {
                 return Err(CallError::Unavailable);
             }
-            (entry.extension.clone(), entry.capability.clone())
+            (
+                entry.extension.clone(),
+                entry.capability.clone(),
+                entry.reviews.clone(),
+            )
         };
 
         let limit = self.inner.options.call_timeout;
-        let result = run_guarded(limit, async move {
+        let result = run_guarded(limit, &reviews, async move {
             extension.handle(request, capability as Arc<dyn Host>).await
         })
         .await;
@@ -458,19 +470,32 @@ fn find<'a>(entries: &'a mut [Entry], id: &str) -> Result<&'a mut Entry, CallErr
 
 /// Runs extension code in its own task, turning panics and overruns into errors.
 /// A task stuck in synchronous code cannot be stopped, but the host stops waiting.
+/// Time spent in a user's review does not count, and the limit starts over after.
 async fn run_guarded<T: Send + 'static>(
     limit: Duration,
+    reviews: &ReviewClock,
     call: impl Future<Output = Result<T, ExtensionError>> + Send + 'static,
 ) -> Result<T, String> {
     let mut task = tokio::spawn(call);
-    match time::timeout(limit, &mut task).await {
-        Err(_) => {
-            task.abort();
-            Err(format!("the extension did not respond within {limit:?}"))
+    let mut last_seen = reviews.progress();
+    let finished = loop {
+        match time::timeout(limit, &mut task).await {
+            Ok(finished) => break finished,
+            Err(_) => {
+                let progress = reviews.progress();
+                if progress.is_none() || progress != last_seen {
+                    last_seen = progress;
+                    continue;
+                }
+                task.abort();
+                return Err(format!("the extension did not respond within {limit:?}"));
+            }
         }
-        Ok(Err(error)) if error.is_panic() => Err("the extension panicked".to_owned()),
-        Ok(Err(_)) => Err("the extension call was cancelled".to_owned()),
-        Ok(Ok(Err(error))) => Err(error.message),
-        Ok(Ok(Ok(value))) => Ok(value),
+    };
+    match finished {
+        Err(error) if error.is_panic() => Err("the extension panicked".to_owned()),
+        Err(_) => Err("the extension call was cancelled".to_owned()),
+        Ok(Err(error)) => Err(error.message),
+        Ok(Ok(value)) => Ok(value),
     }
 }

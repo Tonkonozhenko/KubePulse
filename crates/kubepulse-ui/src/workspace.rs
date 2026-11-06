@@ -7,6 +7,7 @@ use gpui_kit::{
     base::dock::PanelView,
     component::{
         ActiveTheme as _, WindowExt as _,
+        button::Button,
         command::{Command, CommandState},
         dock::{
             DockArea, DockEvent, DockLayout, DockPlacement, DockSkin, InsertTarget, NodeId,
@@ -17,21 +18,26 @@ use gpui_kit::{
     prelude::FluentBuilder as _,
     *,
 };
-use kubepulse_cluster::ResourceKind;
-use kubepulse_extension_api::ExtensionRequest;
+use kubepulse_cluster::{ObjectTarget, ResourceKind};
+use kubepulse_extension_api::{
+    ChangeOutcome, ChangeRequest, ClusterRef, ExtensionRequest, HostError, KindRef, ObjectRef,
+};
 
 use rust_i18n::t;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    cluster_model::{ClusterModel, ClusterModelEvent},
+    cluster_model::{ClusterModel, ClusterModelEvent, is_live},
     cluster_rail::{ClusterRail, request_disconnect},
     cluster_tab::ClusterTab,
     columns::kind_ref,
     command_palette::{OpenCommandPalette, PaletteAction, palette_groups},
     identity::ClusterKey,
     kind_sidebar::{KindSidebar, KindSidebarEvent},
+    manifest_tab::{ManifestRequest, ManifestTab},
     persistence::{ConfigPaths, write_atomic},
     preferences::{PreferencesEvent, PreferencesModel, SharedPreferences},
+    runtime::HostRequest,
     services::SharedServices,
     settings_tab::{OpenSettings, SettingsTab},
     shell_state::{Placement, SharedShellState, ShellEvent, ShellState, place_kind},
@@ -75,6 +81,10 @@ impl Workspace {
             }),
             cx.subscribe_in(&shell, window, |this, _, event, window, cx| match event {
                 ShellEvent::CloseTab(id) => this.close_tab(*id, window, cx),
+                ShellEvent::OpenEditor { key, target } => {
+                    let (key, target) = (key.clone(), (**target).clone());
+                    this.open_editor(key, target, ManifestRequest::Edit, None, window, cx);
+                }
             }),
             cx.subscribe_in(&sidebar, window, |this, _, event, window, cx| match event {
                 KindSidebarEvent::Show { key, kind, pin } => {
@@ -344,14 +354,170 @@ impl Workspace {
 
     fn close_tab(&mut self, id: EntityId, window: &mut Window, cx: &mut Context<Self>) {
         let shell = self.shell.read(cx);
-        let (tab, settings) = (shell.tab(id), shell.settings_tab());
-        self.dock.update(cx, |dock, cx| match (tab, settings) {
-            (Some(tab), _) => dock.remove_panel(tab, window, cx),
-            (None, Some(settings)) if settings.entity_id() == id => {
-                dock.remove_panel(settings, window, cx);
-            }
-            _ => {}
+        let (tab, editor, settings) = (shell.tab(id), shell.editor(id), shell.settings_tab());
+        if let Some(editor) = &editor
+            && editor.read(cx).has_unapplied_changes(cx)
+        {
+            self.confirm_discard(editor.clone(), window, cx);
+            return;
+        }
+        self.dock
+            .update(cx, |dock, cx| match (tab, editor, settings) {
+                (Some(tab), _, _) => dock.remove_panel(tab, window, cx),
+                (_, Some(editor), _) => dock.remove_panel(editor, window, cx),
+                (None, None, Some(settings)) if settings.entity_id() == id => {
+                    dock.remove_panel(settings, window, cx);
+                }
+                _ => {}
+            });
+    }
+
+    fn confirm_discard(
+        &self,
+        editor: Entity<ManifestTab>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let name = editor.read(cx).target().name.clone();
+        let dock = self.dock.clone();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let (editor, dock) = (editor.clone(), dock.clone());
+            dialog
+                .title(t!("manifest.discard_title", name = name).to_string())
+                .child(
+                    div()
+                        .id("discard-confirmation")
+                        .child(t!("manifest.discard_message").to_string())
+                        .test_support(),
+                )
+                .footer(
+                    div()
+                        .flex()
+                        .gap_2()
+                        .child(
+                            Button::new("discard-cancel")
+                                .label(t!("manifest.keep_editing").to_string())
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("discard-confirm")
+                                .label(t!("manifest.discard").to_string())
+                                .on_click(move |_, window, cx| {
+                                    let editor = editor.clone();
+                                    dock.update(cx, |dock, cx| {
+                                        dock.remove_panel(editor, window, cx);
+                                    });
+                                    window.close_dialog(cx);
+                                }),
+                        ),
+                )
         });
+    }
+
+    /// Opens a manifest tab. The user's own edits of one object share a tab, and
+    /// each extension request gets its own, so its reply stays with its review.
+    pub fn open_editor(
+        &mut self,
+        key: ClusterKey,
+        target: ObjectTarget,
+        request: ManifestRequest,
+        reply: Option<oneshot::Sender<ChangeOutcome>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ManifestTab> {
+        if request == ManifestRequest::Edit
+            && let Some(open) = self.shell.read(cx).editor_of(&key, &target)
+        {
+            let panel = PanelId::from(open.entity_id());
+            self.dock
+                .update(cx, |dock, cx| dock.select_panel(panel, window, cx));
+            return open;
+        }
+        let model = self.model.clone();
+        let tab = cx.new(|cx| ManifestTab::new(key, target, request, reply, model, window, cx));
+        self.add_to_dock(panel_handle(tab.clone()), window, cx);
+        tab
+    }
+
+    /// Serves what extensions ask of the interface, for the life of the window.
+    pub fn listen(
+        &self,
+        mut requests: mpsc::UnboundedReceiver<HostRequest>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn_in(window, async move |this, cx| {
+            while let Some(request) = requests.recv().await {
+                let served = this.update_in(cx, |this, window, cx| {
+                    this.serve(request, window, cx);
+                });
+                if served.is_err() {
+                    return;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn serve(&mut self, request: HostRequest, window: &mut Window, cx: &mut Context<Self>) {
+        match request {
+            HostRequest::Change { request, reply } => {
+                let (cluster, kind, namespace, name, change) = change_target(request);
+                match self.resolve(&cluster, &kind, namespace, name, cx) {
+                    Ok((key, target)) => {
+                        self.open_editor(key, target, change, Some(reply), window, cx);
+                    }
+                    // The extension may have stopped waiting.
+                    Err(error) => {
+                        let reason = error.to_string();
+                        let _ = reply.send(ChangeOutcome::Failed { reason });
+                    }
+                }
+            }
+            HostRequest::OpenEditor { target, reply } => {
+                let ObjectRef {
+                    cluster,
+                    kind,
+                    namespace,
+                    name,
+                } = target;
+                let resolved = self.resolve(&cluster, &kind, namespace, name, cx);
+                let opened = resolved.map(|(key, target)| {
+                    self.open_editor(key, target, ManifestRequest::Edit, None, window, cx);
+                });
+                let _ = reply.send(opened);
+            }
+        }
+    }
+
+    fn resolve(
+        &self,
+        cluster: &ClusterRef,
+        kind: &KindRef,
+        namespace: Option<String>,
+        name: String,
+        cx: &App,
+    ) -> Result<(ClusterKey, ObjectTarget), HostError> {
+        let model = self.model.read(cx);
+        let status = model
+            .status(&cluster.0)
+            .filter(|status| is_live(&status.state))
+            .ok_or_else(|| HostError::Failed {
+                message: format!("cluster {} is not connected", cluster.0),
+            })?;
+        let served = status
+            .resources
+            .iter()
+            .find(|served| kind_ref(served) == *kind);
+        let kind = served.cloned().ok_or_else(|| HostError::NotFound {
+            message: format!("the cluster does not serve {}", kind.kind),
+        })?;
+        let target = ObjectTarget {
+            kind,
+            namespace,
+            name,
+        };
+        Ok((model.key(&cluster.0), target))
     }
 
     /// The window's value, because the application-wide one is unreliable on
@@ -448,5 +614,40 @@ impl Render for Workspace {
                         )
                     }),
             )
+    }
+}
+
+fn change_target(
+    request: ChangeRequest,
+) -> (ClusterRef, KindRef, Option<String>, String, ManifestRequest) {
+    let metadata_text = |manifest: &serde_json::Value, field: &str| {
+        manifest["metadata"][field].as_str().map(str::to_owned)
+    };
+    match request {
+        ChangeRequest::Create {
+            cluster,
+            kind,
+            manifest,
+        } => (
+            cluster,
+            kind,
+            metadata_text(&manifest, "namespace"),
+            metadata_text(&manifest, "name").unwrap_or_default(),
+            ManifestRequest::Create(manifest),
+        ),
+        ChangeRequest::Update { target, manifest } => (
+            target.cluster,
+            target.kind,
+            target.namespace,
+            target.name,
+            ManifestRequest::Update(manifest),
+        ),
+        ChangeRequest::Delete { target } => (
+            target.cluster,
+            target.kind,
+            target.namespace,
+            target.name,
+            ManifestRequest::Delete,
+        ),
     }
 }

@@ -10,7 +10,7 @@ async-trait.workspace = true
 base64.workspace = true
 directories.workspace = true
 image.workspace = true
-gpui-kit.workspace = true
+gpui-kit = { workspace = true, features = ["tree-sitter-yaml"] }
 kubepulse-cluster.workspace = true
 kubepulse-extension-api.workspace = true
 kubepulse-extension-host.workspace = true

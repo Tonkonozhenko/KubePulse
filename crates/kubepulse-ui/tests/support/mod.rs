@@ -11,7 +11,7 @@ use std::{
 use gpui_kit::VisualTestContext;
 use kubepulse_cluster::{
     ClusterEntry, ConnectionState, EventRecord, ObjectError, ObjectTarget, RawObject, ResourceKind,
-    WatchEvent,
+    UpdateAccess, WatchEvent, WriteMode,
 };
 use kubepulse_extension_api::{ExtensionRequest, ExtensionResponse, KindRef, UiNode};
 use kubepulse_extension_host::{CallError, ContributionSet};
@@ -55,7 +55,7 @@ pub fn kind(group: &str, name: &str, plural: &str, namespaced: bool) -> Resource
         kind: name.to_owned(),
         plural: plural.to_owned(),
         namespaced,
-        verbs: vec!["get".into(), "list".into(), "watch".into()],
+        verbs: vec!["get".into(), "list".into(), "update".into(), "watch".into()],
         printer_columns: vec![],
     }
 }
@@ -141,6 +141,13 @@ pub struct FakeServices {
     pub objects: Mutex<Vec<(ObjectTarget, Value)>>,
     pub events: Mutex<Vec<EventRecord>>,
     pub deleted: Mutex<Vec<ObjectTarget>>,
+    /// Every write, in order.
+    pub writes: Mutex<Vec<(WriteMode, Value)>>,
+    /// What the next writes answer, oldest first. With none left, a write
+    /// echoes its object.
+    pub write_results: Mutex<Vec<Result<Value, ObjectError>>>,
+    pub access: Mutex<Option<UpdateAccess>>,
+    pub access_failure: Mutex<Option<String>>,
     /// Why the next delete fails.
     pub delete_failure: Mutex<Option<String>>,
     pub requests: Mutex<Vec<(String, ExtensionRequest)>>,
@@ -184,6 +191,10 @@ impl FakeServices {
             objects: Mutex::default(),
             events: Mutex::default(),
             deleted: Mutex::default(),
+            writes: Mutex::default(),
+            write_results: Mutex::default(),
+            access: Mutex::default(),
+            access_failure: Mutex::default(),
             delete_failure: Mutex::default(),
             requests: Mutex::default(),
             tab_ui: Mutex::default(),
@@ -201,6 +212,17 @@ impl FakeServices {
                 .to_owned(),
         };
         self.objects.lock().unwrap().push((target, object));
+    }
+
+    fn write(&self, object: Value, mode: WriteMode) -> Reply<Value> {
+        self.writes.lock().unwrap().push((mode, object.clone()));
+        let mut results = self.write_results.lock().unwrap();
+        let result = if results.is_empty() {
+            Ok(object)
+        } else {
+            results.remove(0)
+        };
+        Box::pin(async move { result })
     }
 
     /// Makes extensions stop answering until `release_extensions`.
@@ -239,6 +261,37 @@ impl ClusterServices for FakeServices {
         self.deleted.lock().unwrap().push(target);
         let failure = self.delete_failure.lock().unwrap().take();
         Box::pin(async move { failure.map_or(Ok(()), |message| Err(ObjectError::Failed(message))) })
+    }
+
+    fn replace_object(
+        &self,
+        _: &str,
+        _: ObjectTarget,
+        object: Value,
+        mode: WriteMode,
+    ) -> Reply<Value> {
+        self.write(object, mode)
+    }
+
+    fn create_object(
+        &self,
+        _: &str,
+        _: ObjectTarget,
+        object: Value,
+        mode: WriteMode,
+    ) -> Reply<Value> {
+        self.write(object, mode)
+    }
+
+    fn update_access(&self, _: &str, _: ObjectTarget) -> Reply<UpdateAccess> {
+        let access = self.access.lock().unwrap().clone().unwrap_or(UpdateAccess {
+            allowed: true,
+            reason: None,
+        });
+        let failure = self.access_failure.lock().unwrap().take();
+        Box::pin(
+            async move { failure.map_or(Ok(access), |message| Err(ObjectError::Failed(message))) },
+        )
     }
 
     fn contributions(&self) -> Arc<ContributionSet> {

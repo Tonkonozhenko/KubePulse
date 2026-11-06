@@ -22,7 +22,7 @@ fn manifests() -> Vec<Manifest> {
 }
 
 fn host() -> ExtensionHost {
-    let backend = Arc::new(ClusterBackend(Arc::default()));
+    let backend = Arc::new(ClusterBackend::new(Arc::default()).0);
     let host = ExtensionHost::new(backend, HostOptions::default());
     host.load(kubepulse_builtin::extensions());
     host

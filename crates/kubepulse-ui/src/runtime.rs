@@ -12,18 +12,19 @@ use std::{
 use async_trait::async_trait;
 use kubepulse_cluster::{
     ClusterEntry, ClusterList, ConnectionState, EventRecord, FileError, KubeconfigWatcher,
-    ObjectError, ObjectTarget, ResourceKind, SessionHandle, SessionManager, SessionOptions, load,
+    ObjectError, ObjectTarget, ResourceKind, SessionHandle, SessionManager, SessionOptions,
+    UpdateAccess, WriteMode, load,
 };
 use kubepulse_extension_api::{
-    ClusterRef, ExtensionRequest, ExtensionResponse, HostError, HostOperation, HostResponse,
-    KindRef, ObjectRef, ResourceObject,
+    ChangeOutcome, ChangeRequest, ClusterRef, ExtensionRequest, ExtensionResponse, HostError,
+    HostOperation, HostResponse, KindRef, ObjectRef, ResourceObject, SurfaceRef, SurfaceRequest,
 };
 use kubepulse_extension_host::{CallError, ContributionSet, ExtensionHost, HostBackend};
 use kubepulse_store::{ClusterStore, ColumnResolver, StoreOptions, View, ViewQuery};
 use serde_json::Value;
 use tokio::{
     runtime::{Builder, Handle, Runtime},
-    sync::{Notify, mpsc, watch},
+    sync::{Notify, mpsc, oneshot, watch},
 };
 
 use crate::{
@@ -105,13 +106,42 @@ fn host_error(error: ObjectError) -> HostError {
     }
 }
 
+/// What extensions ask of the interface, because only it can show the user a
+/// change or open a tab. Dropping `reply` unanswered means the user declined.
+pub enum HostRequest {
+    Change {
+        request: ChangeRequest,
+        reply: oneshot::Sender<ChangeOutcome>,
+    },
+    OpenEditor {
+        target: ObjectRef,
+        reply: oneshot::Sender<Result<(), HostError>>,
+    },
+}
+
 /// Carries out extension requests. Nothing here hands an extension a credential.
-pub struct ClusterBackend(pub Arc<ConnectedClusters>);
+pub struct ClusterBackend {
+    clusters: Arc<ConnectedClusters>,
+    requests: mpsc::UnboundedSender<HostRequest>,
+}
 
 impl ClusterBackend {
+    pub fn new(clusters: Arc<ConnectedClusters>) -> (Self, mpsc::UnboundedReceiver<HostRequest>) {
+        let (requests, receiver) = mpsc::unbounded_channel();
+        (Self { clusters, requests }, receiver)
+    }
+
     fn cluster(&self, cluster: &ClusterRef) -> Result<Arc<ConnectedCluster>, HostError> {
-        self.0.get(&cluster.0).ok_or_else(|| HostError::Failed {
-            message: format!("cluster {} is not connected", cluster.0),
+        self.clusters
+            .get(&cluster.0)
+            .ok_or_else(|| HostError::Failed {
+                message: format!("cluster {} is not connected", cluster.0),
+            })
+    }
+
+    fn ask_interface(&self, request: HostRequest) -> Result<(), HostError> {
+        self.requests.send(request).map_err(|_| HostError::Failed {
+            message: "the application is closing".into(),
         })
     }
 }
@@ -186,10 +216,27 @@ impl HostBackend for ClusterBackend {
                     .collect();
                 Ok(HostResponse::Objects { objects })
             }
-            // Changes wait for the review flow, so nothing can bypass it.
-            HostOperation::RequestChange { .. } => Err(HostError::Failed {
-                message: "cluster changes are not available yet".into(),
-            }),
+            // The user's review decides, so nothing can bypass it.
+            HostOperation::RequestChange { request } => {
+                let (reply, answer) = oneshot::channel();
+                self.ask_interface(HostRequest::Change { request, reply })?;
+                let outcome = answer.await.unwrap_or(ChangeOutcome::Declined);
+                Ok(HostResponse::Change { outcome })
+            }
+            HostOperation::OpenSurface {
+                request: SurfaceRequest::Editor { target },
+            } => {
+                let reference = SurfaceRef(format!(
+                    "editor/{}/{}/{}",
+                    target.cluster.0, target.kind.kind, target.name
+                ));
+                let (reply, answer) = oneshot::channel();
+                self.ask_interface(HostRequest::OpenEditor { target, reply })?;
+                answer.await.map_err(|_| HostError::Failed {
+                    message: "the application is closing".into(),
+                })??;
+                Ok(HostResponse::Surface { reference })
+            }
             HostOperation::OpenSurface { .. } => Err(HostError::Failed {
                 message: "surfaces are not available yet".into(),
             }),
@@ -261,6 +308,33 @@ impl ClusterServices for RuntimeServices {
     fn delete_object(&self, context: &str, target: ObjectTarget) -> Reply<()> {
         let session = self.session(context);
         self.on_runtime(async move { session?.delete_object(&target).await })
+    }
+
+    fn replace_object(
+        &self,
+        context: &str,
+        target: ObjectTarget,
+        object: Value,
+        mode: WriteMode,
+    ) -> Reply<Value> {
+        let session = self.session(context);
+        self.on_runtime(async move { session?.replace_object(&target, object, mode).await })
+    }
+
+    fn create_object(
+        &self,
+        context: &str,
+        target: ObjectTarget,
+        object: Value,
+        mode: WriteMode,
+    ) -> Reply<Value> {
+        let session = self.session(context);
+        self.on_runtime(async move { session?.create_object(&target, object, mode).await })
+    }
+
+    fn update_access(&self, context: &str, target: ObjectTarget) -> Reply<UpdateAccess> {
+        let session = self.session(context);
+        self.on_runtime(async move { session?.update_access(&target).await })
     }
 
     fn contributions(&self) -> Arc<ContributionSet> {

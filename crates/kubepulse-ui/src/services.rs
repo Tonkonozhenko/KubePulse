@@ -4,7 +4,9 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
 use gpui_kit::Global;
-use kubepulse_cluster::{EventRecord, ObjectError, ObjectTarget, ResourceKind};
+use kubepulse_cluster::{
+    EventRecord, ObjectError, ObjectTarget, ResourceKind, UpdateAccess, WriteMode,
+};
 use kubepulse_extension_api::{ExtensionRequest, ExtensionResponse, KindRef};
 use kubepulse_extension_host::{CallError, ContributionSet};
 use kubepulse_store::{View, ViewQuery};
@@ -23,6 +25,21 @@ pub trait ClusterServices: Send + Sync + 'static {
         uid: String,
     ) -> Reply<Vec<EventRecord>>;
     fn delete_object(&self, context: &str, target: ObjectTarget) -> Reply<()>;
+    fn replace_object(
+        &self,
+        context: &str,
+        target: ObjectTarget,
+        object: Value,
+        mode: WriteMode,
+    ) -> Reply<Value>;
+    fn create_object(
+        &self,
+        context: &str,
+        target: ObjectTarget,
+        object: Value,
+        mode: WriteMode,
+    ) -> Reply<Value>;
+    fn update_access(&self, context: &str, target: ObjectTarget) -> Reply<UpdateAccess>;
     fn contributions(&self) -> Arc<ContributionSet>;
     fn kind_opened(&self, kind: KindRef);
     fn extension(&self, id: &str, request: ExtensionRequest)

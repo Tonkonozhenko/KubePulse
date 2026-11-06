@@ -59,9 +59,9 @@ pub fn run_with(options: RunOptions) {
         .as_ref()
         .map(|config| ThemeWatcher::start(config.themes.clone()));
     let clusters = Arc::new(ConnectedClusters::default());
-    let backend = Arc::new(ClusterBackend(clusters.clone()));
+    let (backend, host_requests) = ClusterBackend::new(clusters.clone());
     let host = ExtensionHost::new(
-        backend,
+        Arc::new(backend),
         HostOptions {
             language: language::current(),
             ..HostOptions::default()
@@ -113,7 +113,11 @@ pub fn run_with(options: RunOptions) {
                         .detach();
                     });
                 }
-                cx.new(|cx| Workspace::new(model, config, window, cx))
+                cx.new(|cx| {
+                    let workspace = Workspace::new(model, config, window, cx);
+                    workspace.listen(host_requests, window, cx);
+                    workspace
+                })
             })
             .expect("failed to open window");
         });

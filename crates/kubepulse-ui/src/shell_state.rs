@@ -10,10 +10,14 @@ use gpui_kit::{
     },
     *,
 };
+use kubepulse_cluster::ObjectTarget;
 use kubepulse_extension_api::KindRef;
 use rust_i18n::t;
 
-use crate::{cluster_tab::ClusterTab, identity::ClusterKey, settings_tab::SettingsTab};
+use crate::{
+    cluster_tab::ClusterTab, identity::ClusterKey, manifest_tab::ManifestTab,
+    settings_tab::SettingsTab,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TabSummary {
@@ -63,9 +67,20 @@ struct Entry {
     tab: WeakEntity<ClusterTab>,
 }
 
+struct EditorEntry {
+    id: EntityId,
+    key: ClusterKey,
+    target: ObjectTarget,
+    tab: WeakEntity<ManifestTab>,
+}
+
 pub enum ShellEvent {
     /// Only the workspace can reach the dock, so tabs ask it to close them.
     CloseTab(EntityId),
+    OpenEditor {
+        key: ClusterKey,
+        target: Box<ObjectTarget>,
+    },
 }
 
 impl EventEmitter<ShellEvent> for ShellState {}
@@ -77,6 +92,7 @@ pub struct ShellState {
     tabs: Vec<Entry>,
     /// Kept apart from `tabs`, because the Settings tab has no cluster or kind.
     settings_tab: Option<WeakEntity<SettingsTab>>,
+    editors: Vec<EditorEntry>,
 }
 
 /// Lets tabs find the shell state.
@@ -104,6 +120,45 @@ impl ShellState {
 
     pub fn set_settings_tab(&mut self, tab: Option<WeakEntity<SettingsTab>>) {
         self.settings_tab = tab;
+    }
+
+    pub fn add_editor(
+        &mut self,
+        id: EntityId,
+        key: ClusterKey,
+        target: ObjectTarget,
+        tab: WeakEntity<ManifestTab>,
+    ) {
+        if !self.editors.iter().any(|entry| entry.id == id) {
+            self.editors.push(EditorEntry {
+                id,
+                key,
+                target,
+                tab,
+            });
+        }
+    }
+
+    pub fn editor(&self, id: EntityId) -> Option<Entity<ManifestTab>> {
+        let entry = self.editors.iter().find(|entry| entry.id == id)?;
+        entry.tab.upgrade()
+    }
+
+    pub fn editor_of(
+        &self,
+        key: &ClusterKey,
+        target: &ObjectTarget,
+    ) -> Option<Entity<ManifestTab>> {
+        let entry = self
+            .editors
+            .iter()
+            .find(|entry| entry.key == *key && entry.target == *target)?;
+        entry.tab.upgrade()
+    }
+
+    pub fn open_editor(&self, key: ClusterKey, target: ObjectTarget, cx: &mut Context<Self>) {
+        let target = Box::new(target);
+        cx.emit(ShellEvent::OpenEditor { key, target });
     }
 
     pub fn active_tab(&self) -> Option<&TabSummary> {
@@ -157,6 +212,7 @@ impl ShellState {
 
     pub fn remove_tab(&mut self, id: EntityId, cx: &mut Context<Self>) {
         self.tabs.retain(|entry| entry.summary.id != id);
+        self.editors.retain(|entry| entry.id != id);
         if self.active == Some(id) {
             self.active = None;
         }

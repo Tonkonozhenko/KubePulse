@@ -123,12 +123,15 @@ impl Extension for TestExtension {
 struct FakeBackend {
     executed: Mutex<Vec<HostOperation>>,
     deny: bool,
+    /// How long each operation takes, as a user's review would.
+    delay: Duration,
 }
 
 #[async_trait]
 impl HostBackend for FakeBackend {
     async fn execute(&self, operation: HostOperation) -> Result<HostResponse, HostError> {
         self.executed.lock().unwrap().push(operation);
+        tokio::time::sleep(self.delay).await;
         if self.deny {
             return Err(HostError::ClusterDenied {
                 message: "pods is forbidden".into(),
@@ -751,5 +754,80 @@ async fn interface_text_is_not_rewritten_even_when_it_matches_a_translation() {
                 text: "Pods".into()
             }
         }
+    );
+}
+
+fn change() -> HostOperation {
+    HostOperation::RequestChange {
+        request: ChangeRequest::Delete {
+            target: ObjectRef {
+                cluster: ClusterRef("a".into()),
+                kind: pods(),
+                namespace: Some("default".into()),
+                name: "web".into(),
+            },
+        },
+    }
+}
+
+fn reviewing(operation: HostOperation) -> (ExtensionHost, Arc<TestExtension>) {
+    let mut declared = manifest("reviewer");
+    declared.permissions = vec![Permission {
+        kind: pods(),
+        verbs: vec![Verb::Delete, Verb::Get],
+    }];
+    let extension = TestExtension::with(declared, Behavior::Succeed, Behavior::Succeed);
+    *extension.operation.lock().unwrap() = Some(operation);
+    let backend = Arc::new(FakeBackend {
+        delay: Duration::from_millis(350),
+        ..FakeBackend::default()
+    });
+    let host = ExtensionHost::new(backend, options());
+    host.load(vec![extension.clone()]);
+    (host, extension)
+}
+
+#[tokio::test]
+async fn a_users_review_does_not_count_against_the_call_limit() {
+    let (host, extension) = reviewing(change());
+
+    let result = host
+        .request(
+            "reviewer",
+            ExtensionRequest::RunCommand {
+                command: "x".into(),
+            },
+        )
+        .await;
+
+    assert_eq!(result, Ok(ExtensionResponse::Done));
+    assert_eq!(
+        *extension.last_host_result.lock().unwrap(),
+        Some(Ok(HostResponse::Done))
+    );
+}
+
+#[tokio::test]
+async fn any_other_slow_operation_still_counts() {
+    let target = ObjectRef {
+        cluster: ClusterRef("a".into()),
+        kind: pods(),
+        namespace: None,
+        name: "web".into(),
+    };
+    let (host, _extension) = reviewing(HostOperation::GetObject { target });
+
+    let result = host
+        .request(
+            "reviewer",
+            ExtensionRequest::RunCommand {
+                command: "x".into(),
+            },
+        )
+        .await;
+
+    assert!(
+        matches!(result, Err(CallError::Failed { .. })),
+        "{result:?}"
     );
 }

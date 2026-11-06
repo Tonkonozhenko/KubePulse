@@ -75,13 +75,13 @@ Stop after this group if any target is missed, and revisit the design before sta
 
 ## 9. Manifest editing
 
-- [ ] 9.1 Implement manifest loading with stripping and restoring of server-managed fields, and verify with round-trip unit tests
-- [ ] 9.2 Implement the editor surface with YAML highlighting, search, undo, and syntax errors, and verify a syntax error disables applying, that highlighting follows the active theme, and that its text comes from catalogs
-- [ ] 9.3 Implement the dry-run step, and verify a rejected change shows the server's message and leaves the cluster unchanged
-- [ ] 9.4 Implement diff review with target details and the no-change case, and verify an admission mutation appears in the diff using a fake server
-- [ ] 9.5 Implement apply with `resourceVersion` checks and conflict recovery, and verify a concurrent change is refused and can be reapplied on the newer version
-- [ ] 9.6 Implement read-only mode, the Secret reveal confirmation, and unsaved-edit protection, and verify with UI tests
-- [ ] 9.7 Route extension mutations through this flow, and verify a test extension cannot change a resource without user confirmation
+- [x] 9.1 Implement manifest loading with stripping and restoring of server-managed fields, and verify with round-trip unit tests
+- [x] 9.2 Implement the editor surface with YAML highlighting, search, undo, and syntax errors, and verify a syntax error disables applying, that highlighting follows the active theme, and that its text comes from catalogs
+- [x] 9.3 Implement the dry-run step, and verify a rejected change shows the server's message and leaves the cluster unchanged
+- [x] 9.4 Implement diff review with target details and the no-change case, and verify an admission mutation appears in the diff using a fake server
+- [x] 9.5 Implement apply with `resourceVersion` checks and conflict recovery, and verify a concurrent change is refused and can be reapplied on the newer version
+- [x] 9.6 Implement read-only mode, the Secret reveal confirmation, and unsaved-edit protection, and verify with UI tests
+- [x] 9.7 Route extension mutations through this flow, and verify a test extension cannot change a resource without user confirmation
 
 ## 10. Pod logs
 
