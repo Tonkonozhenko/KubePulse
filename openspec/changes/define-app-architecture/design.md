@@ -163,6 +163,8 @@ The kit has no terminal, so a custom element renders the emulator's grid. Input,
 
 Lines go into a per-stream ring buffer limited to 100,000 lines and 64 MiB, whichever is reached first, and render through a virtual list. Batches are delivered per frame. After a dropped stream, the reader resumes from the last timestamp and removes duplicates.
 
+The client library rounds the resume time to the nearest second, which could skip lines, so the reader rounds it down itself and drops the replayed lines. A stream that broke gets one more read after its container stops, to recover the last lines. Lines over 4 KiB are cut for display only, because shaping them stalls a frame, and stay whole in the buffer and in search.
+
 ### D15. Port-forwards belong to sessions, not tabs
 
 A global registry lists forwards across sessions, each owned by its cluster session. Listeners bind only to loopback. A service forward resolves its target port and a ready pod through EndpointSlices, then re-resolves if that pod disappears.

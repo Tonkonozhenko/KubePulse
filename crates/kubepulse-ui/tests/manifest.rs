@@ -580,7 +580,13 @@ impl Extension for Changer {
             contributions: Contributions::default(),
             permissions: vec![Permission {
                 kind: config_maps(),
-                verbs: vec![Verb::Create, Verb::Get, Verb::Update, Verb::Delete],
+                verbs: vec![
+                    Verb::Create,
+                    Verb::Get,
+                    Verb::Update,
+                    Verb::Delete,
+                    Verb::Logs,
+                ],
             }],
             translations: Default::default(),
         }
@@ -822,4 +828,63 @@ fn a_failed_access_check_is_shown_and_leaves_the_editor_usable(cx: &mut TestAppC
 
     assert!(message(&tab, cx).contains("the review was refused"));
     assert!(cx.update(|_, cx| tab.read(cx).read_only().is_none()));
+}
+
+#[gpui_kit::test]
+fn a_context_moved_to_another_server_blocks_applying(cx: &mut TestAppContext) {
+    let (fixture, cx) = with_object(cx, live("1", json!({"key": "old"})));
+    let tab = open_editing(&fixture, cx);
+    review_edit(&fixture, &tab, cx);
+    assert!(exists("review-apply", cx));
+
+    let (_, mut moved) = cluster();
+    moved.entry.server = Some("https://other.example".into());
+    fixture._state.send_replace(Arc::new(ClusterState {
+        version: 2,
+        clusters: vec![moved],
+        errors: vec![],
+    }));
+    settle(cx);
+
+    assert!(exists("tab-server-changed", cx));
+    assert!(!exists("review-apply", cx));
+    cx.update(|window, cx| tab.update(cx, |tab, cx| tab.apply(window, cx)));
+    settle(cx);
+    assert!(applied_writes(&fixture.services).is_empty());
+    assert!(!cx.update(|_, cx| tab.read(cx).can_review(cx)));
+}
+
+#[gpui_kit::test]
+fn clicking_an_editor_selects_its_cluster(cx: &mut TestAppContext) {
+    let (fixture, cx) = with_object(cx, live("1", json!({"key": "old"})));
+    open_editing(&fixture, cx);
+    let shell = cx.update(|_, cx| cx.global::<SharedShellState>().0.clone());
+    cx.update(|_, cx| {
+        shell.update(cx, |shell, cx| shell.select(ClusterKey::new("b", None), cx));
+    });
+
+    click("manifest-tab", cx);
+
+    assert_eq!(
+        cx.update(|_, cx| shell.read(cx).selected().cloned()),
+        Some(key())
+    );
+}
+
+#[gpui_kit::test]
+fn an_extension_opens_the_log_surface_for_a_pod_only(cx: &mut TestAppContext) {
+    let (identities, status) = cluster();
+    let (mut fixture, cx) = setup(cx, identities, status);
+    let operation = HostOperation::OpenSurface {
+        request: SurfaceRequest::Logs {
+            target: object_ref(),
+            container: None,
+        },
+    };
+
+    let running = run_extension(&mut fixture, operation, cx);
+    let answer = wait_for_outcome(&running, cx);
+
+    assert!(answer.contains("only pods have logs"), "{answer}");
+    running.runtime.shutdown_background();
 }

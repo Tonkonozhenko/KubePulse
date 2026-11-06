@@ -5,7 +5,8 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use gpui_kit::Global;
 use kubepulse_cluster::{
-    EventRecord, ObjectError, ObjectTarget, ResourceKind, UpdateAccess, WriteMode,
+    EventRecord, LogRequest, LogStream, ObjectError, ObjectTarget, ResourceKind, UpdateAccess,
+    WriteMode,
 };
 use kubepulse_extension_api::{ExtensionRequest, ExtensionResponse, KindRef};
 use kubepulse_extension_host::{CallError, ContributionSet};
@@ -40,6 +41,8 @@ pub trait ClusterServices: Send + Sync + 'static {
         mode: WriteMode,
     ) -> Reply<Value>;
     fn update_access(&self, context: &str, target: ObjectTarget) -> Reply<UpdateAccess>;
+    /// Starts a log stream, or returns `None` if the cluster is not connected.
+    fn open_logs(&self, context: &str, request: LogRequest) -> Option<LogStream>;
     fn contributions(&self) -> Arc<ContributionSet>;
     fn kind_opened(&self, kind: KindRef);
     fn extension(&self, id: &str, request: ExtensionRequest)

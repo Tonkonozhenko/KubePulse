@@ -95,6 +95,13 @@ impl ClusterModel {
         ClusterKey::new(context, server)
     }
 
+    /// Whether the kubeconfig still points this context at the key's server. If
+    /// it does not, connecting or writing would reach a different cluster.
+    pub fn same_server(&self, key: &ClusterKey) -> bool {
+        self.status(&key.context)
+            .is_some_and(|status| status.entry.server.as_deref().unwrap_or_default() == key.server)
+    }
+
     pub fn identity(&self, key: &ClusterKey) -> ClusterIdentity {
         self.identities.identity(key)
     }

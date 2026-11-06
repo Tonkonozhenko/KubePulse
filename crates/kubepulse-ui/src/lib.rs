@@ -17,6 +17,7 @@ pub mod icons;
 pub mod identity;
 pub mod kind_sidebar;
 pub mod language;
+pub mod log_tab;
 pub mod manifest_tab;
 pub mod persistence;
 pub mod preferences;
@@ -25,6 +26,7 @@ pub mod runtime;
 pub mod services;
 pub mod settings_tab;
 pub mod shell_state;
+pub mod tab_connection;
 pub mod theme;
 pub mod workspace;
 

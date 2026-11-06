@@ -85,10 +85,10 @@ Stop after this group if any target is missed, and revisit the design before sta
 
 ## 10. Pod logs
 
-- [ ] 10.1 Implement container selection, init containers, and previous-instance logs, and verify with a fake server
-- [ ] 10.2 Implement streaming into the ring buffer from D14, with the dropped-lines notice, and verify memory stays bounded at 10,000 lines per second
-- [ ] 10.3 Implement the log surface with follow behavior, timestamps, and search, and verify with UI tests while lines stream
-- [ ] 10.4 Implement stream resume with duplicate removal, and verify an interrupted fake stream shows no duplicated lines
+- [x] 10.1 Implement container selection, init containers, and previous-instance logs, and verify with a fake server
+- [x] 10.2 Implement streaming into the ring buffer from D14, with the dropped-lines notice, and verify memory stays bounded at 10,000 lines per second
+- [x] 10.3 Implement the log surface with follow behavior, timestamps, and search, and verify with UI tests while lines stream
+- [x] 10.4 Implement stream resume with duplicate removal, and verify an interrupted fake stream shows no duplicated lines
 
 ## 11. Pod shell
 

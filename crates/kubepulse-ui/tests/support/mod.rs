@@ -10,8 +10,8 @@ use std::{
 
 use gpui_kit::VisualTestContext;
 use kubepulse_cluster::{
-    ClusterEntry, ConnectionState, EventRecord, ObjectError, ObjectTarget, RawObject, ResourceKind,
-    UpdateAccess, WatchEvent, WriteMode,
+    ClusterEntry, ConnectionState, EventRecord, LogBuffer, LogFeed, LogRequest, LogStream,
+    ObjectError, ObjectTarget, RawObject, ResourceKind, UpdateAccess, WatchEvent, WriteMode,
 };
 use kubepulse_extension_api::{ExtensionRequest, ExtensionResponse, KindRef, UiNode};
 use kubepulse_extension_host::{CallError, ContributionSet};
@@ -146,6 +146,12 @@ pub struct FakeServices {
     /// What the next writes answer, oldest first. With none left, a write
     /// echoes its object.
     pub write_results: Mutex<Vec<Result<Value, ObjectError>>>,
+    /// One feed per opened log stream, newest last.
+    pub log_feeds: Mutex<Vec<(LogRequest, LogFeed)>>,
+    /// Limits for the buffers of streams opened from now on.
+    pub log_limits: Mutex<Option<(usize, usize)>>,
+    /// Makes `open_logs` report a disconnected cluster.
+    pub logs_disconnected: Mutex<bool>,
     pub access: Mutex<Option<UpdateAccess>>,
     pub access_failure: Mutex<Option<String>>,
     /// Why the next delete fails.
@@ -193,6 +199,9 @@ impl FakeServices {
             deleted: Mutex::default(),
             writes: Mutex::default(),
             write_results: Mutex::default(),
+            log_feeds: Mutex::default(),
+            log_limits: Mutex::default(),
+            logs_disconnected: Mutex::default(),
             access: Mutex::default(),
             access_failure: Mutex::default(),
             delete_failure: Mutex::default(),
@@ -292,6 +301,19 @@ impl ClusterServices for FakeServices {
         Box::pin(
             async move { failure.map_or(Ok(access), |message| Err(ObjectError::Failed(message))) },
         )
+    }
+
+    fn open_logs(&self, _: &str, request: LogRequest) -> Option<LogStream> {
+        if *self.logs_disconnected.lock().unwrap() {
+            return None;
+        }
+        let buffer = match *self.log_limits.lock().unwrap() {
+            Some((lines, bytes)) => LogBuffer::with_limits(lines, bytes),
+            None => LogBuffer::default(),
+        };
+        let (feed, stream) = kubepulse_cluster::log_channel(buffer);
+        self.log_feeds.lock().unwrap().push((request, feed));
+        Some(stream)
     }
 
     fn contributions(&self) -> Arc<ContributionSet> {

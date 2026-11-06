@@ -1,6 +1,7 @@
 //! Kubeconfig, sessions, auth, discovery, watches, exec, logs, and port-forwarding.
 
 pub mod kubeconfig;
+pub mod logs;
 pub mod manager;
 pub mod manifest;
 pub mod objects;
@@ -9,6 +10,10 @@ pub mod session;
 
 pub use kubeconfig::{
     ClusterEntry, ClusterList, FileError, KubeconfigWatcher, default_paths, load,
+};
+pub use logs::{
+    ContainerInfo, ContainerKind, LogBuffer, LogFeed, LogLine, LogRequest, LogState, LogStatus,
+    LogStream, log_channel, match_ranges, pod_containers,
 };
 pub use manager::{SessionManager, UnknownContext};
 pub use manifest::ManifestError;

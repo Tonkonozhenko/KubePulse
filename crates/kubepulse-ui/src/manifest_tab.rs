@@ -26,12 +26,13 @@ use serde_json::Value;
 use tokio::sync::oneshot;
 
 use crate::{
-    cluster_model::{ClusterModel, can_connect},
+    cluster_model::ClusterModel,
     columns::{kind_icon, kind_ref, kind_title},
     icons::view_glyph,
     identity::ClusterKey,
     services::{ClusterServices, Reply, SharedServices},
     shell_state::{SharedShellState, ShellState, close_button},
+    tab_connection::{activate_tab, connection_notes},
 };
 
 pub const PANEL_NAME: &str = "ManifestTab";
@@ -188,7 +189,8 @@ impl ManifestTab {
 
     /// Whether the text can go to a dry run.
     pub fn can_review(&self, cx: &App) -> bool {
-        self.read_only.is_none()
+        self.on_its_cluster(cx)
+            && self.read_only.is_none()
             && matches!(self.stage, Stage::Editing)
             && matches!(self.parsed, Some(Ok(_)))
             && self.text(cx) != self.baseline
@@ -227,6 +229,16 @@ impl ManifestTab {
             && !matches!(self.stage, Stage::AwaitingReveal | Stage::Loading)
             && !matches!(self.stage, Stage::LoadFailed(_))
             && self.text(cx) != self.baseline
+    }
+
+    /// A context moved to another server is a different cluster, and nothing
+    /// opened here may be written there.
+    fn on_its_cluster(&self, cx: &App) -> bool {
+        self.model.read(cx).same_server(&self.key)
+    }
+
+    fn activate(&self, cx: &mut Context<Self>) {
+        activate_tab(cx.entity_id(), &self.key, &self.model, &self.shell, cx);
     }
 
     fn context(&self) -> &str {
@@ -456,7 +468,10 @@ impl ManifestTab {
         cx.notify();
     }
 
-    fn apply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn apply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.on_its_cluster(cx) {
+            return;
+        }
         let Stage::Review(review) = &mut self.stage else {
             return;
         };
@@ -570,6 +585,9 @@ impl ManifestTab {
 
     /// Moves the user's edits onto the newer version, then reviews them again.
     fn reapply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.on_its_cluster(cx) {
+            return;
+        }
         let Stage::Conflict { newer, .. } = &self.stage else {
             return;
         };
@@ -811,9 +829,7 @@ impl gpui_kit::base::dock::Panel for ManifestTab {
 
     fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut Context<Self>) {
         if active {
-            let (id, key) = (cx.entity_id(), self.key.clone());
-            self.shell
-                .update(cx, |shell, cx| shell.activate(id, Some(key), cx));
+            self.activate(cx);
         }
     }
 }
@@ -845,6 +861,10 @@ impl dock::Panel for ManifestTab {
                         .test_support(),
                 )
             })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.activate(cx)),
+            )
             .child(close_button(cx.entity_id(), self.shell.clone()))
             .test_support()
     }
@@ -861,11 +881,10 @@ impl Focusable for ManifestTab {
 impl Render for ManifestTab {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let identity = self.model.read(cx).identity(&self.key);
-        let state = self.model.read(cx).connection(self.context());
-        let context = self.key.context.clone();
         let muted = cx.theme().muted_foreground;
         div()
             .id("manifest-tab")
+            .capture_any_mouse_down(cx.listener(|this, _, _, cx| this.activate(cx)))
             .size_full()
             .flex()
             .flex_col()
@@ -874,6 +893,7 @@ impl Render for ManifestTab {
             .p_2()
             .child(div().h_1().w_full().flex_none().bg(rgb(identity.color)))
             .child(self.render_target(cx))
+            .children(connection_notes(&self.key, &self.model, cx))
             .children(self.read_only.clone().map(|reason| {
                 div()
                     .id("manifest-read-only")
@@ -882,16 +902,9 @@ impl Render for ManifestTab {
                     .test_support()
             }))
             .children(self.render_notice())
-            .when(can_connect(&state), |this| {
-                this.child(
-                    Button::new("manifest-connect")
-                        .icon(IconName::Plug)
-                        .label(t!("cluster.connect").to_string())
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.model.read(cx).connect(&context);
-                        })),
-                )
+            .when(self.on_its_cluster(cx), |this| {
+                this.child(self.render_stage(cx))
             })
-            .child(self.render_stage(cx))
+            .test_support()
     }
 }

@@ -13,6 +13,7 @@ use gpui_kit::{
         dialog::Dialog,
         input::{Input, InputEvent, InputState},
     },
+    prelude::FluentBuilder as _,
     *,
 };
 use kubepulse_cluster::{EventRecord, ObjectTarget, ResourceKind};
@@ -34,6 +35,7 @@ use crate::{
 pub enum DetailEvent {
     OpenOwner(ObjectTarget),
     Edit(ObjectTarget),
+    Logs(ObjectTarget),
     Deleted,
 }
 
@@ -51,6 +53,10 @@ struct Owner {
     kind: String,
     name: String,
     target: Option<ObjectTarget>,
+}
+
+fn is_pod(target: &ObjectTarget) -> bool {
+    target.kind.group.is_empty() && target.kind.kind == "Pod"
 }
 
 fn decode(value: &str) -> String {
@@ -680,6 +686,16 @@ impl Render for DetailView {
                     .clone()
                     .map(|error| div().id("detail-tab-error").child(error).test_support()),
             )
+            .when(is_pod(&self.target), |this| {
+                this.child(
+                    Button::new("view-logs")
+                        .icon(IconName::SquareTerminal)
+                        .label(t!("detail.logs").to_string())
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            cx.emit(DetailEvent::Logs(this.target.clone()));
+                        })),
+                )
+            })
             .child(
                 Button::new("edit-object")
                     .icon(IconName::Pencil)

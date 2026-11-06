@@ -16,8 +16,8 @@ use std::{
 use gpui_kit::AppContext as _;
 use gpui_kit::WindowOptions;
 use kubepulse_cluster::{
-    ClusterEntry, ConnectionState, EventRecord, ObjectError, ObjectTarget, ResourceKind,
-    UpdateAccess, WriteMode,
+    ClusterEntry, ConnectionState, EventRecord, LogRequest, LogStream, ObjectError, ObjectTarget,
+    ResourceKind, UpdateAccess, WriteMode,
 };
 use kubepulse_extension_api::{ExtensionRequest, ExtensionResponse, KindRef};
 use kubepulse_extension_host::{CallError, ContributionSet};
@@ -75,6 +75,10 @@ impl ClusterServices for Services {
 
     fn create_object(&self, _: &str, _: ObjectTarget, _: Value, _: WriteMode) -> Reply<Value> {
         Box::pin(async { Err(ObjectError::NotConnected) })
+    }
+
+    fn open_logs(&self, _: &str, _: LogRequest) -> Option<LogStream> {
+        None
     }
 
     fn update_access(&self, _: &str, _: ObjectTarget) -> Reply<UpdateAccess> {

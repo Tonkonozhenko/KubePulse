@@ -12,8 +12,8 @@ use std::{
 use async_trait::async_trait;
 use kubepulse_cluster::{
     ClusterEntry, ClusterList, ConnectionState, EventRecord, FileError, KubeconfigWatcher,
-    ObjectError, ObjectTarget, ResourceKind, SessionHandle, SessionManager, SessionOptions,
-    UpdateAccess, WriteMode, load,
+    LogRequest, LogStream, ObjectError, ObjectTarget, ResourceKind, SessionHandle, SessionManager,
+    SessionOptions, UpdateAccess, WriteMode, load,
 };
 use kubepulse_extension_api::{
     ChangeOutcome, ChangeRequest, ClusterRef, ExtensionRequest, ExtensionResponse, HostError,
@@ -109,6 +109,11 @@ fn host_error(error: ObjectError) -> HostError {
 /// What extensions ask of the interface, because only it can show the user a
 /// change or open a tab. Dropping `reply` unanswered means the user declined.
 pub enum HostRequest {
+    OpenLogs {
+        target: ObjectRef,
+        container: Option<String>,
+        reply: oneshot::Sender<Result<(), HostError>>,
+    },
     Change {
         request: ChangeRequest,
         reply: oneshot::Sender<ChangeOutcome>,
@@ -237,6 +242,21 @@ impl HostBackend for ClusterBackend {
                 })??;
                 Ok(HostResponse::Surface { reference })
             }
+            HostOperation::OpenSurface {
+                request: SurfaceRequest::Logs { target, container },
+            } => {
+                let reference = SurfaceRef(format!("logs/{}/{}", target.cluster.0, target.name));
+                let (reply, answer) = oneshot::channel();
+                self.ask_interface(HostRequest::OpenLogs {
+                    target,
+                    container,
+                    reply,
+                })?;
+                answer.await.map_err(|_| HostError::Failed {
+                    message: "the application is closing".into(),
+                })??;
+                Ok(HostResponse::Surface { reference })
+            }
             HostOperation::OpenSurface { .. } => Err(HostError::Failed {
                 message: "surfaces are not available yet".into(),
             }),
@@ -335,6 +355,12 @@ impl ClusterServices for RuntimeServices {
     fn update_access(&self, context: &str, target: ObjectTarget) -> Reply<UpdateAccess> {
         let session = self.session(context);
         self.on_runtime(async move { session?.update_access(&target).await })
+    }
+
+    fn open_logs(&self, context: &str, request: LogRequest) -> Option<LogStream> {
+        let cluster = self.clusters.get(context)?;
+        let _runtime = self.runtime.enter();
+        Some(cluster.handle.stream_logs(request))
     }
 
     fn contributions(&self) -> Arc<ContributionSet> {

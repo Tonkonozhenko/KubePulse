@@ -34,6 +34,7 @@ use crate::{
     command_palette::{OpenCommandPalette, PaletteAction, palette_groups},
     identity::ClusterKey,
     kind_sidebar::{KindSidebar, KindSidebarEvent},
+    log_tab::LogTab,
     manifest_tab::{ManifestRequest, ManifestTab},
     persistence::{ConfigPaths, write_atomic},
     preferences::{PreferencesEvent, PreferencesModel, SharedPreferences},
@@ -81,6 +82,10 @@ impl Workspace {
             }),
             cx.subscribe_in(&shell, window, |this, _, event, window, cx| match event {
                 ShellEvent::CloseTab(id) => this.close_tab(*id, window, cx),
+                ShellEvent::OpenLogs { key, target } => {
+                    let (key, target) = (key.clone(), (**target).clone());
+                    this.open_logs(key, target, None, window, cx);
+                }
                 ShellEvent::OpenEditor { key, target } => {
                     let (key, target) = (key.clone(), (**target).clone());
                     this.open_editor(key, target, ManifestRequest::Edit, None, window, cx);
@@ -355,6 +360,7 @@ impl Workspace {
     fn close_tab(&mut self, id: EntityId, window: &mut Window, cx: &mut Context<Self>) {
         let shell = self.shell.read(cx);
         let (tab, editor, settings) = (shell.tab(id), shell.editor(id), shell.settings_tab());
+        let logs = shell.log_tab(id);
         if let Some(editor) = &editor
             && editor.read(cx).has_unapplied_changes(cx)
         {
@@ -362,10 +368,11 @@ impl Workspace {
             return;
         }
         self.dock
-            .update(cx, |dock, cx| match (tab, editor, settings) {
-                (Some(tab), _, _) => dock.remove_panel(tab, window, cx),
-                (_, Some(editor), _) => dock.remove_panel(editor, window, cx),
-                (None, None, Some(settings)) if settings.entity_id() == id => {
+            .update(cx, |dock, cx| match (tab, editor, logs, settings) {
+                (Some(tab), ..) => dock.remove_panel(tab, window, cx),
+                (_, Some(editor), ..) => dock.remove_panel(editor, window, cx),
+                (_, _, Some(logs), _) => dock.remove_panel(logs, window, cx),
+                (None, None, None, Some(settings)) if settings.entity_id() == id => {
                     dock.remove_panel(settings, window, cx);
                 }
                 _ => {}
@@ -439,6 +446,27 @@ impl Workspace {
         tab
     }
 
+    /// Opens a pod's logs, in the tab that already shows them if there is one.
+    pub fn open_logs(
+        &mut self,
+        key: ClusterKey,
+        target: ObjectTarget,
+        container: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<LogTab> {
+        if let Some(open) = self.shell.read(cx).log_tab_of(&key, &target) {
+            let panel = PanelId::from(open.entity_id());
+            self.dock
+                .update(cx, |dock, cx| dock.select_panel(panel, window, cx));
+            return open;
+        }
+        let model = self.model.clone();
+        let tab = cx.new(|cx| LogTab::new(key, target, container, model, window, cx));
+        self.add_to_dock(panel_handle(tab.clone()), window, cx);
+        tab
+    }
+
     /// Serves what extensions ask of the interface, for the life of the window.
     pub fn listen(
         &self,
@@ -473,6 +501,33 @@ impl Workspace {
                         let _ = reply.send(ChangeOutcome::Failed { reason });
                     }
                 }
+            }
+            HostRequest::OpenLogs {
+                target,
+                container,
+                reply,
+            } => {
+                let ObjectRef {
+                    cluster,
+                    kind,
+                    namespace,
+                    name,
+                } = target;
+                let resolved =
+                    self.resolve(&cluster, &kind, namespace, name, cx)
+                        .and_then(|resolved| {
+                            if resolved.1.kind.group.is_empty() && resolved.1.kind.kind == "Pod" {
+                                Ok(resolved)
+                            } else {
+                                Err(HostError::Failed {
+                                    message: "only pods have logs".into(),
+                                })
+                            }
+                        });
+                let opened = resolved.map(|(key, target)| {
+                    self.open_logs(key, target, container, window, cx);
+                });
+                let _ = reply.send(opened);
             }
             HostRequest::OpenEditor { target, reply } => {
                 let ObjectRef {

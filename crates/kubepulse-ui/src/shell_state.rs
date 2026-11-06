@@ -15,7 +15,7 @@ use kubepulse_extension_api::KindRef;
 use rust_i18n::t;
 
 use crate::{
-    cluster_tab::ClusterTab, identity::ClusterKey, manifest_tab::ManifestTab,
+    cluster_tab::ClusterTab, identity::ClusterKey, log_tab::LogTab, manifest_tab::ManifestTab,
     settings_tab::SettingsTab,
 };
 
@@ -74,9 +74,20 @@ struct EditorEntry {
     tab: WeakEntity<ManifestTab>,
 }
 
+struct LogEntry {
+    id: EntityId,
+    key: ClusterKey,
+    target: ObjectTarget,
+    tab: WeakEntity<LogTab>,
+}
+
 pub enum ShellEvent {
     /// Only the workspace can reach the dock, so tabs ask it to close them.
     CloseTab(EntityId),
+    OpenLogs {
+        key: ClusterKey,
+        target: Box<ObjectTarget>,
+    },
     OpenEditor {
         key: ClusterKey,
         target: Box<ObjectTarget>,
@@ -93,6 +104,7 @@ pub struct ShellState {
     /// Kept apart from `tabs`, because the Settings tab has no cluster or kind.
     settings_tab: Option<WeakEntity<SettingsTab>>,
     editors: Vec<EditorEntry>,
+    log_tabs: Vec<LogEntry>,
 }
 
 /// Lets tabs find the shell state.
@@ -161,6 +173,41 @@ impl ShellState {
         cx.emit(ShellEvent::OpenEditor { key, target });
     }
 
+    pub fn add_log_tab(
+        &mut self,
+        id: EntityId,
+        key: ClusterKey,
+        target: ObjectTarget,
+        tab: WeakEntity<LogTab>,
+    ) {
+        if !self.log_tabs.iter().any(|entry| entry.id == id) {
+            self.log_tabs.push(LogEntry {
+                id,
+                key,
+                target,
+                tab,
+            });
+        }
+    }
+
+    pub fn log_tab(&self, id: EntityId) -> Option<Entity<LogTab>> {
+        let entry = self.log_tabs.iter().find(|entry| entry.id == id)?;
+        entry.tab.upgrade()
+    }
+
+    pub fn log_tab_of(&self, key: &ClusterKey, target: &ObjectTarget) -> Option<Entity<LogTab>> {
+        let entry = self
+            .log_tabs
+            .iter()
+            .find(|entry| entry.key == *key && entry.target == *target)?;
+        entry.tab.upgrade()
+    }
+
+    pub fn open_logs(&self, key: ClusterKey, target: ObjectTarget, cx: &mut Context<Self>) {
+        let target = Box::new(target);
+        cx.emit(ShellEvent::OpenLogs { key, target });
+    }
+
     pub fn active_tab(&self) -> Option<&TabSummary> {
         self.tabs
             .iter()
@@ -213,6 +260,7 @@ impl ShellState {
     pub fn remove_tab(&mut self, id: EntityId, cx: &mut Context<Self>) {
         self.tabs.retain(|entry| entry.summary.id != id);
         self.editors.retain(|entry| entry.id != id);
+        self.log_tabs.retain(|entry| entry.id != id);
         if self.active == Some(id) {
             self.active = None;
         }

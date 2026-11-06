@@ -47,7 +47,7 @@ impl std::fmt::Display for ObjectError {
 
 impl std::error::Error for ObjectError {}
 
-fn object_error(error: kube::Error) -> ObjectError {
+pub(crate) fn object_error(error: kube::Error) -> ObjectError {
     match error {
         kube::Error::Api(status) if status.code == 403 => ObjectError::Denied(status.message),
         kube::Error::Api(status) if status.code == 404 => ObjectError::NotFound(status.message),

@@ -2,7 +2,7 @@
 //! types stay in this crate. Paging, bookmarks, and retries come from the
 //! client library's watcher.
 
-use std::{collections::BTreeMap, time::Duration};
+use std::{collections::BTreeMap, future::Future, time::Duration};
 
 use futures::{StreamExt as _, future::join_all, pin_mut};
 use k8s_openapi::api::core::v1::Namespace;
@@ -92,6 +92,33 @@ impl SessionHandle {
         let mut client = self.client.clone();
         let ready = client.wait_for(Option::is_some).await.ok()?;
         ready.clone()
+    }
+
+    /// Runs `work` in the session's tree until `stop` fires or the session
+    /// ends. It starts once the session has a client.
+    pub(crate) fn spawn_stream<F>(
+        &self,
+        stop: CancellationToken,
+        work: impl FnOnce(Client) -> F + Send + 'static,
+    ) where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        let mut client = self.client.clone();
+        let session = self.cancel.child_token();
+        self.tasks.spawn(async move {
+            let run = async move {
+                let client = client
+                    .wait_for(Option::is_some)
+                    .await
+                    .map(|ready| ready.clone());
+                if let Ok(Some(client)) = client {
+                    work(client).await;
+                }
+            };
+            session
+                .run_until_cancelled(stop.run_until_cancelled(run))
+                .await;
+        });
     }
 
     /// Sends events for `kind` until `stop` fires, the session ends, or

@@ -5,22 +5,20 @@
 use std::sync::Arc;
 
 use gpui_kit::{
-    assets::IconName,
     component::{
-        ActiveTheme as _, Icon, Sizable as _,
-        button::Button,
+        Icon, Sizable as _,
         dock::{self, PanelEvent},
     },
     prelude::FluentBuilder as _,
     *,
 };
-use kubepulse_cluster::{ConnectionState, ObjectTarget, ResourceKind};
+use kubepulse_cluster::{ObjectTarget, ResourceKind};
 use kubepulse_extension_api::KindRef;
 
 use rust_i18n::t;
 
 use crate::{
-    cluster_model::{ClusterModel, can_connect, state_label},
+    cluster_model::{ClusterModel, can_connect},
     columns::{columns_for, kind_icon, kind_ref, kind_title},
     detail::{DetailEvent, DetailView},
     icons::view_glyph,
@@ -28,6 +26,7 @@ use crate::{
     resource_browser::{BrowserEvent, ResourceBrowser},
     services::{ClusterServices, SharedServices},
     shell_state::{SharedShellState, ShellState, TabSummary, close_button},
+    tab_connection::{activate_tab, connection_notes},
 };
 
 pub const PANEL_NAME: &str = "ClusterTab";
@@ -122,23 +121,8 @@ impl ClusterTab {
             .update(cx, |shell, cx| shell.update_tab(summary, cx));
     }
 
-    /// Reports this as the active tab. Two panes can show tabs at once, so a
-    /// click on a displayed tab counts as well as the dock's notification.
     pub fn activate(&self, cx: &mut Context<Self>) {
-        let id = cx.entity_id();
-        let key = self
-            .same_server(self.model.read(cx))
-            .then(|| self.key.clone());
-        self.shell
-            .update(cx, |shell, cx| shell.activate(id, key, cx));
-    }
-
-    /// Whether the kubeconfig still points this context at the tab's server. If
-    /// it does not, connecting would reach a different cluster.
-    fn same_server(&self, model: &ClusterModel) -> bool {
-        model.status(&self.key.context).is_some_and(|status| {
-            status.entry.server.as_deref().unwrap_or_default() == self.key.server
-        })
+        activate_tab(cx.entity_id(), &self.key, &self.model, &self.shell, cx);
     }
 
     /// Opens the remembered kind once connected, and drops cluster data once the
@@ -199,6 +183,11 @@ impl ClusterTab {
         let subscription =
             cx.subscribe_in(&detail, window, |this, _, event, window, cx| match event {
                 DetailEvent::OpenOwner(target) => this.open_object(target.clone(), window, cx),
+                DetailEvent::Logs(target) => {
+                    let (key, target) = (this.key.clone(), target.clone());
+                    this.shell
+                        .update(cx, |shell, cx| shell.open_logs(key, target, cx));
+                }
                 DetailEvent::Edit(target) => {
                     let (key, target) = (this.key.clone(), target.clone());
                     this.shell
@@ -300,18 +289,8 @@ impl Render for ClusterTab {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let model = self.model.read(cx);
         let identity = model.identity(&self.key);
-        let same_server = self.same_server(model);
-        let state = model.connection(&self.key.context);
-        let reason = match &state {
-            ConnectionState::Failed { reason } | ConnectionState::Degraded { reason } => {
-                Some(reason.clone())
-            }
-            _ => None,
-        };
-        let context = self.key.context.clone();
-        let connect = can_connect(&state);
-        let stale = matches!(state, ConnectionState::Degraded { .. });
-        let muted = cx.theme().muted_foreground;
+        let same_server = model.same_server(&self.key);
+        let connect = can_connect(&model.connection(&self.key.context));
 
         div()
             .id("cluster-tab")
@@ -323,43 +302,8 @@ impl Render for ClusterTab {
             .gap_2()
             .p_2()
             .child(div().h_1().w_full().flex_none().bg(rgb(identity.color)))
-            .child(
-                div().flex().gap_2().child(identity.name).child(
-                    div()
-                        .id("tab-state")
-                        .text_color(muted)
-                        .child(state_label(&state)),
-                ),
-            )
-            .map(|this| {
-                if !same_server {
-                    return this.child(
-                        div()
-                            .id("tab-server-changed")
-                            .child(t!("tab.server_changed").to_string())
-                            .test_support(),
-                    );
-                }
-                this.children(reason.map(|reason| div().id("tab-reason").child(reason)))
-                    .when(stale, |this| {
-                        this.child(
-                            div()
-                                .id("tab-stale")
-                                .child(t!("tab.stale").to_string())
-                                .test_support(),
-                        )
-                    })
-                    .when(connect, |this| {
-                        this.child(
-                            Button::new("tab-connect")
-                                .icon(IconName::Plug)
-                                .label(t!("cluster.connect").to_string())
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.model.read(cx).connect(&context);
-                                })),
-                        )
-                    })
-            })
+            .child(identity.name)
+            .children(connection_notes(&self.key, &self.model, cx))
             .when(same_server && !connect, |this| {
                 this.child(
                     div()
