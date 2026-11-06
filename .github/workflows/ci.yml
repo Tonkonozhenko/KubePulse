@@ -52,6 +52,39 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p kubepulse-store --release --locked --test scale -- --ignored --nocapture --test-threads=1
 
+  package:
+    name: Package (${{ matrix.os }})
+    if: github.event_name == 'push'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            formats: deb
+          - os: macos-latest
+            formats: app,dmg
+          - os: windows-latest
+            formats: nsis
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Linux system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig1-dev libfreetype-dev libwayland-dev \
+            libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-packager --locked --version 0.11.8
+      - run: cargo packager --release --formats ${{ matrix.formats }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kubepulse-${{ matrix.os }}
+          path: |
+            target/packager/*
+            !target/packager/.cargo-packager
+
   licenses:
     name: Dependency licenses
     runs-on: ubuntu-latest

@@ -3,6 +3,7 @@ name = "kubepulse"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Lightweight, native Kubernetes IDE"
 publish.workspace = true
 
 [dependencies]
@@ -22,3 +23,32 @@ kubepulse-extension-api.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+
+[package.metadata.packager]
+product-name = "KubePulse"
+identifier = "dev.kubepulse.app"
+authors = ["Alex Tonkonozhenko"]
+category = "DeveloperTool"
+before-packaging-command = "cargo build --release --locked -p kubepulse"
+out-dir = "../../target/packager"
+license-file = "../../LICENSE"
+icons = ["../../assets/logo-256.png", "../../assets/logo.ico"]
+binaries = [{ path = "kubepulse", main = true }]
+
+[package.metadata.packager.deb]
+package-name = "kubepulse"
+desktop-template = "../../assets/kubepulse.desktop"
+depends = [
+    "libc6",
+    "libgcc-s1",
+    "libxcb1",
+    "libxkbcommon0",
+    "libxkbcommon-x11-0",
+    "libwayland-client0",
+    "libwayland-egl1",
+    "libegl1",
+    "libvulkan1",
+]
+
+[package.metadata.packager.deb.files]
+"../../LICENSE" = "usr/share/doc/kubepulse/copyright"

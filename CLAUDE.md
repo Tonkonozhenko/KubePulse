@@ -24,6 +24,17 @@ python3 scripts/check-i18n.py --write    # also regenerate the en-XA pseudo-loca
 cargo deny check licenses                # check dependency licenses
 ```
 
+Packaging uses `cargo-packager`, pinned to the version in `.github/workflows/ci.yml`. Packages are written to `target/packager`:
+
+```bash
+cargo install cargo-packager --locked --version 0.11.8
+cargo packager --release --formats deb       # Linux
+cargo packager --release --formats app,dmg   # macOS
+cargo packager --release --formats nsis      # Windows
+sudo apt install ./target/packager/kubepulse_0.1.0_amd64.deb             # install on Debian or Ubuntu
+sudo apt install --reinstall ./target/packager/kubepulse_0.1.0_amd64.deb # replace a build of the same version
+```
+
 Cluster tests run in their own minikube profile, with its own kubeconfig:
 
 ```bash
