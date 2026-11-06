@@ -2,6 +2,25 @@
 
 ## MODIFIED Requirements
 
+### Requirement: View container logs
+The system SHALL show logs for any container of a pod, including init containers and the previous instance of a container, and SHALL offer the previous instance for every container without checking whether it restarted.
+
+#### Scenario: Single-container pod
+- **WHEN** the user opens logs for a pod with one container
+- **THEN** that container's logs appear
+
+#### Scenario: Multi-container pod
+- **WHEN** the user opens logs for a pod with several containers
+- **THEN** the user can choose which container to view
+
+#### Scenario: Restarted container
+- **WHEN** a container has restarted
+- **THEN** the user can view the logs of its previous instance
+
+#### Scenario: Container with no previous instance
+- **WHEN** the user asks for the previous instance of a container that has none
+- **THEN** the view shows the cluster's error, and the previous-instance control stays available so the user can turn it off
+
 ### Requirement: Follow logs live
 The system SHALL stream new log lines as they are produced, SHALL keep the newest line in view while following, SHALL start every new stream at the end and following, and SHALL offer a follow control that shows and changes whether the view is following. Pausing MUST NOT stop the stream.
 

@@ -16,10 +16,14 @@
 - [x] 2.6 Make the Timestamps toggle a checkbox, and verify `cargo test -p kubepulse-ui --test logs` passes
 - [x] 2.7 Update the stale doc comments on `scrolled` and `notice_scrolling` in `log_tab.rs`, and verify `cargo clippy --workspace --all-targets` and `cargo fmt --all --check` are clean
 
-## 3. Integration
+## 3. Previous instance
 
-- [x] 3.1 Run `cargo test --workspace` and `python3 scripts/check-crate-graph.py`, and verify both pass
-- [ ] 3.2 On the `kubepulse-e2e` minikube profile, open logs in a real window for a pod with a long quiet log and for a busy one, and confirm the view opens at the newest line, the checkbox pauses and resumes, the horizontal scrollbar and shift+wheel reach the end of a long line, the vertical scrollbar moves through the lines, and scrolling up clears the checkbox, in light, dark, and `en-XA`
+- [x] 3.1 Make Previous instance a checkbox that is always shown and always enabled, with no restart check, and verify with a test in `crates/kubepulse-ui/tests/logs.rs` and `python3 scripts/check-i18n.py`
+
+## 4. Integration
+
+- [x] 4.1 Run `cargo test --workspace` and `python3 scripts/check-crate-graph.py`, and verify both pass
+- [ ] 4.2 On the `kubepulse-e2e` minikube profile, open logs in a real window for a pod with a long quiet log and for a busy one, and confirm the view opens at the newest line, the checkbox pauses and resumes, the horizontal scrollbar and shift+wheel reach the end of a long line, the vertical scrollbar moves through the lines, Previous instance shows for each container of a multi-container pod, and scrolling up clears the checkbox, in light, dark, and `en-XA`
 
 ## Workflow follow-up
 

@@ -57,19 +57,14 @@ fn target() -> ObjectTarget {
     }
 }
 
-fn pod(containers: &[&str], restarted: &[&str]) -> Value {
+fn pod(containers: &[&str]) -> Value {
     let spec: Vec<Value> = containers
         .iter()
         .map(|name| json!({"name": name}))
         .collect();
-    let statuses: Vec<Value> = restarted
-        .iter()
-        .map(|name| json!({"name": name, "restartCount": 1}))
-        .collect();
     json!({
         "metadata": {"name": "web", "namespace": "default"},
         "spec": {"containers": spec, "initContainers": [{"name": "setup"}]},
-        "status": {"containerStatuses": statuses},
     })
 }
 
@@ -247,7 +242,7 @@ fn a_single_container_opens_directly(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn several_containers_can_be_chosen_including_init_containers(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app", "sidecar"], &[]));
+    let (fixture, cx) = setup(cx, pod(&["app", "sidecar"]));
     open(&fixture, cx);
 
     click("log-container-sidecar", cx);
@@ -261,22 +256,23 @@ fn several_containers_can_be_chosen_including_init_containers(cx: &mut TestAppCo
 }
 
 #[gpui_kit::test]
-fn a_restarted_container_offers_its_previous_instance(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app", "sidecar"], &["app"]));
+fn every_container_offers_its_previous_instance(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app", "sidecar"]));
     open(&fixture, cx);
-    assert!(exists("log-previous", cx));
 
     click("log-previous", cx);
     assert!(requests(&fixture).last().unwrap().previous);
 
     click("log-container-sidecar", cx);
     assert!(!requests(&fixture).last().unwrap().previous);
-    assert!(!exists("log-previous", cx), "this one never restarted");
+
+    click("log-previous", cx);
+    assert!(requests(&fixture).last().unwrap().previous);
 }
 
 #[gpui_kit::test]
 fn the_view_follows_new_lines_until_the_user_scrolls_up(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let (fixture, cx) = setup(cx, pod(&["app"]));
     let tab = open(&fixture, cx);
 
     send(&fixture, numbered(0..500), cx);
@@ -301,7 +297,7 @@ fn the_view_follows_new_lines_until_the_user_scrolls_up(cx: &mut TestAppContext)
 
 #[gpui_kit::test]
 fn the_newest_line_stays_in_view_when_a_quiet_view_gets_shorter(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let (fixture, cx) = setup(cx, pod(&["app"]));
     let tab = open(&fixture, cx);
     send(&fixture, numbered(0..500), cx);
     assert!(exists("log-line-499", cx));
@@ -315,7 +311,7 @@ fn the_newest_line_stays_in_view_when_a_quiet_view_gets_shorter(cx: &mut TestApp
 
 #[gpui_kit::test]
 fn the_follow_checkbox_pauses_and_resumes_while_the_stream_continues(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let (fixture, cx) = setup(cx, pod(&["app"]));
     let tab = open(&fixture, cx);
     send(&fixture, numbered(0..500), cx);
 
@@ -333,7 +329,7 @@ fn the_follow_checkbox_pauses_and_resumes_while_the_stream_continues(cx: &mut Te
 
 #[gpui_kit::test]
 fn moving_to_a_search_match_pauses_following(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let (fixture, cx) = setup(cx, pod(&["app"]));
     let tab = open(&fixture, cx);
     send(&fixture, numbered(0..500), cx);
 
@@ -346,7 +342,7 @@ fn moving_to_a_search_match_pauses_following(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn a_new_stream_starts_following_even_after_pausing(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app", "sidecar"], &[]));
+    let (fixture, cx) = setup(cx, pod(&["app", "sidecar"]));
     let tab = open(&fixture, cx);
     send(&fixture, numbered(0..500), cx);
     click("log-follow", cx);
@@ -360,7 +356,7 @@ fn a_new_stream_starts_following_even_after_pausing(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn a_wide_line_far_from_the_first_row_can_be_reached(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let (fixture, cx) = setup(cx, pod(&["app"]));
     let tab = open(&fixture, cx);
     let mut lines = numbered(0..500);
     lines[300] = "x".repeat(2000);
@@ -374,7 +370,7 @@ fn a_wide_line_far_from_the_first_row_can_be_reached(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn the_sideways_range_shrinks_when_the_widest_line_is_dropped(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let (fixture, cx) = setup(cx, pod(&["app"]));
     *fixture.services.log_limits.lock().unwrap() = Some((400, usize::MAX));
     let tab = open(&fixture, cx);
     let mut lines = numbered(0..300);
@@ -393,7 +389,7 @@ fn the_sideways_range_shrinks_when_the_widest_line_is_dropped(cx: &mut TestAppCo
 
 #[gpui_kit::test]
 fn scrolling_sideways_keeps_following_and_keeps_its_position(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let (fixture, cx) = setup(cx, pod(&["app"]));
     let tab = open(&fixture, cx);
     let mut lines = numbered(0..500);
     lines[0] = "x".repeat(2000);
@@ -410,7 +406,7 @@ fn scrolling_sideways_keeps_following_and_keeps_its_position(cx: &mut TestAppCon
 
 #[gpui_kit::test]
 fn lines_that_fit_do_not_scroll_sideways(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let (fixture, cx) = setup(cx, pod(&["app"]));
     let tab = open(&fixture, cx);
     send(&fixture, numbered(0..500), cx);
 
@@ -421,7 +417,7 @@ fn lines_that_fit_do_not_scroll_sideways(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn moving_the_vertical_scrollbar_up_pauses_following(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let (fixture, cx) = setup(cx, pod(&["app"]));
     let tab = open(&fixture, cx);
     send(&fixture, numbered(0..500), cx);
     assert!(following(&tab, cx));
@@ -437,7 +433,7 @@ fn moving_the_vertical_scrollbar_up_pauses_following(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn dropped_lines_are_reported_and_the_reader_keeps_their_place(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let (fixture, cx) = setup(cx, pod(&["app"]));
     *fixture.services.log_limits.lock().unwrap() = Some((400, usize::MAX));
     let tab = open(&fixture, cx);
     send(&fixture, numbered(0..400), cx);
@@ -463,7 +459,7 @@ fn dropped_lines_are_reported_and_the_reader_keeps_their_place(cx: &mut TestAppC
 
 #[gpui_kit::test]
 fn a_high_volume_stream_keeps_the_interface_bounded(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let (fixture, cx) = setup(cx, pod(&["app"]));
     let tab = open(&fixture, cx);
 
     // A second of output at 10,000 lines per second, one frame at a time.
@@ -480,7 +476,7 @@ fn a_high_volume_stream_keeps_the_interface_bounded(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn search_finds_retained_lines_and_steps_through_them(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let (fixture, cx) = setup(cx, pod(&["app"]));
     let tab = open(&fixture, cx);
     let lines = vec![
         "2026-01-01T00:00:00Z ok".to_owned(),
@@ -505,7 +501,7 @@ fn search_finds_retained_lines_and_steps_through_them(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn search_follows_lines_arriving_while_it_is_active(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let (fixture, cx) = setup(cx, pod(&["app"]));
     *fixture.services.log_limits.lock().unwrap() = Some((3, usize::MAX));
     let tab = open(&fixture, cx);
     send(&fixture, ["2026-01-01T00:00:00Z error old".to_owned()], cx);
@@ -526,7 +522,7 @@ fn search_follows_lines_arriving_while_it_is_active(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn an_interruption_is_shown_and_then_counted(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let (fixture, cx) = setup(cx, pod(&["app"]));
     open(&fixture, cx);
     set_state(&fixture, LogState::Streaming, cx);
 
@@ -540,7 +536,7 @@ fn an_interruption_is_shown_and_then_counted(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn a_failed_stream_shows_why_and_can_be_retried(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let (fixture, cx) = setup(cx, pod(&["app"]));
     open(&fixture, cx);
 
     set_state(&fixture, LogState::Failed("waiting to start".into()), cx);
@@ -552,7 +548,7 @@ fn a_failed_stream_shows_why_and_can_be_retried(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn disconnecting_releases_the_lines_and_connecting_restarts_the_stream(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let (fixture, cx) = setup(cx, pod(&["app"]));
     let tab = open(&fixture, cx);
     send(&fixture, numbered(0..3), cx);
 
@@ -570,7 +566,7 @@ fn disconnecting_releases_the_lines_and_connecting_restarts_the_stream(cx: &mut 
 
 #[gpui_kit::test]
 fn a_degraded_cluster_keeps_the_lines_and_marks_them_stale(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let (fixture, cx) = setup(cx, pod(&["app"]));
     let tab = open(&fixture, cx);
     send(&fixture, numbered(0..3), cx);
 
@@ -595,7 +591,7 @@ fn repointed() -> ClusterStatus {
 
 #[gpui_kit::test]
 fn a_context_moved_to_another_server_stops_the_stream_and_is_not_selected(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let (fixture, cx) = setup(cx, pod(&["app"]));
     let tab = open(&fixture, cx);
     send(&fixture, numbered(0..3), cx);
 
@@ -625,7 +621,7 @@ fn a_context_moved_to_another_server_stops_the_stream_and_is_not_selected(cx: &m
 
 #[gpui_kit::test]
 fn clicking_the_tab_selects_its_cluster(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let (fixture, cx) = setup(cx, pod(&["app"]));
     open(&fixture, cx);
     cx.update(|_, cx| {
         fixture.shell.update(cx, |shell, cx| {
@@ -643,7 +639,7 @@ fn clicking_the_tab_selects_its_cluster(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn opening_a_pods_logs_twice_shares_a_tab(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let (fixture, cx) = setup(cx, pod(&["app"]));
     let first = open(&fixture, cx);
     let second = open(&fixture, cx);
     assert_eq!(first.entity_id(), second.entity_id());
@@ -652,7 +648,7 @@ fn opening_a_pods_logs_twice_shares_a_tab(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn a_context_with_no_such_container_says_so(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let (fixture, cx) = setup(cx, pod(&["app"]));
     cx.update(|window, cx| {
         fixture.workspace.update(cx, |workspace, cx| {
             workspace.open_logs(key(), target(), Some("gone".into()), window, cx);
@@ -664,7 +660,7 @@ fn a_context_with_no_such_container_says_so(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn closing_the_tab_stops_the_stream_and_leaves_the_cluster_connected(cx: &mut TestAppContext) {
-    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let (fixture, cx) = setup(cx, pod(&["app"]));
     let tab = open(&fixture, cx);
     let id = tab.entity_id();
 

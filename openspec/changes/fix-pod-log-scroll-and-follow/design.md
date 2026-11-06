@@ -65,11 +65,13 @@ The strip is always present, so the viewport height does not change when the fir
 
 The vertical scrollbar uses the same arrangement, in a strip to the right of the list, so it never covers the end of a line. The horizontal strip stops short of the vertical one, so each bar's length matches the list's.
 
-### Checkboxes for Follow and Timestamps
+### Checkboxes for Follow, Timestamps, and Previous instance
 
 A `Checkbox` with id `log-follow` sits after the Timestamps button, bound to `following`. Its handler sets `following`, and the next render pins to the end when it is on. `jump_to_newest` and the `log-jump` button go away, along with `log.jump`, because the checkbox covers the same action in a position that does not move.
 
-The Timestamps toggle becomes a `Checkbox` with the same id, so the two toolbar options look alike.
+The Timestamps and Previous instance toggles become checkboxes with the same ids, so the toolbar options look alike.
+
+Previous instance is always shown and always enabled, with no check of the restart count. Hiding it made it vanish in pods with several containers, where the first container is selected by default and another may be the one that restarted. Disabling it by restart count was the alternative, but that count is a second source of truth about what the cluster holds. For a container with no previous instance, the cluster answers with an error, and the view shows that error as received.
 
 `start_stream` keeps setting `following` to true, so a new container, instance, retry, or reconnect starts at the end. `keep_place` still holds the reader's lines while paused.
 

@@ -455,11 +455,6 @@ impl LogTab {
         self.start_stream(window, cx);
     }
 
-    fn toggle_previous(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.previous = !self.previous;
-        self.start_stream(window, cx);
-    }
-
     /// A tab holds no connection. Its stream and lines go with the cluster's
     /// session, and come back once the user connects it.
     fn sync_with_connection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -617,15 +612,6 @@ impl LogTab {
         })
     }
 
-    fn restarted(&self) -> bool {
-        let Containers::Loaded(containers) = &self.containers else {
-            return false;
-        };
-        containers
-            .iter()
-            .any(|c| Some(&c.name) == self.selected.as_ref() && c.restarted)
-    }
-
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let count = self.matches.len();
         let position = self.current_match.map_or(0, |index| index + 1);
@@ -655,14 +641,15 @@ impl LogTab {
                         cx.notify();
                     })),
             )
-            .when(self.restarted(), |this| {
+            .when(self.selected.is_some(), |this| {
                 this.child(
-                    Button::new("log-previous")
+                    Checkbox::new("log-previous")
                         .label(t!("log.previous").to_string())
                         .small()
-                        .selected(self.previous)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.toggle_previous(window, cx);
+                        .checked(self.previous)
+                        .on_click(cx.listener(|this, checked: &bool, window, cx| {
+                            this.previous = *checked;
+                            this.start_stream(window, cx);
                         })),
                 )
             })

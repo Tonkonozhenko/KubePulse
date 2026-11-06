@@ -263,42 +263,24 @@ pub enum ContainerKind {
 pub struct ContainerInfo {
     pub name: String,
     pub kind: ContainerKind,
-    /// Whether an earlier instance may have left logs.
-    pub restarted: bool,
 }
 
 /// The containers of a pod object, with regular containers first.
 pub fn pod_containers(pod: &Value) -> Vec<ContainerInfo> {
-    let restarts = |statuses: &str, name: &str| {
-        pod["status"][statuses].as_array().is_some_and(|statuses| {
-            statuses.iter().any(|status| {
-                status["name"] == name && status["restartCount"].as_i64().unwrap_or(0) > 0
-            })
-        })
-    };
     let listed = [
-        ("containers", "containerStatuses", ContainerKind::Regular),
-        (
-            "initContainers",
-            "initContainerStatuses",
-            ContainerKind::Init,
-        ),
-        (
-            "ephemeralContainers",
-            "ephemeralContainerStatuses",
-            ContainerKind::Ephemeral,
-        ),
+        ("containers", ContainerKind::Regular),
+        ("initContainers", ContainerKind::Init),
+        ("ephemeralContainers", ContainerKind::Ephemeral),
     ];
     listed
         .into_iter()
-        .flat_map(|(field, statuses, kind)| {
+        .flat_map(|(field, kind)| {
             let containers = pod["spec"][field].as_array().into_iter().flatten();
             containers.filter_map(move |container| {
                 let name = container["name"].as_str()?;
                 Some(ContainerInfo {
                     name: name.to_owned(),
                     kind,
-                    restarted: restarts(statuses, name),
                 })
             })
         })
@@ -578,17 +560,11 @@ mod tests {
     }
 
     #[test]
-    fn containers_are_listed_with_their_kind_and_restarts() {
+    fn containers_are_listed_with_their_kind() {
         let pod = json!({
             "spec": {
                 "containers": [{"name": "web"}, {"name": "sidecar"}],
                 "initContainers": [{"name": "setup"}],
-            },
-            "status": {
-                "containerStatuses": [
-                    {"name": "web", "restartCount": 2},
-                    {"name": "sidecar", "restartCount": 0},
-                ],
             },
         });
 
@@ -596,14 +572,14 @@ mod tests {
 
         let summary: Vec<_> = containers
             .iter()
-            .map(|c| (c.name.as_str(), c.kind, c.restarted))
+            .map(|c| (c.name.as_str(), c.kind))
             .collect();
         assert_eq!(
             summary,
             [
-                ("web", ContainerKind::Regular, true),
-                ("sidecar", ContainerKind::Regular, false),
-                ("setup", ContainerKind::Init, false),
+                ("web", ContainerKind::Regular),
+                ("sidecar", ContainerKind::Regular),
+                ("setup", ContainerKind::Init),
             ]
         );
     }

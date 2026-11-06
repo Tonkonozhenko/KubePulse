@@ -8,7 +8,8 @@ Lines wider than the log view are cut off at its right edge, and nothing can bri
 
 - Let the log view scroll sideways by wheel, trackpad, and a horizontal scrollbar, across the width of the widest retained line.
 - Add a vertical scrollbar to the log view, so the user can move through retained lines by dragging.
-- Make the Timestamps toggle a checkbox, matching Follow.
+- Make the Timestamps and Previous instance toggles checkboxes, matching Follow.
+- Always show Previous instance and keep it enabled for every container, without checking whether it restarted, so a pod with several containers does not hide it. A container with no previous instance shows the cluster's error.
 - Keep the newest line in view for as long as the view is following, including after opening and after the view changes size, and not only when lines arrive.
 - Add a Follow checkbox to the log toolbar. Turning it off pauses following while the stream continues. Turning it on returns to the newest line and follows again.
 - Keep scrolling up and moving to a search match as ways to pause, and show that in the checkbox.
@@ -29,7 +30,7 @@ None.
 
 ### Modified Capabilities
 
-- `pod/log`: following gains an explicit control and keeps the newest line in view at all times, long lines become reachable by scrolling sideways, and the view gains a vertical scrollbar. This capability is still defined in the in-flight `define-app-architecture` change.
+- `pod/log`: following gains an explicit control and keeps the newest line in view at all times, long lines become reachable by scrolling sideways, the view gains a vertical scrollbar, and viewing a previous instance is always offered. This capability is still defined in the in-flight `define-app-architecture` change.
 
 ## Impact
 
