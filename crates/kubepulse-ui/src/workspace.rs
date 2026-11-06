@@ -6,34 +6,40 @@ use std::{path::PathBuf, sync::Arc};
 use gpui_kit::{
     base::dock::PanelView,
     component::{
-        ActiveTheme as _,
+        ActiveTheme as _, WindowExt as _,
+        command::{Command, CommandState},
         dock::{
             DockArea, DockEvent, DockLayout, DockPlacement, DockSkin, InsertTarget, NodeId,
             PaneRef, PanelId, panel_handle,
         },
+        notification::Notification,
     },
     prelude::FluentBuilder as _,
     *,
 };
 use kubepulse_cluster::ResourceKind;
+use kubepulse_extension_api::ExtensionRequest;
 
 use rust_i18n::t;
 
 use crate::{
     cluster_model::{ClusterModel, ClusterModelEvent},
-    cluster_rail::ClusterRail,
+    cluster_rail::{ClusterRail, request_disconnect},
     cluster_tab::ClusterTab,
     columns::kind_ref,
+    command_palette::{OpenCommandPalette, PaletteAction, palette_groups},
     identity::ClusterKey,
     kind_sidebar::{KindSidebar, KindSidebarEvent},
     persistence::{ConfigPaths, write_atomic},
     preferences::{PreferencesEvent, PreferencesModel, SharedPreferences},
+    services::SharedServices,
     settings_tab::{OpenSettings, SettingsTab},
     shell_state::{Placement, SharedShellState, ShellEvent, ShellState, place_kind},
     theme::{self, SharedThemes, ThemeCatalog},
 };
 
 const DOCK_ID: &str = "workspace";
+const PALETTE_WIDTH: f32 = 560.;
 
 pub struct Workspace {
     model: Entity<ClusterModel>,
@@ -104,22 +110,8 @@ impl Workspace {
                 this.apply_theme(window, cx);
             }),
         ];
-        // An application action, because a shortcut must work with nothing in
-        // the workspace focused.
-        let workspace = cx.weak_entity();
-        let handle = window.window_handle();
-        App::on_action(cx, move |_: &OpenSettings, cx| {
-            let workspace = workspace.clone();
-            // The window is busy dispatching this action until it returns.
-            cx.defer(move |cx| {
-                let opened = handle.update(cx, |_, window, cx| {
-                    workspace.update(cx, |workspace, cx| workspace.open_settings(window, cx))
-                });
-                if let Err(error) = opened.and_then(|result| result) {
-                    tracing::warn!(%error, "could not open settings");
-                }
-            });
-        });
+        on_shortcut::<OpenSettings>(Self::open_settings, window, cx);
+        on_shortcut::<OpenCommandPalette>(Self::open_command_palette, window, cx);
         Self {
             model,
             shell,
@@ -236,6 +228,86 @@ impl Workspace {
         self.add_to_dock(panel_handle(tab), window, cx);
     }
 
+    /// Lists what the application offers at this moment. A dialog on screen
+    /// keeps the keyboard, so the palette does not open over it.
+    pub fn open_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if window.has_active_dialog(cx) {
+            return;
+        }
+        let contributions = cx.global::<SharedServices>().0.contributions();
+        let selected = self.shell.read(cx).selected();
+        let groups = palette_groups(self.model.read(cx), selected, &contributions);
+        let state = cx.new(|cx| CommandState::new(window, cx));
+        let palette = state.clone();
+        let workspace = cx.weak_entity();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let (chosen, workspace) = (groups.clone(), workspace.clone());
+            let command = Command::new(&palette)
+                .placeholder(t!("palette.search").to_string())
+                .empty(|_, _, _| t!("palette.no_matches").to_string())
+                .bordered(false)
+                .on_confirm(move |index, window, cx| {
+                    let action = chosen[index.section].entries[index.row].action.clone();
+                    window.close_dialog(cx);
+                    let ran = workspace.update(cx, |workspace, cx| {
+                        workspace.run_palette_action(action, window, cx);
+                    });
+                    if let Err(error) = ran {
+                        tracing::warn!(%error, "could not run a palette entry");
+                    }
+                });
+            let command = groups.iter().fold(command, |command, group| {
+                command.group(group.command_group())
+            });
+            dialog
+                .close_button(false)
+                .w(px(PALETTE_WIDTH))
+                .child(div().id("command-palette").child(command).test_support())
+        });
+        state.update(cx, |state, cx| state.focus(window, cx));
+    }
+
+    fn run_palette_action(
+        &mut self,
+        action: PaletteAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match action {
+            PaletteAction::OpenKind { key, kind } => {
+                self.show_kind(key, kind, false, window, cx);
+            }
+            PaletteAction::RunCommand { extension, command } => {
+                let request = ExtensionRequest::RunCommand { command };
+                let reply = cx
+                    .global::<SharedServices>()
+                    .0
+                    .extension(&extension, request);
+                cx.spawn_in(window, async move |_, cx| {
+                    if let Err(error) = reply.await {
+                        let message = t!("palette.command_failed", error = error).to_string();
+                        tracing::warn!(%extension, %error, "a palette command failed");
+                        // The window can close while the command runs.
+                        let _ = cx.update(|window, cx| {
+                            window.push_notification(Notification::error(message), cx);
+                        });
+                    }
+                })
+                .detach();
+            }
+            PaletteAction::Connect(context) => {
+                let model = self.model.read(cx);
+                model.connect(&context);
+                let key = model.key(&context);
+                self.shell.update(cx, |shell, cx| shell.select(key, cx));
+            }
+            PaletteAction::Disconnect(context) => {
+                request_disconnect(&self.model, &context, window, cx);
+            }
+            PaletteAction::OpenSettings => self.open_settings(window, cx),
+        }
+    }
+
     /// Opens a new tab bound to this cluster. It does not connect.
     pub fn open_tab(
         &mut self,
@@ -309,6 +381,29 @@ impl Workspace {
         cx.spawn(async move |_, cx| save_in_background(path, json, cx))
             .detach();
     }
+}
+
+/// An application action, because a shortcut must work with nothing in the
+/// workspace focused.
+fn on_shortcut<A: Action>(
+    run: fn(&mut Workspace, &mut Window, &mut Context<Workspace>),
+    window: &Window,
+    cx: &mut Context<Workspace>,
+) {
+    let workspace = cx.weak_entity();
+    let handle = window.window_handle();
+    App::on_action(cx, move |_: &A, cx| {
+        let workspace = workspace.clone();
+        // The window is busy dispatching this action until it returns.
+        cx.defer(move |cx| {
+            let ran = handle.update(cx, |_, window, cx| {
+                workspace.update(cx, |workspace, cx| run(workspace, window, cx))
+            });
+            if let Err(error) = ran.and_then(|result| result) {
+                tracing::warn!(%error, "could not run a shortcut");
+            }
+        });
+    });
 }
 
 fn save_in_background(path: PathBuf, json: serde_json::Result<String>, cx: &AsyncApp) {

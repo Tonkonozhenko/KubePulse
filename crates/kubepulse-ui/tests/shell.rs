@@ -9,10 +9,13 @@ use gpui_kit::{
     test::TestWindowExt as _,
 };
 use kubepulse_cluster::{ClusterEntry, ConnectionState, FileError, ResourceKind, SessionOptions};
+use kubepulse_extension_api::{CommandContribution, Contributions, ExtensionRequest};
+use kubepulse_extension_host::ContributionSet;
 use kubepulse_store::synthetic::pod_kind;
 use kubepulse_ui::{
     cluster_model::ClusterModel,
     cluster_tab::ClusterTab,
+    command_palette,
     identity::{ClusterKey, IdentityStore},
     persistence::ConfigPaths,
     preferences::{Appearance, Preferences, SharedPreferences},
@@ -22,7 +25,7 @@ use kubepulse_ui::{
     shell_state::{SharedShellState, ShellState},
     workspace::Workspace,
 };
-use support::{FakeServices, kind};
+use support::{FakeServices, ScriptedSource, kind};
 use tokio::sync::{mpsc, watch};
 
 struct Harness {
@@ -83,6 +86,7 @@ fn harness(cx: &mut TestAppContext, statuses: Vec<ClusterStatus>) -> Harness {
     let (model, shell) = cx.update(|cx| {
         gpui_kit::init(cx);
         cx.set_reduce_motion(true);
+        command_palette::init(cx);
         cx.set_global(SharedServices(Arc::new(FakeServices::idle())));
         let model = cx.new(|cx| ClusterModel::new(receiver, sender, IdentityStore::default(), cx));
         let shell = cx.new(|_| ShellState::default());
@@ -1292,6 +1296,7 @@ fn the_ui_stays_responsive_while_a_cluster_stalls(cx: &mut TestAppContext) {
 
     let model = cx.update(|cx| {
         gpui_kit::init(cx);
+        command_palette::init(cx);
         cx.set_global(SharedServices(Arc::new(FakeServices::idle())));
         let receiver = runtime.state();
         let model =
@@ -1419,4 +1424,168 @@ fn a_preference_change_is_saved_once_and_read_back(cx: &mut TestAppContext) {
     let saved = fs::read_to_string(&config.preferences).unwrap();
     let saved = Preferences::from_json(&saved).unwrap();
     assert_eq!(saved.appearance, Appearance::Dark);
+}
+
+fn open_palette(text: &str, cx: &mut VisualTestContext) {
+    cx.simulate_keystrokes(command_palette::PALETTE_SHORTCUT);
+    cx.run_until_parked();
+    assert!(exists("command-palette", cx), "the shortcut opens it");
+    cx.simulate_input(text);
+    cx.run_until_parked();
+}
+
+fn confirm_palette(cx: &mut VisualTestContext) {
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(!exists("command-palette", cx), "confirming closes it");
+}
+
+/// Services whose one extension contributes one palette command.
+fn with_command(cx: &mut TestAppContext) -> Arc<FakeServices> {
+    let command = CommandContribution {
+        id: "hello".into(),
+        title: "Say hello".into(),
+    };
+    let contributions = Contributions {
+        commands: vec![command],
+        ..Contributions::default()
+    };
+    let set = ContributionSet {
+        extensions: vec![("example.hello".into(), contributions)],
+        ..ContributionSet::default()
+    };
+    let services = Arc::new(FakeServices::new(Arc::new(ScriptedSource::default()), set));
+    let global = services.clone();
+    cx.update(|cx| cx.set_global(SharedServices(global)));
+    services
+}
+
+#[gpui_kit::test]
+fn the_palette_opens_a_kind_using_only_the_keyboard(cx: &mut TestAppContext) {
+    let mut harness = harness(cx, vec![serving("a", kinds())]);
+    let (workspace, cx) = window(cx, &harness.model, None);
+
+    open_palette("servi", cx);
+    confirm_palette(cx);
+
+    assert_eq!(
+        tab_states(&workspace, cx),
+        vec![tab_state("a", "Service", false)]
+    );
+    assert_eq!(selected(&harness, cx), Some(key("a")));
+    no_commands(&mut harness);
+}
+
+#[gpui_kit::test]
+fn the_palette_lists_the_selected_cluster_first(cx: &mut TestAppContext) {
+    let harness = harness(cx, vec![serving("a", kinds()), serving("b", kinds())]);
+    let (workspace, cx) = window(cx, &harness.model, None);
+    select(&harness, "b", cx);
+
+    open_palette("secret", cx);
+    confirm_palette(cx);
+
+    assert_eq!(
+        tab_states(&workspace, cx),
+        vec![tab_state("b", "Secret", false)]
+    );
+}
+
+#[gpui_kit::test]
+fn the_palette_reaches_a_kind_on_another_cluster_with_the_arrow_keys(cx: &mut TestAppContext) {
+    let harness = harness(cx, vec![serving("a", kinds()), serving("b", kinds())]);
+    let (workspace, cx) = window(cx, &harness.model, None);
+    select(&harness, "a", cx);
+
+    open_palette("secret", cx);
+    cx.simulate_keystrokes("down");
+    confirm_palette(cx);
+
+    assert_eq!(
+        tab_states(&workspace, cx),
+        vec![tab_state("b", "Secret", false)]
+    );
+}
+
+#[gpui_kit::test]
+fn the_palette_lists_no_kinds_of_a_disconnected_cluster_and_can_connect_it(
+    cx: &mut TestAppContext,
+) {
+    let mut harness = harness(cx, vec![status("a", ConnectionState::Disconnected, &[])]);
+    let (workspace, cx) = window(cx, &harness.model, None);
+
+    open_palette("connect", cx);
+    no_commands(&mut harness);
+    confirm_palette(cx);
+
+    assert_eq!(
+        harness.commands.try_recv(),
+        Ok(ClusterCommand::Connect("a".into()))
+    );
+    assert_eq!(selected(&harness, cx), Some(key("a")));
+    assert!(open_tabs(&workspace, cx).is_empty());
+}
+
+#[gpui_kit::test]
+fn disconnecting_from_the_palette_warns_about_active_work(cx: &mut TestAppContext) {
+    let mut busy = serving("a", kinds());
+    busy.active_work = vec!["shell in pod web".into()];
+    let mut harness = harness(cx, vec![busy]);
+    let (_workspace, cx) = window(cx, &harness.model, None);
+
+    open_palette("disconnect", cx);
+    confirm_palette(cx);
+
+    assert!(exists("disconnect-warning", cx));
+    no_commands(&mut harness);
+}
+
+#[gpui_kit::test]
+fn the_palette_runs_an_extension_command(cx: &mut TestAppContext) {
+    let harness = harness(cx, vec![]);
+    let services = with_command(cx);
+    let (_workspace, cx) = window(cx, &harness.model, None);
+
+    open_palette("say hello", cx);
+    confirm_palette(cx);
+
+    assert_eq!(
+        *services.requests.lock().unwrap(),
+        vec![(
+            "example.hello".to_owned(),
+            ExtensionRequest::RunCommand {
+                command: "hello".into()
+            }
+        )]
+    );
+}
+
+#[gpui_kit::test]
+fn escape_closes_the_palette_and_runs_nothing(cx: &mut TestAppContext) {
+    let mut harness = harness(cx, vec![serving("a", kinds())]);
+    let (workspace, cx) = window(cx, &harness.model, None);
+
+    open_palette("", cx);
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+
+    assert!(!exists("command-palette", cx));
+    assert!(open_tabs(&workspace, cx).is_empty());
+    no_commands(&mut harness);
+}
+
+#[gpui_kit::test]
+fn the_palette_does_not_open_over_another_dialog(cx: &mut TestAppContext) {
+    let mut busy = serving("a", kinds());
+    busy.active_work = vec!["shell in pod web".into()];
+    let harness = harness(cx, vec![busy]);
+    let (_workspace, cx) = window(cx, &harness.model, None);
+    open_palette("disconnect", cx);
+    confirm_palette(cx);
+
+    cx.simulate_keystrokes(command_palette::PALETTE_SHORTCUT);
+    cx.run_until_parked();
+
+    assert!(exists("disconnect-warning", cx));
+    assert!(!exists("command-palette", cx));
 }

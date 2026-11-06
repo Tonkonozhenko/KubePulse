@@ -10,6 +10,7 @@ pub mod cluster_rail;
 pub mod cluster_settings;
 pub mod cluster_tab;
 pub mod columns;
+pub mod command_palette;
 pub mod declarative;
 pub mod detail;
 pub mod icons;

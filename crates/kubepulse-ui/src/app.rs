@@ -9,6 +9,7 @@ use kubepulse_extension_host::{ExtensionHost, HostOptions};
 
 use crate::{
     cluster_model::ClusterModel,
+    command_palette,
     identity::IdentityStore,
     language,
     persistence::{ConfigPaths, read_or_default},
@@ -81,6 +82,7 @@ pub fn run_with(options: RunOptions) {
         .with_assets(AllAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            command_palette::init(cx);
             cx.set_global(SharedServices(services.clone()));
 
             let (state, commands) = (runtime.state(), runtime.commands());

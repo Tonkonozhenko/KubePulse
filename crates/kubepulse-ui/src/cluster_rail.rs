@@ -44,6 +44,61 @@ pub fn matching(names: &[String], query: &str) -> Vec<usize> {
         .collect()
 }
 
+/// Disconnects, warning first if that would stop active work.
+pub fn request_disconnect(
+    model: &Entity<ClusterModel>,
+    context: &str,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let cluster = model.read(cx);
+    let work = cluster
+        .status(context)
+        .map(|status| status.active_work.clone())
+        .unwrap_or_default();
+    if work.is_empty() {
+        cluster.disconnect(context);
+        return;
+    }
+    let context = context.to_owned();
+    let model = model.clone();
+    window.open_dialog(cx, move |dialog, _, _| {
+        let confirm_context = context.clone();
+        let confirm_model = model.clone();
+        dialog
+            .title(t!("rail.disconnect_title", context = context).to_string())
+            .child(
+                div()
+                    .id("disconnect-warning")
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(t!("rail.disconnect_warning").to_string())
+                    .children(work.iter().map(|item| div().child(item.clone())))
+                    .test_support(),
+            )
+            .footer(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        Button::new("disconnect-cancel")
+                            .label(t!("common.cancel").to_string())
+                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                    )
+                    .child(
+                        Button::new("disconnect-confirm")
+                            .icon(IconName::Unplug)
+                            .label(t!("cluster.disconnect").to_string())
+                            .on_click(move |_, window, cx| {
+                                confirm_model.read(cx).disconnect(&confirm_context);
+                                window.close_dialog(cx);
+                            }),
+                    ),
+            )
+    });
+}
+
 /// Live clusters first, each set in kubeconfig order. A failed attempt stays in
 /// the lower set, so an icon moves only when a connection succeeds.
 pub fn rail_order(clusters: &[ClusterStatus]) -> Vec<usize> {
@@ -274,55 +329,6 @@ impl ClusterRail {
         cx.notify();
     }
 
-    fn request_disconnect(&self, context: &str, window: &mut Window, cx: &mut App) {
-        let model = self.model.read(cx);
-        let work = model
-            .status(context)
-            .map(|status| status.active_work.clone())
-            .unwrap_or_default();
-        if work.is_empty() {
-            model.disconnect(context);
-            return;
-        }
-        let context = context.to_owned();
-        let model = self.model.clone();
-        window.open_dialog(cx, move |dialog, _, _| {
-            let confirm_context = context.clone();
-            let confirm_model = model.clone();
-            dialog
-                .title(t!("rail.disconnect_title", context = context).to_string())
-                .child(
-                    div()
-                        .id("disconnect-warning")
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(t!("rail.disconnect_warning").to_string())
-                        .children(work.iter().map(|item| div().child(item.clone())))
-                        .test_support(),
-                )
-                .footer(
-                    div()
-                        .flex()
-                        .gap_2()
-                        .child(
-                            Button::new("disconnect-cancel")
-                                .label(t!("common.cancel").to_string())
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
-                        )
-                        .child(
-                            Button::new("disconnect-confirm")
-                                .icon(IconName::Unplug)
-                                .label(t!("cluster.disconnect").to_string())
-                                .on_click(move |_, window, cx| {
-                                    confirm_model.read(cx).disconnect(&confirm_context);
-                                    window.close_dialog(cx);
-                                }),
-                        ),
-                )
-        });
-    }
-
     fn open_settings(&self, key: ClusterKey, window: &mut Window, cx: &mut App) {
         let model = self.model.clone();
         let name = model.read(cx).identity(&key).name;
@@ -490,7 +496,7 @@ impl ClusterRail {
             MenuAction::Connect => self.model.read(cx).connect(context),
             // Disconnecting cancels an attempt in progress.
             MenuAction::Cancel => self.model.read(cx).disconnect(context),
-            MenuAction::Disconnect => self.request_disconnect(context, window, cx),
+            MenuAction::Disconnect => request_disconnect(&self.model, context, window, cx),
             MenuAction::Settings => {
                 let key = self.model.read(cx).key(context);
                 self.open_settings(key, window, cx);

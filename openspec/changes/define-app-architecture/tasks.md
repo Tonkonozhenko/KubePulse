@@ -71,7 +71,7 @@ Stop after this group if any target is missed, and revisit the design before sta
 
 ## 8. Command palette
 
-- [ ] 8.1 Implement the command palette, including extension commands, and verify opening a kind works using only the keyboard
+- [x] 8.1 Implement the command palette, including extension commands, and verify opening a kind works using only the keyboard
 
 ## 9. Manifest editing
 
