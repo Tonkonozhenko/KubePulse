@@ -420,6 +420,22 @@ fn lines_that_fit_do_not_scroll_sideways(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn moving_the_vertical_scrollbar_up_pauses_following(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let tab = open(&fixture, cx);
+    send(&fixture, numbered(0..500), cx);
+    assert!(following(&tab, cx));
+
+    cx.update(|window, cx| {
+        window.click_at("log-vertical-scrollbar", point(px(8.), px(8.)), cx);
+    });
+    settle(cx);
+
+    assert!(!following(&tab, cx));
+    assert!(!exists("log-line-499", cx), "the view moved up");
+}
+
+#[gpui_kit::test]
 fn dropped_lines_are_reported_and_the_reader_keeps_their_place(cx: &mut TestAppContext) {
     let (fixture, cx) = setup(cx, pod(&["app"], &[]));
     *fixture.services.log_limits.lock().unwrap() = Some((400, usize::MAX));

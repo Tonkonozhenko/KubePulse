@@ -7,6 +7,8 @@ Lines wider than the log view are cut off at its right edge, and nothing can bri
 ## What Changes
 
 - Let the log view scroll sideways by wheel, trackpad, and a horizontal scrollbar, across the width of the widest retained line.
+- Add a vertical scrollbar to the log view, so the user can move through retained lines by dragging.
+- Make the Timestamps toggle a checkbox, matching Follow.
 - Keep the newest line in view for as long as the view is following, including after opening and after the view changes size, and not only when lines arrive.
 - Add a Follow checkbox to the log toolbar. Turning it off pauses following while the stream continues. Turning it on returns to the newest line and follows again.
 - Keep scrolling up and moving to a search match as ways to pause, and show that in the checkbox.
@@ -17,7 +19,6 @@ Lines wider than the log view are cut off at its right edge, and nothing can bri
 - Wrapping long lines.
 - Scrolling sideways to bring a search match into view.
 - Showing lines past the 4 KiB display cut. That remains an open decision.
-- A vertical scrollbar.
 - Remembering the checkbox across streams. Every new stream starts at the end and following.
 
 ## Capabilities
@@ -28,7 +29,7 @@ None.
 
 ### Modified Capabilities
 
-- `pod/log`: following gains an explicit control and keeps the newest line in view at all times, and long lines become reachable by scrolling sideways. This capability is still defined in the in-flight `define-app-architecture` change.
+- `pod/log`: following gains an explicit control and keeps the newest line in view at all times, long lines become reachable by scrolling sideways, and the view gains a vertical scrollbar. This capability is still defined in the in-flight `define-app-architecture` change.
 
 ## Impact
 

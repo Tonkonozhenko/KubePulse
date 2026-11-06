@@ -30,6 +30,8 @@ It also closes a race. Today a status update can queue a scroll between a wheel 
 
 `notice_scrolling` drops its `settled` check, because a queued scroll is consumed in the same frame and only `go_to_match` queues one otherwise, which has already stopped following.
 
+`notice_scrolling` tests `self.scrolled - offset > 0` rather than `offset < self.scrolled`. `Pixels` orders with `total_cmp`, so after a stream reset `-0` compares below `0`, which would read as the user scrolling up and turn following off.
+
 The alternative was to pin only on status updates and on resize events. That needs a case for each layout change and would miss the next one.
 
 ### Measure the widest retained line with a sliding maximum
@@ -55,15 +57,19 @@ The mono font and `text_sm` move from the list to a wrapping `div`, which also h
 
 The wrapper needs `flex_1` and `min_h_0`, and the list stays `flex_1` inside it.
 
-### Horizontal scrollbar in its own strip
+### Scrollbars in their own strips
 
 `Scrollbar::horizontal(&self.list).viewport_from_layout()` sits in a strip of height `Scrollbar::width()` below the list, in `ScrollbarMode::Always`. An overlay would cover the newest line, which is the line this view most needs to show. List padding is not an option, because the list and its scroll clamp account for padding differently.
 
 The strip is always present, so the viewport height does not change when the first wide line arrives.
 
-### Checkbox replaces the Newest line button
+The vertical scrollbar uses the same arrangement, in a strip to the right of the list, so it never covers the end of a line. The horizontal strip stops short of the vertical one, so each bar's length matches the list's.
+
+### Checkboxes for Follow and Timestamps
 
 A `Checkbox` with id `log-follow` sits after the Timestamps button, bound to `following`. Its handler sets `following`, and the next render pins to the end when it is on. `jump_to_newest` and the `log-jump` button go away, along with `log.jump`, because the checkbox covers the same action in a position that does not move.
+
+The Timestamps toggle becomes a `Checkbox` with the same id, so the two toolbar options look alike.
 
 `start_stream` keeps setting `following` to true, so a new container, instance, retry, or reconnect starts at the end. `keep_place` still holds the reader's lines while paused.
 

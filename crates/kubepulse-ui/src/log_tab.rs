@@ -361,7 +361,8 @@ impl LogTab {
     fn notice_scrolling(&mut self) {
         let offset = -self.list.0.borrow().base_handle.offset().y;
         let at_end = self.list.is_scrolled_to_end() != Some(false);
-        if self.following && !at_end && offset < self.scrolled {
+        // Subtracting, because `Pixels` orders -0 below 0.
+        if self.following && !at_end && self.scrolled - offset > px(0.) {
             self.following = false;
         }
         self.scrolled = offset;
@@ -525,34 +526,58 @@ impl LogTab {
                 .font_family(cx.theme().mono_font_family.clone())
                 .text_sm()
                 .child(
-                    uniform_list(
-                        "log-lines",
-                        count,
-                        cx.processor(move |this, range: Range<usize>, _, cx| {
-                            let first = this.first;
-                            let Some(stream) = &this.stream else {
-                                return Vec::new();
-                            };
-                            let lines = stream
-                                .buffer()
-                                .lines(first + range.start as u64..first + range.end as u64);
-                            lines
-                                .iter()
-                                .map(|(seq, line)| this.render_line(*seq, line, cx))
-                                .collect()
-                        }),
-                    )
-                    .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
-                    .with_width_from_item(widest)
-                    .track_scroll(&self.list)
-                    .flex_1()
-                    .w_full(),
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .flex()
+                        .child(
+                            uniform_list(
+                                "log-lines",
+                                count,
+                                cx.processor(move |this, range: Range<usize>, _, cx| {
+                                    let first = this.first;
+                                    let Some(stream) = &this.stream else {
+                                        return Vec::new();
+                                    };
+                                    let lines = stream.buffer().lines(
+                                        first + range.start as u64..first + range.end as u64,
+                                    );
+                                    lines
+                                        .iter()
+                                        .map(|(seq, line)| this.render_line(*seq, line, cx))
+                                        .collect()
+                                }),
+                            )
+                            .with_horizontal_sizing_behavior(
+                                ListHorizontalSizingBehavior::Unconstrained,
+                            )
+                            .with_width_from_item(widest)
+                            .track_scroll(&self.list)
+                            .flex_1()
+                            .min_w_0()
+                            .h_full(),
+                        )
+                        .child(
+                            div()
+                                .id("log-vertical-scrollbar")
+                                .relative()
+                                .flex_none()
+                                .h_full()
+                                .w(Scrollbar::width())
+                                .child(
+                                    Scrollbar::vertical(&self.list)
+                                        .viewport_from_layout()
+                                        .mode(ScrollbarMode::Always)
+                                        .max_fps(60),
+                                )
+                                .test_support(),
+                        ),
                 )
                 .child(
                     div()
                         .relative()
                         .flex_none()
-                        .w_full()
+                        .mr(Scrollbar::width())
                         .h(Scrollbar::width())
                         .child(
                             Scrollbar::horizontal(&self.list)
@@ -611,12 +636,12 @@ impl LogTab {
             .gap_2()
             .w_full()
             .child(
-                Button::new("log-timestamps")
+                Checkbox::new("log-timestamps")
                     .label(t!("log.timestamps").to_string())
                     .small()
-                    .selected(self.show_times)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.show_times = !this.show_times;
+                    .checked(self.show_times)
+                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                        this.show_times = *checked;
                         cx.notify();
                     })),
             )

@@ -65,3 +65,10 @@ The system SHALL let the user scroll the log view sideways by wheel, trackpad, a
 #### Scenario: All lines fit
 - **WHEN** every retained line fits in the view
 - **THEN** the view does not scroll sideways
+
+### Requirement: Log vertical scrollbar
+The system SHALL show a vertical scrollbar on the log view whenever retained lines do not all fit, and moving it up SHALL pause following as scrolling up does.
+
+#### Scenario: Moving the scrollbar up while following
+- **WHEN** the user moves the vertical scrollbar up while the follow control is on
+- **THEN** the view moves to the earlier lines, the stream continues, and the follow control turns off
