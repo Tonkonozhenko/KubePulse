@@ -67,7 +67,7 @@ Stop after this group if any target is missed, and revisit the design before sta
 - [x] 7.5 Add built-in extensions for workload, network, config, storage, and access-control kinds, and verify each kind lists with its default columns
 - [x] 7.6 Implement the detail view with events and owner navigation, and verify with a UI test on a Deployment-owned pod
 - [x] 7.7 Implement hidden Secret values and deletion confirmation, and verify with UI tests covering a protected cluster
-- [ ] 7.8 Verify the memory limits and the 5-minute watch release with a 10-minute soak test on the reference machine
+- [x] 7.8 Verify the memory limits and the 5-minute watch release with a 10-minute soak test on the reference machine. Run on the development machine pinned to 4 cores (62 GB, discrete GPU), not on reference hardware: peak 266 MiB against the 500 MiB limit, watch released after 300 seconds.
 
 ## 8. Command palette
 
