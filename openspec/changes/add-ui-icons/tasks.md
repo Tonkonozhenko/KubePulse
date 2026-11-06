@@ -28,9 +28,28 @@
 - [ ] 4.5 Add prefix icons to the filter and label selector inputs, leaving the namespace control alone
 - [ ] 4.6 Use `state_mark` in the rail and sidebar header, with colors from `cx.theme()`
 
-## 5. Verify
+## 5. Closing tabs
 
-- [ ] 5.1 Run `cargo test --workspace`, `cargo clippy --workspace --all-targets`, and `cargo fmt --all --check`
-- [ ] 5.2 Run `python3 scripts/check-i18n.py` and `python3 scripts/check-crate-graph.py`
-- [ ] 5.3 Check icons in the running app in light and dark modes, including long cluster names in tab titles
-- [ ] 5.4 Measure the release binary size before and after, and record it in the commit message
+- [ ] 5.1 Replace `ShellEvent::TabsChanged` with `CloseTab(id)`, add `ShellState::request_close`, store the Settings tab as a `WeakEntity`, and handle the event in `Workspace` with `dock.remove_panel`
+- [ ] 5.2 Add the close button to the `ClusterTab` and `SettingsTab` titles, with the `x` glyph and the `tab.close` tooltip, stopping propagation of mouse down and click
+- [ ] 5.3 Return `false` from `closable` on both tabs, and verify the dock's overflow menu no longer offers Close
+- [ ] 5.4 Add tests for closing the active tab, an inactive tab without activating or pinning it, the last tab, the last tab of a pane, a preview tab, and the Settings tab
+- [ ] 5.5 Add tests that closing a cluster's last tab sends no disconnect and keeps it selected, and that the closed tab's entity is released
+
+## 6. Start clean
+
+- [ ] 6.1 Remove layout loading and saving from `Workspace`, keeping `cx.notify()` on `DockEvent::LayoutChanged`, and create the dock with no version
+- [ ] 6.2 Remove `ClusterTabState`, `pinned_by_default`, `ClusterTab::register`, and `ClusterTab::dump`, and the `register_panel` call and `dump` in `SettingsTab`
+- [ ] 6.3 Remove `ConfigPaths.workspace`, and update the comments in `persistence.rs`, `shell_state.rs`, `cluster_tab.rs`, `settings_tab.rs`, and the `Shared*` globals that mention saved layouts or restart
+- [ ] 6.4 Change `settings.restart_warning` to mention closed tabs, and run `python3 scripts/check-i18n.py --write`
+- [ ] 6.5 Remove the restore tests and their helpers from `tests/shell.rs`, remove the `ClusterTab::register` calls from the test harnesses, and move helpers that read `dock.dump` to `ShellState::summaries`
+- [ ] 6.6 Add tests that a new window has no tabs and no selected cluster with a leftover `workspace.json` present, that changing tabs writes no `workspace.json`, and that a new tab on the same kind has no filter, label selector, or sort
+- [ ] 6.7 Confirm `clusters.json` and `settings.json` tests still pass unchanged
+
+## 7. Verify
+
+- [ ] 7.1 Run `cargo test --workspace`, `cargo clippy --workspace --all-targets`, and `cargo fmt --all --check`
+- [ ] 7.2 Run `python3 scripts/check-i18n.py` and `python3 scripts/check-crate-graph.py`
+- [ ] 7.3 Check icons in the running app in light and dark modes, including long cluster names in tab titles
+- [ ] 7.4 Check in the running app that the close button appears and works with one tab, several tabs, and split panes, and that a restart starts empty
+- [ ] 7.5 Measure the release binary size before and after, and record it in the commit message
