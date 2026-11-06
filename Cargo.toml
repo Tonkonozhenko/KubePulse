@@ -22,6 +22,7 @@ gpui-kit = "=0.9.0"
 async-trait = "0.1"
 backon = "1"
 base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["png"] }
 directories = "6"
 futures = "0.3"
 internment = { version = "0.8", default-features = false, features = ["arc"] }

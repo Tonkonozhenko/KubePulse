@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=KubePulse
+Comment=Kubernetes IDE
+Exec=kubepulse
+Icon=kubepulse
+Terminal=false
+Categories=Development;
+StartupWMClass=kubepulse

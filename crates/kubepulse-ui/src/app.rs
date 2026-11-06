@@ -97,6 +97,7 @@ pub fn run_with(options: RunOptions) {
                 ..Default::default()
             }),
             app_id: Some("kubepulse".to_owned()),
+            icon: Some(window_icon()),
             ..Default::default()
         };
         gpui_kit::open_window(window_options, cx, |window, cx| {
@@ -115,4 +116,10 @@ pub fn run_with(options: RunOptions) {
         })
         .expect("failed to open window");
     });
+}
+
+fn window_icon() -> Arc<image::RgbaImage> {
+    let logo = image::load_from_memory(include_bytes!("../../../assets/logo-256.png"))
+        .expect("the bundled logo is a valid PNG");
+    Arc::new(logo.into_rgba8())
 }
