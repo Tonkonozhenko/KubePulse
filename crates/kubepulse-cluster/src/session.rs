@@ -11,16 +11,20 @@ use std::{
 use backon::{BackoffBuilder as _, ExponentialBuilder};
 use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use kube::{
-    Api, Client, Config,
-    api::ListParams,
+    Api, Client, Config, Resource as _,
+    api::{ListParams, ObjectList},
     config::{KubeConfigOptions, Kubeconfig},
-    core::discovery::Scope,
+    core::{Request, discovery::Scope},
     discovery::{ApiGroup, Discovery},
 };
+use serde::Deserialize;
 use tokio::{sync::watch, time};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 use crate::resource_watch::SessionHandle;
+
+/// Definitions read in one request, which bounds a single response.
+const DEFINITION_PAGE_SIZE: u32 = 50;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConnectionState {
@@ -391,6 +395,7 @@ async fn keep_resources_current(
 ) {
     let mut ticks = time::interval(options.discovery_interval);
     ticks.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
+    let mut columns = PrinterColumns::default();
     loop {
         tokio::select! {
             _ = ticks.tick() => {}
@@ -403,7 +408,7 @@ async fn keep_resources_current(
                 }
             }
         }
-        match time::timeout(options.discovery_timeout, discover(&client)).await {
+        match time::timeout(options.discovery_timeout, discover(&client, &mut columns)).await {
             Ok(Ok(kinds)) => {
                 resources.send_if_modified(|current| {
                     let changed = **current != kinds;
@@ -420,7 +425,10 @@ async fn keep_resources_current(
     }
 }
 
-async fn discover(client: &Client) -> Result<Vec<ResourceKind>, kube::Error> {
+async fn discover(
+    client: &Client,
+    columns: &mut PrinterColumns,
+) -> Result<Vec<ResourceKind>, kube::Error> {
     // Servers without aggregated discovery need one request per group. Some
     // answer the aggregated request with an empty list rather than an error, and
     // every real cluster serves the core group, so its absence also falls back.
@@ -442,7 +450,7 @@ async fn discover(client: &Client) -> Result<Vec<ResourceKind>, kube::Error> {
             });
         }
     }
-    let columns = printer_columns(client).await;
+    refresh_printer_columns(client, columns).await;
     Ok(kinds
         .into_iter()
         .map(|mut kind| {
@@ -451,25 +459,78 @@ async fn discover(client: &Client) -> Result<Vec<ResourceKind>, kube::Error> {
                 kind.plural.clone(),
                 kind.version.clone(),
             );
-            kind.printer_columns = columns.get(&key).cloned().unwrap_or_default();
+            kind.printer_columns = columns.by_kind.get(&key).cloned().unwrap_or_default();
             kind
         })
         .collect())
 }
 
-/// Printer columns by group, plural, and version. Reading definitions can be
-/// forbidden, and those kinds then simply show the default columns.
-async fn printer_columns(client: &Client) -> HashMap<(String, String, String), Vec<PrinterColumn>> {
+#[derive(Default)]
+struct PrinterColumns {
+    /// Each definition's name and resource version when `by_kind` was read.
+    versions: Vec<(Option<String>, Option<String>)>,
+    /// Columns by group, plural, and version.
+    by_kind: HashMap<(String, String, String), Vec<PrinterColumn>>,
+}
+
+/// Definitions reduced to what columns need. Schemas are most of a definition's
+/// size, so these types leave them out rather than parsing them.
+#[derive(Clone, Debug, Deserialize)]
+struct Definition {
+    spec: DefinitionSpec,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct DefinitionSpec {
+    group: String,
+    names: DefinitionNames,
+    versions: Vec<DefinitionVersion>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct DefinitionNames {
+    plural: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DefinitionVersion {
+    name: String,
+    #[serde(default)]
+    additional_printer_columns: Vec<DefinitionColumn>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DefinitionColumn {
+    name: String,
+    json_path: String,
+}
+
+/// Rereads definitions only when one has changed. Reading them can be forbidden,
+/// and those kinds then simply show the default columns.
+async fn refresh_printer_columns(client: &Client, columns: &mut PrinterColumns) {
     let api: Api<CustomResourceDefinition> = Api::all(client.clone());
-    let Ok(definitions) = api.list(&ListParams::default()).await else {
-        return HashMap::new();
+    let Ok(list) = api.list_metadata(&ListParams::default()).await else {
+        return;
     };
-    let mut columns = HashMap::new();
+    let versions: Vec<_> = list
+        .items
+        .into_iter()
+        .map(|item| (item.metadata.name, item.metadata.resource_version))
+        .collect();
+    if versions == columns.versions {
+        return;
+    }
+    let Ok(definitions) = list_definitions(client).await else {
+        return;
+    };
+    let mut by_kind = HashMap::new();
     for definition in definitions {
         let spec = definition.spec;
         for version in spec.versions {
-            let declared = version.additional_printer_columns.unwrap_or_default();
-            let declared = declared
+            let declared = version
+                .additional_printer_columns
                 .into_iter()
                 .map(|column| PrinterColumn {
                     name: column.name,
@@ -477,8 +538,24 @@ async fn printer_columns(client: &Client) -> HashMap<(String, String, String), V
                 })
                 .collect();
             let key = (spec.group.clone(), spec.names.plural.clone(), version.name);
-            columns.insert(key, declared);
+            by_kind.insert(key, declared);
         }
     }
-    columns
+    *columns = PrinterColumns { versions, by_kind };
+}
+
+async fn list_definitions(client: &Client) -> Result<Vec<Definition>, kube::Error> {
+    let request = Request::new(CustomResourceDefinition::url_path(&(), None));
+    let mut params = ListParams::default().limit(DEFINITION_PAGE_SIZE);
+    let mut definitions = Vec::new();
+    loop {
+        let page: ObjectList<Definition> = client
+            .request(request.list(&params).map_err(kube::Error::BuildRequest)?)
+            .await?;
+        definitions.extend(page.items);
+        match page.metadata.continue_ {
+            Some(token) if !token.is_empty() => params = params.continue_token(&token),
+            _ => return Ok(definitions),
+        }
+    }
 }

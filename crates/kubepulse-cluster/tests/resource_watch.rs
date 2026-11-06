@@ -8,7 +8,7 @@ use tokio::{sync::mpsc, time};
 use tokio_util::sync::CancellationToken;
 use wiremock::{
     Mock, MockServer, Request, ResponseTemplate,
-    matchers::{method, path, query_param, query_param_is_missing},
+    matchers::{header_regex, method, path, query_param, query_param_is_missing},
 };
 
 fn pods() -> ResourceKind {
@@ -424,6 +424,71 @@ async fn discovery_attaches_printer_columns_from_definitions() {
     let widget = kinds.iter().find(|k| k.kind == "Widget").unwrap();
     assert_eq!(widget.printer_columns[0].name, "Size");
     assert_eq!(widget.printer_columns[0].path, ".spec.size");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn definitions_are_read_again_only_after_one_changes() {
+    const DEFINITIONS: &str = "/apis/apiextensions.k8s.io/v1/customresourcedefinitions";
+    let server = api_server().await;
+    get(
+        "/apis",
+        json(r#"{"kind":"APIGroupList","apiVersion":"v1","groups":[]}"#),
+    )
+    .mount(&server)
+    .await;
+    let metadata = |version: u32| {
+        json(&format!(
+            r#"{{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadataList","metadata":{{}},"items":[
+            {{"metadata":{{"name":"widgets.example.com","resourceVersion":"{version}"}}}}]}}"#
+        ))
+    };
+    let metadata_mock = || {
+        Mock::given(method("GET"))
+            .and(path(DEFINITIONS))
+            .and(header_regex("accept", "PartialObjectMetadataList"))
+    };
+    metadata_mock()
+        .respond_with(metadata(1))
+        .with_priority(1)
+        .up_to_n_times(5)
+        .mount(&server)
+        .await;
+    metadata_mock()
+        .respond_with(metadata(2))
+        .with_priority(2)
+        .mount(&server)
+        .await;
+    get(DEFINITIONS, json(r#"{"apiVersion":"apiextensions.k8s.io/v1","kind":"CustomResourceDefinitionList","metadata":{},"items":[]}"#))
+        .mount(&server)
+        .await;
+
+    let dir = temp();
+    let list = kubeconfig(dir.path(), &[("a", &server.uri(), Auth::None)]);
+    let mut sessions = SessionManager::new(list_channel(list), fast_options());
+    sessions.connect("a").unwrap();
+
+    let definition_requests = async |full: bool| {
+        let requests = server.received_requests().await.unwrap_or_default();
+        requests
+            .iter()
+            .filter(|request| request.url.path() == DEFINITIONS)
+            .filter(|request| {
+                let accept = request.headers.get("accept");
+                let metadata = accept
+                    .is_some_and(|value| value.to_str().unwrap().contains("PartialObjectMetadata"));
+                metadata != full
+            })
+            .count()
+    };
+    time::timeout(WAIT, async {
+        while definition_requests(false).await < 8 {
+            time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("discovery should repeat");
+    // The first read, then one more when the resource version changed.
+    assert_eq!(definition_requests(true).await, 2);
 }
 
 #[tokio::test(flavor = "multi_thread")]
