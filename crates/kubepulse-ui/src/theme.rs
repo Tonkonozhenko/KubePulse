@@ -192,11 +192,27 @@ fn shared(mut theme: ThemeConfig, cx: &App) -> Rc<ThemeConfig> {
     Rc::new(theme)
 }
 
+/// The kit's default themes pair status backgrounds with text too faint to
+/// read at badge size.
+fn readable_status_text(theme: &ThemeConfig) -> Rc<ThemeConfig> {
+    let mut theme = theme.clone();
+    let colors = &mut theme.colors;
+    for foreground in [
+        &mut colors.danger_foreground,
+        &mut colors.info_foreground,
+        &mut colors.success_foreground,
+        &mut colors.warning_foreground,
+    ] {
+        *foreground = Some("neutral-950".into());
+    }
+    Rc::new(theme)
+}
+
 impl ThemeCatalog {
     pub fn new(watcher: Option<ThemeWatcher>, cx: &mut Context<Self>) -> Self {
         let registry = ThemeRegistry::global(cx);
         let defaults = [ThemeMode::Light, ThemeMode::Dark]
-            .map(|mode| registry.default_themes()[&mode].clone());
+            .map(|mode| readable_status_text(&registry.default_themes()[&mode]));
         let bundled = defaults
             .into_iter()
             .chain(bundled_files().into_iter().map(|theme| shared(theme, cx)))

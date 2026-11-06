@@ -179,6 +179,20 @@ fn every_bundled_theme_meets_its_contrast_limit(cx: &mut TestAppContext) {
             };
             let ratio = contrast(foreground, background);
             assert!(ratio >= limit, "{name}: {ratio}");
+
+            let badges = cx.update(|_, cx| {
+                let theme = cx.theme();
+                [
+                    (theme.success_foreground, theme.success),
+                    (theme.warning_foreground, theme.warning),
+                    (theme.danger_foreground, theme.danger),
+                    (theme.secondary_foreground, theme.secondary),
+                ]
+            });
+            for (text, badge) in badges {
+                let ratio = contrast(text, badge);
+                assert!(ratio >= limit, "{name} badge: {ratio}");
+            }
         }
     }
 }
