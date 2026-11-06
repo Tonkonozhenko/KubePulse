@@ -25,7 +25,7 @@ use crate::{
     identity::ClusterKey,
     resource_browser::{BrowserEvent, ResourceBrowser},
     services::{ClusterServices, SharedServices},
-    shell_state::{SharedShellState, ShellState, TabSummary, close_button},
+    shell_state::{SharedShellState, ShellState, TabSummary, close_button, close_on_middle_click},
     tab_connection::{activate_tab, connection_notes},
 };
 
@@ -272,6 +272,7 @@ impl dock::Panel for ClusterTab {
                     this.pin(cx);
                 }
             }))
+            .on_aux_click(close_on_middle_click(cx.entity_id(), self.shell.clone()))
             .child(close_button(cx.entity_id(), self.shell.clone()))
             .test_support()
     }

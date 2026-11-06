@@ -4439,6 +4439,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "unicode-width",
 ]
 
 [[package]]

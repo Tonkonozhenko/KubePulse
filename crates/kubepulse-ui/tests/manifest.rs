@@ -4,9 +4,11 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use gpui_kit::{
-    AppContext as _, Entity, Focusable as _, SharedString, TestAppContext, VisualTestContext,
-    WindowOptions, component::ActiveTheme as _, component::highlighter::LanguageRegistry,
-    test::TestWindowExt as _,
+    AppContext as _, Entity, Focusable as _, MouseButton, SharedString, TestAppContext,
+    VisualTestContext, WindowOptions,
+    component::ActiveTheme as _,
+    component::highlighter::LanguageRegistry,
+    test::{ClickOptions, TestWindowExt as _},
 };
 use kubepulse_cluster::{
     ConnectionState, ObjectError, ObjectTarget, ResourceKind, UpdateAccess, WriteMode, manifest,
@@ -520,6 +522,21 @@ fn is_open(tab: &Entity<ManifestTab>, cx: &mut VisualTestContext) -> bool {
     let id = tab.entity_id();
     let shell = cx.update(|_, cx| cx.global::<SharedShellState>().0.clone());
     cx.update(|_, cx| shell.read(cx).editor(id).is_some())
+}
+
+#[gpui_kit::test]
+fn a_middle_click_with_unapplied_changes_asks_first(cx: &mut TestAppContext) {
+    let (fixture, cx) = with_object(cx, live("1", json!({"key": "old"})));
+    let tab = open_editing(&fixture, cx);
+    type_text(&tab, &edited(json!({"key": "new"})), cx);
+
+    let title = SharedString::from(format!("tab-title-{}", tab.entity_id()));
+    let options = ClickOptions::new().with_button(MouseButton::Middle);
+    cx.update(|window, cx| window.click_with_options(title, options, cx));
+    settle(cx);
+
+    assert!(exists("discard-confirmation", cx));
+    assert!(is_open(&tab, cx));
 }
 
 #[gpui_kit::test]

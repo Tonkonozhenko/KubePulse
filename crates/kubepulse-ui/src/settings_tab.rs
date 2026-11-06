@@ -19,7 +19,7 @@ use rust_i18n::t;
 use crate::{
     language,
     preferences::{Appearance, Preferences, PreferencesModel, SharedPreferences},
-    shell_state::{SharedShellState, ShellState, close_button},
+    shell_state::{SharedShellState, ShellState, close_button, close_on_middle_click},
     theme::{SharedThemes, ThemeCatalog, ThemeFileError, ThemeFileProblem, ThemeWatcher, apply},
 };
 
@@ -316,6 +316,7 @@ impl dock::Panel for SettingsTab {
             .gap_2()
             .child(Icon::new(IconName::Settings).xsmall())
             .child(t!("settings.title").to_string())
+            .on_aux_click(close_on_middle_click(cx.entity_id(), self.shell.clone()))
             .child(close_button(cx.entity_id(), self.shell.clone()))
             .test_support()
     }

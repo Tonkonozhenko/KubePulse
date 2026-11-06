@@ -1,15 +1,17 @@
 //! A pod's logs. The list reads only the lines it shows from the bounded buffer,
 //! so high log volume costs one small update per frame.
 
-use std::{ops::Range, sync::Arc};
+use std::{collections::VecDeque, ops::Range, sync::Arc};
 
 use gpui_kit::{
     assets::IconName,
     component::{
         ActiveTheme as _, Icon, Selectable as _, Sizable as _,
         button::Button,
+        checkbox::Checkbox,
         dock::{self, PanelEvent},
         input::{Input, InputEvent, InputState},
+        scroll::{Scrollbar, ScrollbarMode},
     },
     prelude::FluentBuilder as _,
     *,
@@ -19,12 +21,13 @@ use kubepulse_cluster::{
     ObjectTarget, match_ranges, pod_containers,
 };
 use rust_i18n::t;
+use unicode_width::UnicodeWidthStr as _;
 
 use crate::{
     cluster_model::{ClusterModel, can_connect, is_live},
     identity::ClusterKey,
     services::{ClusterServices, SharedServices},
-    shell_state::{SharedShellState, ShellState, close_button},
+    shell_state::{SharedShellState, ShellState, close_button, close_on_middle_click},
     tab_connection::{activate_tab, connection_notes},
 };
 
@@ -55,6 +58,37 @@ fn shown_text(line: &LogLine, with_time: bool) -> (String, usize) {
     (text, start)
 }
 
+fn shown_width(line: &LogLine) -> usize {
+    let text = line.text();
+    text[..text.floor_char_boundary(MAX_SHOWN_BYTES)].width()
+}
+
+/// Finds the widest retained line at a constant cost per line. It holds only
+/// lines wider than every line after them, so the first is the widest.
+#[derive(Default)]
+struct WidestLines {
+    candidates: VecDeque<(u64, usize)>,
+}
+
+impl WidestLines {
+    fn push(&mut self, seq: u64, width: usize) {
+        while self.candidates.back().is_some_and(|(_, w)| *w <= width) {
+            self.candidates.pop_back();
+        }
+        self.candidates.push_back((seq, width));
+    }
+
+    fn forget_before(&mut self, seq: u64) {
+        while self.candidates.front().is_some_and(|(s, _)| *s < seq) {
+            self.candidates.pop_front();
+        }
+    }
+
+    fn widest(&self) -> Option<u64> {
+        self.candidates.front().map(|(seq, _)| *seq)
+    }
+}
+
 pub struct LogTab {
     key: ClusterKey,
     target: ObjectTarget,
@@ -77,6 +111,9 @@ pub struct LogTab {
     rows: usize,
     /// The oldest retained line at the last update.
     first: u64,
+    widest: WidestLines,
+    /// Lines before this one have been measured.
+    measured_to: u64,
     search: Entity<InputState>,
     query: String,
     /// Sequence numbers of matching lines, oldest first.
@@ -133,6 +170,8 @@ impl LogTab {
             scrolled: px(0.),
             rows: 0,
             first: 0,
+            widest: WidestLines::default(),
+            measured_to: 0,
             search,
             query: String::new(),
             matches: Vec::new(),
@@ -173,6 +212,15 @@ impl LogTab {
 
     pub fn current_match(&self) -> Option<u64> {
         self.current_match.map(|index| self.matches[index])
+    }
+
+    /// How far the view has scrolled sideways, and how far it can.
+    pub fn sideways_scroll(&self) -> (Pixels, Pixels) {
+        let state = self.list.0.borrow();
+        (
+            -state.base_handle.offset().x,
+            state.base_handle.max_offset().x,
+        )
     }
 
     /// The line count this view knows about.
@@ -244,6 +292,8 @@ impl LogTab {
             .base_handle
             .set_offset(point(px(0.), px(0.)));
         self.first = 0;
+        self.widest = WidestLines::default();
+        self.measured_to = 0;
         self.matches.clear();
         self.current_match = None;
         self.searched_to = 0;
@@ -280,12 +330,13 @@ impl LogTab {
         self.first = bounds.start;
         self.status = Some(status);
         self.search_new_lines(&bounds, cx);
+        for (seq, line) in buffer.lines(self.measured_to..bounds.end) {
+            self.widest.push(seq, shown_width(&line));
+        }
+        self.measured_to = bounds.end;
+        self.widest.forget_before(bounds.start);
 
-        if self.following {
-            if !bounds.is_empty() {
-                self.list.scroll_to_bottom();
-            }
-        } else if dropped > 0 {
+        if !self.following && dropped > 0 {
             self.keep_place(dropped);
         }
         cx.notify();
@@ -305,15 +356,12 @@ impl LogTab {
         self.scrolled = -moved;
     }
 
-    /// Scrolling redraws this view, whether by wheel or by scrollbar. Moving up
-    /// without having asked to stops following.
+    /// Scrolling redraws this view, so a render that finds the list moved up
+    /// stops following. It runs before the render pins the list to the end.
     fn notice_scrolling(&mut self) {
-        let state = self.list.0.borrow();
-        let offset = -state.base_handle.offset().y;
-        let settled = state.deferred_scroll_to_item.is_none();
-        drop(state);
+        let offset = -self.list.0.borrow().base_handle.offset().y;
         let at_end = self.list.is_scrolled_to_end() != Some(false);
-        if self.following && settled && !at_end && offset < self.scrolled {
+        if self.following && !at_end && offset < self.scrolled {
             self.following = false;
         }
         self.scrolled = offset;
@@ -400,12 +448,6 @@ impl LogTab {
         self.go_to_match(next, cx);
     }
 
-    fn jump_to_newest(&mut self, cx: &mut Context<Self>) {
-        self.following = true;
-        self.list.scroll_to_bottom();
-        cx.notify();
-    }
-
     fn select_container(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
         self.selected = Some(name);
         self.previous = false;
@@ -467,29 +509,57 @@ impl LogTab {
     fn render_lines(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
         let bounds = self.retained()?;
         let count = usize::try_from(bounds.end - bounds.start).unwrap_or(usize::MAX);
+        let widest = self
+            .widest
+            .widest()
+            .map(|seq| usize::try_from(seq.saturating_sub(self.first)).unwrap_or(usize::MAX));
+        // The list measures its rows outside its own text style, so the style
+        // goes on a parent.
         Some(
-            uniform_list(
-                "log-lines",
-                count,
-                cx.processor(move |this, range: Range<usize>, _, cx| {
-                    let first = this.first;
-                    let Some(stream) = &this.stream else {
-                        return Vec::new();
-                    };
-                    let lines = stream
-                        .buffer()
-                        .lines(first + range.start as u64..first + range.end as u64);
-                    lines
-                        .iter()
-                        .map(|(seq, line)| this.render_line(*seq, line, cx))
-                        .collect()
-                }),
-            )
-            .track_scroll(&self.list)
-            .flex_1()
-            .w_full()
-            .font_family(cx.theme().mono_font_family.clone())
-            .text_sm(),
+            div()
+                .flex_1()
+                .min_h_0()
+                .w_full()
+                .flex()
+                .flex_col()
+                .font_family(cx.theme().mono_font_family.clone())
+                .text_sm()
+                .child(
+                    uniform_list(
+                        "log-lines",
+                        count,
+                        cx.processor(move |this, range: Range<usize>, _, cx| {
+                            let first = this.first;
+                            let Some(stream) = &this.stream else {
+                                return Vec::new();
+                            };
+                            let lines = stream
+                                .buffer()
+                                .lines(first + range.start as u64..first + range.end as u64);
+                            lines
+                                .iter()
+                                .map(|(seq, line)| this.render_line(*seq, line, cx))
+                                .collect()
+                        }),
+                    )
+                    .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
+                    .with_width_from_item(widest)
+                    .track_scroll(&self.list)
+                    .flex_1()
+                    .w_full(),
+                )
+                .child(
+                    div()
+                        .relative()
+                        .flex_none()
+                        .w_full()
+                        .h(Scrollbar::width())
+                        .child(
+                            Scrollbar::horizontal(&self.list)
+                                .viewport_from_layout()
+                                .mode(ScrollbarMode::Always),
+                        ),
+                ),
         )
     }
 
@@ -550,6 +620,16 @@ impl LogTab {
                         cx.notify();
                     })),
             )
+            .child(
+                Checkbox::new("log-follow")
+                    .label(t!("log.follow").to_string())
+                    .small()
+                    .checked(self.following)
+                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                        this.following = *checked;
+                        cx.notify();
+                    })),
+            )
             .when(self.restarted(), |this| {
                 this.child(
                     Button::new("log-previous")
@@ -586,15 +666,6 @@ impl LogTab {
                         .small()
                         .tooltip(t!("log.next_match").to_string())
                         .on_click(cx.listener(|this, _, _, cx| this.step_match(true, cx))),
-                )
-            })
-            .when(!self.following, |this| {
-                this.child(
-                    Button::new("log-jump")
-                        .icon(IconName::ArrowDown)
-                        .label(t!("log.jump").to_string())
-                        .small()
-                        .on_click(cx.listener(|this, _, _, cx| this.jump_to_newest(cx))),
                 )
             })
     }
@@ -702,6 +773,7 @@ impl dock::Panel for LogTab {
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| this.activate(cx)),
             )
+            .on_aux_click(close_on_middle_click(cx.entity_id(), self.shell.clone()))
             .child(close_button(cx.entity_id(), self.shell.clone()))
             .test_support()
     }
@@ -718,6 +790,9 @@ impl Focusable for LogTab {
 impl Render for LogTab {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.notice_scrolling();
+        if self.following {
+            self.list.scroll_to_bottom();
+        }
         self.rows = self.retained().map_or(0, |bounds| {
             usize::try_from(bounds.end - bounds.start).unwrap_or(usize::MAX)
         });
@@ -778,9 +853,45 @@ impl Render for LogTab {
 
 #[cfg(test)]
 mod tests {
-    use super::{LogLine, MAX_SHOWN_BYTES, shown_text};
+    use super::{LogLine, MAX_SHOWN_BYTES, WidestLines, shown_text, shown_width};
 
     const AT: &str = "2026-01-01T00:00:00Z";
+
+    #[test]
+    fn a_wider_line_takes_over_from_narrower_ones() {
+        let mut lines = WidestLines::default();
+        lines.push(0, 5);
+        lines.push(1, 9);
+        lines.push(2, 3);
+        assert_eq!(lines.widest(), Some(1));
+    }
+
+    #[test]
+    fn the_next_widest_line_takes_over_when_the_widest_leaves() {
+        let mut lines = WidestLines::default();
+        lines.push(0, 9);
+        lines.push(1, 3);
+        lines.push(2, 5);
+        lines.push(3, 4);
+        lines.forget_before(1);
+        assert_eq!(lines.widest(), Some(2));
+        lines.forget_before(3);
+        assert_eq!(lines.widest(), Some(3));
+        lines.forget_before(4);
+        assert_eq!(lines.widest(), None);
+    }
+
+    #[test]
+    fn width_counts_display_columns_and_not_bytes() {
+        assert!(shown_width(&LogLine::new(&"é".repeat(4))) < shown_width(&LogLine::new("abcdef")));
+        assert_eq!(shown_width(&LogLine::new("日本")), 4);
+    }
+
+    #[test]
+    fn width_stops_at_the_display_cut() {
+        let line = LogLine::new(&"a".repeat(MAX_SHOWN_BYTES * 2));
+        assert_eq!(shown_width(&line), MAX_SHOWN_BYTES);
+    }
 
     #[test]
     fn timestamps_show_only_when_turned_on() {

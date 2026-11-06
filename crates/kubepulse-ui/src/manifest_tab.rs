@@ -31,7 +31,7 @@ use crate::{
     icons::view_glyph,
     identity::ClusterKey,
     services::{ClusterServices, Reply, SharedServices},
-    shell_state::{SharedShellState, ShellState, close_button},
+    shell_state::{SharedShellState, ShellState, close_button, close_on_middle_click},
     tab_connection::{activate_tab, connection_notes},
 };
 
@@ -865,6 +865,7 @@ impl dock::Panel for ManifestTab {
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| this.activate(cx)),
             )
+            .on_aux_click(close_on_middle_click(cx.entity_id(), self.shell.clone()))
             .child(close_button(cx.entity_id(), self.shell.clone()))
             .test_support()
     }

@@ -3,7 +3,7 @@ mod support;
 use std::sync::Arc;
 
 use gpui_kit::{
-    AppContext as _, Entity, ScrollDelta, SharedString, TestAppContext, VisualTestContext,
+    AppContext as _, Entity, Pixels, ScrollDelta, SharedString, TestAppContext, VisualTestContext,
     WindowOptions, point, px, test::TestWindowExt as _,
 };
 use kubepulse_cluster::{
@@ -185,6 +185,16 @@ fn scroll_up(cx: &mut VisualTestContext) {
     settle(cx);
 }
 
+fn scroll_right(distance: Pixels, cx: &mut VisualTestContext) {
+    let delta = ScrollDelta::Pixels(point(-distance, px(0.)));
+    cx.update(|window, cx| window.scroll("log-tab", delta, cx));
+    settle(cx);
+}
+
+fn sideways(tab: &Entity<LogTab>, cx: &mut VisualTestContext) -> (Pixels, Pixels) {
+    cx.update(|_, cx| tab.read(cx).sideways_scroll())
+}
+
 fn search(tab: &Entity<LogTab>, text: &str, cx: &mut VisualTestContext) {
     let input = cx.update(|_, cx| tab.read(cx).search_input().clone());
     cx.update(|window, cx| {
@@ -272,11 +282,9 @@ fn the_view_follows_new_lines_until_the_user_scrolls_up(cx: &mut TestAppContext)
     send(&fixture, numbered(0..500), cx);
     assert!(exists("log-line-499", cx), "the newest line is in view");
     assert!(following(&tab, cx));
-    assert!(!exists("log-jump", cx));
 
     scroll_up(cx);
     assert!(!following(&tab, cx));
-    assert!(exists("log-jump", cx));
 
     send(&fixture, numbered(500..600), cx);
     assert!(!exists("log-line-599", cx), "the view stays in place");
@@ -286,9 +294,129 @@ fn the_view_follows_new_lines_until_the_user_scrolls_up(cx: &mut TestAppContext)
         "the stream continues"
     );
 
-    click("log-jump", cx);
+    click("log-follow", cx);
     assert!(following(&tab, cx));
     assert!(exists("log-line-599", cx));
+}
+
+#[gpui_kit::test]
+fn the_newest_line_stays_in_view_when_a_quiet_view_gets_shorter(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let tab = open(&fixture, cx);
+    send(&fixture, numbered(0..500), cx);
+    assert!(exists("log-line-499", cx));
+
+    cx.simulate_resize(gpui_kit::size(px(1400.), px(400.)));
+    settle(cx);
+
+    assert!(exists("log-line-499", cx), "no new line had to arrive");
+    assert!(following(&tab, cx));
+}
+
+#[gpui_kit::test]
+fn the_follow_checkbox_pauses_and_resumes_while_the_stream_continues(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let tab = open(&fixture, cx);
+    send(&fixture, numbered(0..500), cx);
+
+    click("log-follow", cx);
+    assert!(!following(&tab, cx));
+    send(&fixture, numbered(500..600), cx);
+    assert!(exists("log-line-499", cx), "the view stays in place");
+    assert!(!exists("log-line-599", cx));
+    assert_eq!(cx.update(|_, cx| tab.read(cx).retained()), Some(0..600));
+
+    click("log-follow", cx);
+    assert!(following(&tab, cx));
+    assert!(exists("log-line-599", cx));
+}
+
+#[gpui_kit::test]
+fn moving_to_a_search_match_pauses_following(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let tab = open(&fixture, cx);
+    send(&fixture, numbered(0..500), cx);
+
+    search(&tab, "line 10", cx);
+    wait_until(cx, "the search", |cx| !matches(&tab, cx).is_empty());
+    settle(cx);
+
+    assert!(!following(&tab, cx));
+}
+
+#[gpui_kit::test]
+fn a_new_stream_starts_following_even_after_pausing(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app", "sidecar"], &[]));
+    let tab = open(&fixture, cx);
+    send(&fixture, numbered(0..500), cx);
+    click("log-follow", cx);
+    assert!(!following(&tab, cx));
+
+    click("log-container-sidecar", cx);
+    assert!(following(&tab, cx));
+    send(&fixture, numbered(0..500), cx);
+    assert!(exists("log-line-499", cx));
+}
+
+#[gpui_kit::test]
+fn a_wide_line_far_from_the_first_row_can_be_reached(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let tab = open(&fixture, cx);
+    let mut lines = numbered(0..500);
+    lines[300] = "x".repeat(2000);
+    send(&fixture, lines, cx);
+
+    assert!(sideways(&tab, cx).1 > px(5000.), "the width covers it");
+
+    scroll_right(px(1000.), cx);
+    assert_eq!(sideways(&tab, cx).0, px(1000.));
+}
+
+#[gpui_kit::test]
+fn the_sideways_range_shrinks_when_the_widest_line_is_dropped(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    *fixture.services.log_limits.lock().unwrap() = Some((400, usize::MAX));
+    let tab = open(&fixture, cx);
+    let mut lines = numbered(0..300);
+    lines[0] = "x".repeat(2000);
+    lines[1] = "x".repeat(1000);
+    send(&fixture, lines, cx);
+    let full = sideways(&tab, cx).1;
+    scroll_right(full, cx);
+
+    send(&fixture, numbered(300..401), cx);
+
+    let (offset, range) = sideways(&tab, cx);
+    assert!(range > px(0.) && range < full);
+    assert!(offset <= range, "the view is still within the lines");
+}
+
+#[gpui_kit::test]
+fn scrolling_sideways_keeps_following_and_keeps_its_position(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let tab = open(&fixture, cx);
+    let mut lines = numbered(0..500);
+    lines[0] = "x".repeat(2000);
+    send(&fixture, lines, cx);
+
+    scroll_right(px(300.), cx);
+    assert!(following(&tab, cx));
+
+    send(&fixture, numbered(500..600), cx);
+    assert!(following(&tab, cx));
+    assert!(exists("log-line-599", cx));
+    assert_eq!(sideways(&tab, cx).0, px(300.));
+}
+
+#[gpui_kit::test]
+fn lines_that_fit_do_not_scroll_sideways(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let tab = open(&fixture, cx);
+    send(&fixture, numbered(0..500), cx);
+
+    scroll_right(px(300.), cx);
+
+    assert_eq!(sideways(&tab, cx), (px(0.), px(0.)));
 }
 
 #[gpui_kit::test]

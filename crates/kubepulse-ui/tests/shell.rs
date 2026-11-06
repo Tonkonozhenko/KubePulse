@@ -3,10 +3,10 @@ mod support;
 use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 
 use gpui_kit::{
-    AppContext as _, Entity, EntityId, SharedString, TestAppContext, VisualTestContext,
-    WindowOptions,
+    AppContext as _, Entity, EntityId, MouseButton, SharedString, TestAppContext,
+    VisualTestContext, WindowOptions,
     component::dock::{DockAreaState, DockPlacement, PanelId, PanelInfo, PanelState},
-    test::TestWindowExt as _,
+    test::{ClickOptions, TestWindowExt as _},
 };
 use kubepulse_cluster::{ClusterEntry, ConnectionState, FileError, ResourceKind, SessionOptions};
 use kubepulse_extension_api::{CommandContribution, Contributions, ExtensionRequest};
@@ -1130,6 +1130,42 @@ fn the_no_tabs_hint_is_inside_the_tab_area(cx: &mut TestAppContext) {
         )
     });
     assert_eq!(hint.origin.y, rail.origin.y);
+}
+
+fn click_title(tab: &Entity<ClusterTab>, button: MouseButton, cx: &mut VisualTestContext) {
+    let id = SharedString::from(format!("tab-title-{}", tab.entity_id()));
+    let options = ClickOptions::new().with_button(button);
+    cx.update(|window, cx| window.click_with_options(id, options, cx));
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn a_middle_click_on_a_tab_closes_it(cx: &mut TestAppContext) {
+    let harness = harness(
+        cx,
+        vec![
+            status("a", ConnectionState::Disconnected, &[]),
+            status("b", ConnectionState::Disconnected, &[]),
+        ],
+    );
+    let (workspace, cx) = window(cx, &harness.model, None);
+    let first = open(&workspace, "a", cx);
+    open(&workspace, "b", cx);
+
+    click_title(&first, MouseButton::Middle, cx);
+
+    assert_eq!(open_tabs(&workspace, cx), ["b"]);
+}
+
+#[gpui_kit::test]
+fn a_right_click_on_a_tab_leaves_it_open(cx: &mut TestAppContext) {
+    let harness = harness(cx, vec![status("a", ConnectionState::Disconnected, &[])]);
+    let (workspace, cx) = window(cx, &harness.model, None);
+    let tab = open(&workspace, "a", cx);
+
+    click_title(&tab, MouseButton::Right, cx);
+
+    assert_eq!(open_tabs(&workspace, cx), ["a"]);
 }
 
 #[gpui_kit::test]

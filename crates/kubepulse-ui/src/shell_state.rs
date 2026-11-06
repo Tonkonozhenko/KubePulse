@@ -295,6 +295,18 @@ pub fn close_button(id: EntityId, shell: Entity<ShellState>) -> impl IntoElement
         )
 }
 
+/// The click listener that closes tab `id` from its title on a middle click.
+pub fn close_on_middle_click(
+    id: EntityId,
+    shell: Entity<ShellState>,
+) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+    move |event, _, cx| {
+        if event.is_middle_click() {
+            shell.update(cx, |shell, cx| shell.request_close(id, cx));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use gpui_kit::EntityId;
