@@ -109,6 +109,8 @@ The host reads the manifest without running your code, so an inactive extension 
 
 Categories appear as groups in the order extensions load. Served kinds that no view declares go under Other resources, by API group.
 
+A resource view can set `icon` to a `ViewIcon`, which the sidebar and tab titles show. The host defines the set, and extensions cannot supply images. A view with no icon shows the generic one, and so does an icon name this host does not know, so a manifest that names a newer icon still loads. The field needs contract 1.2.
+
 Disabling an extension removes all of its contributions without a restart.
 
 ### Columns

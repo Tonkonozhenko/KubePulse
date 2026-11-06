@@ -11,10 +11,10 @@ use gpui_kit::{
 use kubepulse_cluster::{ClusterEntry, ConnectionState, FileError, ResourceKind, SessionOptions};
 use kubepulse_store::synthetic::pod_kind;
 use kubepulse_ui::{
-    cluster_model::{ClusterModel, SharedClusterModel},
+    cluster_model::ClusterModel,
     cluster_tab::ClusterTab,
     identity::{ClusterKey, IdentityStore},
-    persistence::{ConfigPaths, write_atomic},
+    persistence::ConfigPaths,
     preferences::{Appearance, Preferences, SharedPreferences},
     runtime::{ClusterCommand, ClusterRuntime, ClusterState, ClusterStatus, StoreConfig},
     services::SharedServices,
@@ -83,10 +83,8 @@ fn harness(cx: &mut TestAppContext, statuses: Vec<ClusterStatus>) -> Harness {
     let (model, shell) = cx.update(|cx| {
         gpui_kit::init(cx);
         cx.set_reduce_motion(true);
-        ClusterTab::register(cx);
         cx.set_global(SharedServices(Arc::new(FakeServices::idle())));
         let model = cx.new(|cx| ClusterModel::new(receiver, sender, IdentityStore::default(), cx));
-        cx.set_global(SharedClusterModel(model.clone()));
         let shell = cx.new(|_| ShellState::default());
         cx.set_global(SharedShellState(shell.clone()));
         settings_tab::init(Preferences::default(), None, cx);
@@ -148,26 +146,15 @@ fn no_commands(harness: &mut Harness) {
     );
 }
 
-fn tabs_in(state: &PanelState, found: &mut Vec<String>) {
-    if let PanelInfo::Panel(value) = &state.info
-        && let Some(context) = value["key"]["context"].as_str()
-    {
-        found.push(context.to_owned());
-    }
-    state
-        .children
-        .iter()
-        .for_each(|child| tabs_in(child, found));
-}
-
 fn layout(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) -> DockAreaState {
     cx.update(|_, cx| workspace.read(cx).dock().read(cx).dump(cx))
 }
 
 fn open_tabs(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) -> Vec<String> {
-    let mut found = Vec::new();
-    tabs_in(&layout(workspace, cx).center, &mut found);
-    found
+    tab_states(workspace, cx)
+        .into_iter()
+        .map(|(context, _, _)| context)
+        .collect()
 }
 
 fn click(id: &str, cx: &mut VisualTestContext) {
@@ -242,27 +229,22 @@ fn tab_states(
     workspace: &Entity<Workspace>,
     cx: &mut VisualTestContext,
 ) -> Vec<(String, String, bool)> {
-    fn collect(state: &PanelState, found: &mut Vec<(String, String, bool)>) {
-        if let PanelInfo::Panel(value) = &state.info
-            && let Some(context) = value["key"]["context"].as_str()
-        {
-            found.push((
-                context.to_owned(),
-                value["kind"]["kind"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned(),
-                value["pinned"].as_bool().unwrap(),
-            ));
-        }
-        state
-            .children
+    let panels = panel_ids(workspace, cx);
+    cx.update(|_, cx| {
+        let tabs = cx.global::<SharedShellState>().0.read(cx).summaries();
+        panels
             .iter()
-            .for_each(|child| collect(child, found));
-    }
-    let mut found = Vec::new();
-    collect(&layout(workspace, cx).center, &mut found);
-    found
+            .filter_map(|panel| tabs.iter().find(|tab| PanelId::from(tab.id) == *panel))
+            .map(|tab| {
+                let kind = tab.kind.as_ref().map(|kind| kind.kind.clone());
+                (
+                    tab.key.context.clone(),
+                    kind.unwrap_or_default(),
+                    tab.pinned,
+                )
+            })
+            .collect()
+    })
 }
 
 fn tab_state(context: &str, kind: &str, pinned: bool) -> (String, String, bool) {
@@ -276,8 +258,8 @@ fn expand_other_resources(cx: &mut VisualTestContext) {
 fn panel_ids(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) -> Vec<PanelId> {
     cx.update(|_, cx| {
         let dock = workspace.read(cx).dock().read(cx);
-        let tree = dock.layout(DockPlacement::Center).expect("a center layout");
-        tree.panels().collect()
+        let tree = dock.layout(DockPlacement::Center);
+        tree.map(|tree| tree.panels().collect()).unwrap_or_default()
     })
 }
 
@@ -1039,140 +1021,190 @@ fn kubeconfig_errors_appear_behind_a_warning_button(cx: &mut TestAppContext) {
     assert!(exists("kubeconfig-errors", cx));
 }
 
-// Restart
+// Starting clean
 
 fn config(directory: &tempfile::TempDir) -> ConfigPaths {
     ConfigPaths::in_directory(directory.path())
 }
 
-fn restore(directory: &tempfile::TempDir, saved: &str) {
-    write_atomic(&config(directory).workspace, saved).unwrap();
+#[gpui_kit::test]
+fn a_new_window_starts_empty_and_ignores_an_old_layout(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let mut harness = harness(cx, vec![status("a", ConnectionState::Disconnected, &[])]);
+    let old_layout = {
+        let (workspace, cx) = window(cx, &harness.model, None);
+        open(&workspace, "a", cx);
+        serde_json::to_string(&layout(&workspace, cx)).unwrap()
+    };
+    fs::write(directory.path().join("workspace.json"), old_layout).unwrap();
+    cx.update(|cx| {
+        let shell = cx.new(|_| ShellState::default());
+        harness.shell = shell.clone();
+        cx.set_global(SharedShellState(shell));
+    });
+
+    let (workspace, cx) = window(cx, &harness.model, Some(config(&directory)));
+
+    assert!(open_tabs(&workspace, cx).is_empty());
+    assert!(exists("no-tabs-hint", cx));
+    assert_eq!(selected(&harness, cx), None);
+    no_commands(&mut harness);
 }
 
 #[gpui_kit::test]
-fn a_restart_restores_the_layout_disconnected_and_connects_nothing(cx: &mut TestAppContext) {
+fn changing_tabs_saves_no_layout(cx: &mut TestAppContext) {
     let directory = tempfile::tempdir().unwrap();
-    let mut harness = harness(
+    let harness = harness(cx, vec![status("a", ConnectionState::Disconnected, &[])]);
+    let (workspace, cx) = window(cx, &harness.model, Some(config(&directory)));
+    let tab = open(&workspace, "a", cx);
+    cx.update(|_, cx| tab.update(cx, |tab, cx| tab.pin(cx)));
+    cx.executor().advance_clock(Duration::from_secs(5));
+    cx.run_until_parked();
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+}
+
+// Closing tabs
+
+fn close_button(id: EntityId) -> String {
+    format!("tab-close-{id}")
+}
+
+fn close(tab: &Entity<ClusterTab>, cx: &mut VisualTestContext) {
+    click(&close_button(tab.entity_id()), cx);
+}
+
+#[gpui_kit::test]
+fn closing_the_active_tab_activates_its_neighbor(cx: &mut TestAppContext) {
+    let harness = harness(
         cx,
         vec![
             status("a", ConnectionState::Disconnected, &[]),
             status("b", ConnectionState::Disconnected, &[]),
         ],
     );
-
-    let saved = {
-        let (workspace, cx) = window(cx, &harness.model, None);
-        open(&workspace, "a", cx);
-        open(&workspace, "b", cx);
-        layout(&workspace, cx)
-    };
-    restore(&directory, &serde_json::to_string(&saved).unwrap());
-
-    let (restored, cx) = window(cx, &harness.model, Some(config(&directory)));
-    assert_eq!(open_tabs(&restored, cx), ["a", "b"]);
+    let (workspace, cx) = window(cx, &harness.model, None);
+    let first = open(&workspace, "a", cx);
+    let second = open(&workspace, "b", cx);
     assert_eq!(selected(&harness, cx), Some(key("b")));
-    no_commands(&mut harness);
 
-    let dock = cx.update(|_, cx| restored.read(cx).dock().clone());
-    let panel = panel_ids(&restored, cx)[0];
-    cx.update(|window, cx| dock.update(cx, |dock, cx| dock.select_panel(panel, window, cx)));
-    cx.run_until_parked();
-    no_commands(&mut harness);
-    assert!(exists("tab-connect", cx));
-}
+    close(&second, cx);
 
-fn saved_tabs_harness(
-    cx: &mut TestAppContext,
-    edit: impl Fn(&mut serde_json::Value, usize),
-) -> (tempfile::TempDir, Harness) {
-    let directory = tempfile::tempdir().unwrap();
-    let harness = harness(cx, vec![status("a", ConnectionState::Disconnected, &[])]);
-    let saved = {
-        let (workspace, cx) = window(cx, &harness.model, None);
-        open(&workspace, "a", cx);
-        open(&workspace, "a", cx);
-        layout(&workspace, cx)
-    };
-    let mut saved = serde_json::to_value(&saved).unwrap();
-    edit_tabs(&mut saved, &mut 0, &edit);
-    restore(&directory, &saved.to_string());
-    (directory, harness)
-}
-
-/// Calls `edit` with each saved tab's state and its position.
-fn edit_tabs(
-    value: &mut serde_json::Value,
-    index: &mut usize,
-    edit: &impl Fn(&mut serde_json::Value, usize),
-) {
-    match value {
-        serde_json::Value::Object(object) => {
-            if object.contains_key("key") && object.contains_key("kind") {
-                edit(value, *index);
-                *index += 1;
-                return;
-            }
-            object
-                .values_mut()
-                .for_each(|child| edit_tabs(child, index, edit));
-        }
-        serde_json::Value::Array(items) => {
-            items
-                .iter_mut()
-                .for_each(|child| edit_tabs(child, index, edit));
-        }
-        _ => {}
-    }
+    assert_eq!(open_tabs(&workspace, cx), ["a"]);
+    assert_eq!(active(&harness, cx), Some(first.entity_id()));
+    assert_eq!(selected(&harness, cx), Some(key("a")));
 }
 
 #[gpui_kit::test]
-fn a_preview_tab_survives_a_restart(cx: &mut TestAppContext) {
-    let (directory, harness) = saved_tabs_harness(cx, |tab, index| {
-        tab["pinned"] = (index == 0).into();
-    });
-    let (restored, cx) = window(cx, &harness.model, Some(config(&directory)));
-    assert_eq!(
-        tab_states(&restored, cx),
-        [tab_state("a", "Pod", true), tab_state("a", "Pod", false)]
+fn closing_an_inactive_tab_leaves_the_active_tab_alone(cx: &mut TestAppContext) {
+    let harness = harness(
+        cx,
+        vec![
+            status("a", ConnectionState::Disconnected, &[]),
+            status("b", ConnectionState::Disconnected, &[]),
+        ],
     );
+    let (workspace, cx) = window(cx, &harness.model, None);
+    let first = open(&workspace, "a", cx);
+    let second = open(&workspace, "b", cx);
+
+    close(&first, cx);
+
+    assert_eq!(open_tabs(&workspace, cx), ["b"]);
+    assert_eq!(active(&harness, cx), Some(second.entity_id()));
+    assert_eq!(selected(&harness, cx), Some(key("b")));
 }
 
 #[gpui_kit::test]
-fn a_layout_without_pinned_information_loads_pinned(cx: &mut TestAppContext) {
-    let (directory, harness) = saved_tabs_harness(cx, |tab, _| {
-        tab.as_object_mut().unwrap().remove("pinned");
-    });
-    let (restored, cx) = window(cx, &harness.model, Some(config(&directory)));
-    assert_eq!(
-        tab_states(&restored, cx),
-        [tab_state("a", "Pod", true), tab_state("a", "Pod", true)]
-    );
-}
-
-#[gpui_kit::test]
-fn a_layout_with_two_previews_keeps_one(cx: &mut TestAppContext) {
-    let (directory, harness) = saved_tabs_harness(cx, |tab, _| {
-        tab["pinned"] = false.into();
-    });
-    let (restored, cx) = window(cx, &harness.model, Some(config(&directory)));
-    let previews = tab_states(&restored, cx)
-        .iter()
-        .filter(|(_, _, pinned)| !pinned)
-        .count();
-    assert_eq!(previews, 1);
-}
-
-#[gpui_kit::test]
-fn a_damaged_layout_file_starts_empty(cx: &mut TestAppContext) {
-    let directory = tempfile::tempdir().unwrap();
-    fs::write(&config(&directory).workspace, "not json").unwrap();
+fn the_no_tabs_hint_is_inside_the_tab_area(cx: &mut TestAppContext) {
     let harness = harness(cx, vec![]);
-    let (workspace, cx) = window(cx, &harness.model, Some(config(&directory)));
-    assert!(open_tabs(&workspace, cx).is_empty());
+    let (_workspace, cx) = window(cx, &harness.model, None);
+    let (hint, rail) = cx.update(|window, cx| {
+        window.render_frame(cx);
+        (
+            window.find("no-tabs-hint").bounds(),
+            window.find("cluster-rail").bounds(),
+        )
+    });
+    assert_eq!(hint.origin.y, rail.origin.y);
 }
 
 #[gpui_kit::test]
-fn a_restored_tab_refuses_to_connect_if_its_context_moved_servers(cx: &mut TestAppContext) {
+fn the_only_tab_can_be_closed(cx: &mut TestAppContext) {
+    let harness = harness(cx, vec![status("a", ConnectionState::Disconnected, &[])]);
+    let (workspace, cx) = window(cx, &harness.model, None);
+    let tab = open(&workspace, "a", cx);
+
+    close(&tab, cx);
+
+    assert!(open_tabs(&workspace, cx).is_empty());
+    assert!(exists("no-tabs-hint", cx));
+    assert!(exists("cluster-rail", cx));
+    assert!(exists("kind-sidebar", cx));
+}
+
+#[gpui_kit::test]
+fn closing_the_last_tab_of_a_pane_removes_the_pane(cx: &mut TestAppContext) {
+    let harness = harness(cx, vec![status("a", ConnectionState::Disconnected, &[])]);
+    let (workspace, cx) = window(cx, &harness.model, None);
+    open(&workspace, "a", cx);
+    let split = open(&workspace, "a", cx);
+    split_off_last_tab(&workspace, cx);
+    assert_eq!(group_count(&workspace, cx), 2);
+
+    close(&split, cx);
+
+    assert_eq!(group_count(&workspace, cx), 1);
+    assert_eq!(open_tabs(&workspace, cx), ["a"]);
+}
+
+#[gpui_kit::test]
+fn a_closed_preview_tab_leaves_room_for_a_new_one(cx: &mut TestAppContext) {
+    let harness = harness(cx, vec![serving("a", kinds())]);
+    let (workspace, cx) = window(cx, &harness.model, None);
+    select(&harness, "a", cx);
+    expand_other_resources(cx);
+    click("kind-pods", cx);
+    let preview = active(&harness, cx).unwrap();
+
+    click(&close_button(preview), cx);
+    assert!(open_tabs(&workspace, cx).is_empty());
+
+    click("kind-pods", cx);
+    assert_eq!(tab_states(&workspace, cx), [tab_state("a", "Pod", false)]);
+}
+
+#[gpui_kit::test]
+fn the_settings_tab_can_be_closed_and_opened_again(cx: &mut TestAppContext) {
+    let harness = harness(cx, vec![]);
+    let (workspace, cx) = window(cx, &harness.model, None);
+    click("rail-settings", cx);
+    let tab = cx.update(|_, cx| harness.shell.read(cx).settings_tab().unwrap());
+
+    click(&close_button(tab.entity_id()), cx);
+    assert_eq!(settings_open(&workspace, cx), 0);
+
+    click("rail-settings", cx);
+    assert_eq!(settings_open(&workspace, cx), 1);
+}
+
+#[gpui_kit::test]
+fn closing_a_clusters_last_tab_keeps_it_connected_and_releases_the_tab(cx: &mut TestAppContext) {
+    let mut harness = harness(cx, vec![serving("a", kinds())]);
+    let (workspace, cx) = window(cx, &harness.model, None);
+    let tab = open(&workspace, "a", cx);
+    let released = tab.downgrade();
+
+    close(&tab, cx);
+    drop(tab);
+    cx.run_until_parked();
+
+    no_commands(&mut harness);
+    assert_eq!(selected(&harness, cx), Some(key("a")));
+    assert_eq!(released.upgrade().map(|tab| tab.entity_id()), None);
+}
+
+#[gpui_kit::test]
+fn a_tab_refuses_to_connect_if_its_context_moved_servers(cx: &mut TestAppContext) {
     let mut harness = harness(cx, vec![status("a", ConnectionState::Disconnected, &[])]);
     let (workspace, cx) = window(cx, &harness.model, None);
     open(&workspace, "a", cx);
@@ -1183,42 +1215,6 @@ fn a_restored_tab_refuses_to_connect_if_its_context_moved_servers(cx: &mut TestA
     assert!(exists("tab-server-changed", cx));
     assert!(!exists("tab-connect", cx));
     no_commands(&mut harness);
-}
-
-#[gpui_kit::test]
-fn the_layout_saves_itself_after_changes(cx: &mut TestAppContext) {
-    let directory = tempfile::tempdir().unwrap();
-    let path = config(&directory).workspace;
-    let harness = harness(cx, vec![status("a", ConnectionState::Disconnected, &[])]);
-    let (workspace, cx) = window(cx, &harness.model, Some(config(&directory)));
-    open(&workspace, "a", cx);
-    cx.executor().advance_clock(Duration::from_secs(1));
-    cx.run_until_parked();
-    let saved: DockAreaState = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-    let mut tabs = Vec::new();
-    tabs_in(&saved.center, &mut tabs);
-    assert_eq!(tabs, ["a"]);
-}
-
-#[gpui_kit::test]
-fn pinning_alone_saves_the_layout(cx: &mut TestAppContext) {
-    let directory = tempfile::tempdir().unwrap();
-    let path = config(&directory).workspace;
-    let harness = harness(cx, vec![serving("a", kinds())]);
-    let (workspace, cx) = window(cx, &harness.model, Some(config(&directory)));
-    select(&harness, "a", cx);
-    expand_other_resources(cx);
-    click("kind-pods", cx);
-    cx.executor().advance_clock(Duration::from_secs(1));
-    cx.run_until_parked();
-    let id = active(&harness, cx).unwrap();
-    let tab = cx.update(|_, cx| harness.shell.read(cx).tab(id).unwrap());
-    cx.update(|_, cx| tab.update(cx, |tab, cx| tab.pin(cx)));
-    cx.executor().advance_clock(Duration::from_secs(1));
-    cx.run_until_parked();
-    assert!(tab_states(&workspace, cx)[0].2);
-    let saved = fs::read_to_string(&path).unwrap();
-    assert!(saved.contains("\"pinned\": true"), "{saved}");
 }
 
 fn open_settings(cx: &mut VisualTestContext) {
@@ -1296,12 +1292,10 @@ fn the_ui_stays_responsive_while_a_cluster_stalls(cx: &mut TestAppContext) {
 
     let model = cx.update(|cx| {
         gpui_kit::init(cx);
-        ClusterTab::register(cx);
         cx.set_global(SharedServices(Arc::new(FakeServices::idle())));
         let receiver = runtime.state();
         let model =
             cx.new(|cx| ClusterModel::new(receiver, commands, IdentityStore::default(), cx));
-        cx.set_global(SharedClusterModel(model.clone()));
         let shell = cx.new(|_| ShellState::default());
         cx.set_global(SharedShellState(shell));
         settings_tab::init(Preferences::default(), None, cx);
@@ -1377,21 +1371,6 @@ fn an_open_settings_tab_activates_rather_than_duplicates(cx: &mut TestAppContext
     assert!(!exists("settings", cx), "the kind's tab is in front");
     click("rail-settings", cx);
     assert!(exists("settings", cx));
-    assert_eq!(settings_open(&workspace, cx), 1);
-}
-
-#[gpui_kit::test]
-fn the_settings_tab_returns_with_the_layout(cx: &mut TestAppContext) {
-    let directory = tempfile::tempdir().unwrap();
-    let config = ConfigPaths::in_directory(directory.path());
-    let harness = harness(cx, vec![]);
-    {
-        let (workspace, cx) = window(cx, &harness.model, None);
-        click("rail-settings", cx);
-        let saved = serde_json::to_string(&layout(&workspace, cx)).unwrap();
-        write_atomic(&config.workspace, &saved).unwrap();
-    }
-    let (workspace, cx) = window(cx, &harness.model, Some(config));
     assert_eq!(settings_open(&workspace, cx), 1);
 }
 

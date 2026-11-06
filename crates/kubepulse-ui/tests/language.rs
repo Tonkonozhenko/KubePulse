@@ -12,14 +12,13 @@ use gpui_kit::{
 };
 use kubepulse_cluster::{ConnectionState, ResourceKind};
 use kubepulse_extension_api::{
-    ColumnContribution, ColumnSource, Contributions, KindRef, ResourceViewContribution,
+    ColumnContribution, ColumnSource, Contributions, KindRef, ResourceViewContribution, ViewIcon,
 };
 use kubepulse_extension_host::ContributionSet;
 use kubepulse_store::synthetic::{SyntheticCluster, pod_kind};
 use kubepulse_ui::{
-    cluster_model::{ClusterModel, SharedClusterModel, state_label},
+    cluster_model::{ClusterModel, state_label},
     cluster_rail::tooltip_text,
-    cluster_tab::ClusterTab,
     columns::navigation,
     identity::{ClusterIdentity, ClusterKey, IdentityStore},
     language,
@@ -56,6 +55,7 @@ fn contributions() -> ContributionSet {
                     title: "Pods".to_owned(),
                     kind: pod.clone(),
                     category: "Workloads".to_owned(),
+                    icon: ViewIcon::default(),
                 }],
                 columns: vec![ColumnContribution {
                     id: "status".to_owned(),
@@ -108,10 +108,8 @@ fn workspace(
     let (model, shell) = cx.update(|cx| {
         gpui_kit::init(cx);
         cx.set_reduce_motion(true);
-        ClusterTab::register(cx);
         cx.set_global(SharedServices(services));
         let model = cx.new(|cx| ClusterModel::new(receiver, sender, IdentityStore::default(), cx));
-        cx.set_global(SharedClusterModel(model.clone()));
         let shell = cx.new(|cx| {
             let mut shell = ShellState::default();
             shell.select(key(), cx);

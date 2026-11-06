@@ -1,11 +1,19 @@
 //! What the rail, sidebar, tabs, and workspace share: the selected cluster, the
-//! active tab, and a directory of open tabs. Tabs restored by the dock have no
-//! reference to the workspace, so they report here themselves.
+//! active tab, and a directory of open tabs. Tabs have no reference to the
+//! workspace, so they report here themselves.
 
-use gpui_kit::*;
+use gpui_kit::{
+    assets::IconName,
+    component::{
+        Sizable as _,
+        button::{Button, ButtonVariants as _},
+    },
+    *,
+};
 use kubepulse_extension_api::KindRef;
+use rust_i18n::t;
 
-use crate::{cluster_tab::ClusterTab, identity::ClusterKey};
+use crate::{cluster_tab::ClusterTab, identity::ClusterKey, settings_tab::SettingsTab};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TabSummary {
@@ -56,7 +64,8 @@ struct Entry {
 }
 
 pub enum ShellEvent {
-    TabsChanged,
+    /// Only the workspace can reach the dock, so tabs ask it to close them.
+    CloseTab(EntityId),
 }
 
 impl EventEmitter<ShellEvent> for ShellState {}
@@ -67,10 +76,10 @@ pub struct ShellState {
     active: Option<EntityId>,
     tabs: Vec<Entry>,
     /// Kept apart from `tabs`, because the Settings tab has no cluster or kind.
-    settings_tab: Option<EntityId>,
+    settings_tab: Option<WeakEntity<SettingsTab>>,
 }
 
-/// Lets panels rebuilt from a saved layout find the shell state.
+/// Lets tabs find the shell state.
 pub struct SharedShellState(pub Entity<ShellState>);
 
 impl Global for SharedShellState {}
@@ -89,11 +98,11 @@ impl ShellState {
         self.active
     }
 
-    pub fn settings_tab(&self) -> Option<EntityId> {
-        self.settings_tab
+    pub fn settings_tab(&self) -> Option<Entity<SettingsTab>> {
+        self.settings_tab.as_ref().and_then(WeakEntity::upgrade)
     }
 
-    pub fn set_settings_tab(&mut self, tab: Option<EntityId>) {
+    pub fn set_settings_tab(&mut self, tab: Option<WeakEntity<SettingsTab>>) {
         self.settings_tab = tab;
     }
 
@@ -129,7 +138,6 @@ impl ShellState {
         summary.pinned |= self.tabs.iter().any(|entry| !entry.summary.pinned);
         let pinned = summary.pinned;
         self.tabs.push(Entry { summary, tab });
-        cx.emit(ShellEvent::TabsChanged);
         cx.notify();
         pinned
     }
@@ -139,9 +147,12 @@ impl ShellState {
             && entry.summary != summary
         {
             entry.summary = summary;
-            cx.emit(ShellEvent::TabsChanged);
             cx.notify();
         }
+    }
+
+    pub fn request_close(&self, id: EntityId, cx: &mut Context<Self>) {
+        cx.emit(ShellEvent::CloseTab(id));
     }
 
     pub fn remove_tab(&mut self, id: EntityId, cx: &mut Context<Self>) {
@@ -160,6 +171,24 @@ impl ShellState {
         }
         cx.notify();
     }
+}
+
+/// Closes tab `id`. It stops the press too, so the tab is not activated first.
+pub fn close_button(id: EntityId, shell: Entity<ShellState>) -> impl IntoElement {
+    div()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .child(
+            Button::new(SharedString::from(format!("tab-close-{id}")))
+                .icon(IconName::X)
+                .ghost()
+                .xsmall()
+                .tab_stop(false)
+                .tooltip(t!("tab.close").to_string())
+                .on_click(move |_, _, cx| {
+                    cx.stop_propagation();
+                    shell.update(cx, |shell, cx| shell.request_close(id, cx));
+                }),
+        )
 }
 
 #[cfg(test)]

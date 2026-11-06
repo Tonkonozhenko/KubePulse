@@ -50,7 +50,7 @@ pub struct PreferencesModel {
     preferences: Preferences,
 }
 
-/// Lets panels rebuilt from a saved layout find the preferences.
+/// Lets views find the preferences.
 pub struct SharedPreferences(pub Entity<PreferencesModel>);
 
 impl Global for SharedPreferences {}

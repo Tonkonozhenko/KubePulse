@@ -2,13 +2,13 @@
 //! and every other action is on the right-click menu.
 
 use gpui_kit::{
+    assets::IconName,
     component::{
-        ActiveTheme as _, Icon, IconName, Sizable as _, WindowExt as _,
+        ActiveTheme as _, Icon, Sizable as _, WindowExt as _,
         button::{Button, ButtonVariants as _},
         input::{Input, InputEvent, InputState},
         menu::{ContextMenuExt as _, PopupMenuItem},
         popover::Popover,
-        spinner::Spinner,
         tooltip::Tooltip,
     },
     prelude::FluentBuilder as _,
@@ -20,6 +20,7 @@ use rust_i18n::t;
 use crate::{
     cluster_model::{ClusterModel, can_connect, is_live, state_label},
     cluster_settings::ClusterSettingsForm,
+    icons::state_mark,
     identity::{ClusterIdentity, ClusterKey},
     runtime::ClusterStatus,
     settings_tab::OpenSettings,
@@ -311,6 +312,7 @@ impl ClusterRail {
                         )
                         .child(
                             Button::new("disconnect-confirm")
+                                .icon(IconName::Unplug)
                                 .label(t!("cluster.disconnect").to_string())
                                 .on_click(move |_, window, cx| {
                                     confirm_model.read(cx).disconnect(&confirm_context);
@@ -363,31 +365,21 @@ impl ClusterRail {
                 .child(content)
                 .test_support()
         };
-        let state_mark = match &state {
-            ConnectionState::Connecting | ConnectionState::Authenticating => Some(mark(
-                id("rail-attempt"),
-                Spinner::new().xsmall().into_any_element(),
-            )),
-            ConnectionState::Failed { .. } => Some(mark(
-                id("rail-failed"),
-                Icon::new(IconName::CircleX).xsmall().into_any_element(),
-            )),
-            ConnectionState::Degraded { .. } => Some(mark(
-                id("rail-degraded"),
-                Icon::new(IconName::TriangleAlert)
-                    .xsmall()
-                    .into_any_element(),
-            )),
+        let status_id = match &state {
+            ConnectionState::Connecting | ConnectionState::Authenticating => Some("rail-attempt"),
+            ConnectionState::Failed { .. } => Some("rail-failed"),
+            ConnectionState::Degraded { .. } => Some("rail-degraded"),
             _ => None,
-        }
-        .map(|mark| mark.bottom_0().right_0());
+        };
+        let status_mark = status_id.map(|prefix| {
+            mark(id(prefix), state_mark(&state, cx))
+                .bottom_0()
+                .right_0()
+        });
         let protected_mark = identity.protected.then(|| {
             mark(
                 id("rail-protected"),
-                Icon::empty()
-                    .path("icons/shield.svg")
-                    .xsmall()
-                    .into_any_element(),
+                Icon::new(IconName::Shield).xsmall().into_any_element(),
             )
             .top_0()
             .right_0()
@@ -435,7 +427,7 @@ impl ClusterRail {
                         }
                     })
                     .child(initials(&identity.name))
-                    .children(state_mark)
+                    .children(status_mark)
                     .children(protected_mark)
                     .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
                     .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
@@ -449,33 +441,40 @@ impl ClusterRail {
                     }))
                     .test_support()
                     .context_menu(move |menu, _, _| {
-                        let (label, action) = match &state {
+                        let (label, glyph, action) = match &state {
                             ConnectionState::Disconnected => {
-                                (t!("cluster.connect"), MenuAction::Connect)
+                                (t!("cluster.connect"), IconName::Plug, MenuAction::Connect)
                             }
                             ConnectionState::Failed { .. } => {
-                                (t!("cluster.retry"), MenuAction::Connect)
+                                (t!("cluster.retry"), IconName::RotateCw, MenuAction::Connect)
                             }
                             ConnectionState::Connecting | ConnectionState::Authenticating => {
-                                (t!("common.cancel"), MenuAction::Cancel)
+                                (t!("common.cancel"), IconName::X, MenuAction::Cancel)
                             }
-                            ConnectionState::Connected | ConnectionState::Degraded { .. } => {
-                                (t!("cluster.disconnect"), MenuAction::Disconnect)
-                            }
+                            ConnectionState::Connected | ConnectionState::Degraded { .. } => (
+                                t!("cluster.disconnect"),
+                                IconName::Unplug,
+                                MenuAction::Disconnect,
+                            ),
                         };
-                        let item = |label: String, action: MenuAction| {
+                        let item = |label: String, glyph: IconName, action: MenuAction| {
                             let rail = rail.clone();
                             let context = menu_context.clone();
-                            PopupMenuItem::new(label).on_click(move |_, window, cx| {
-                                if let Some(rail) = rail.upgrade() {
-                                    rail.update(cx, |rail, cx| {
-                                        rail.run(action, &context, window, cx);
-                                    });
-                                }
-                            })
+                            PopupMenuItem::new(label)
+                                .icon(glyph)
+                                .on_click(move |_, window, cx| {
+                                    if let Some(rail) = rail.upgrade() {
+                                        rail.update(cx, |rail, cx| {
+                                            rail.run(action, &context, window, cx);
+                                        });
+                                    }
+                                })
                         };
-                        menu.item(item(label.to_string(), action))
-                            .item(item(t!("settings.title").to_string(), MenuAction::Settings))
+                        menu.item(item(label.to_string(), glyph, action)).item(item(
+                            t!("settings.title").to_string(),
+                            IconName::Settings,
+                            MenuAction::Settings,
+                        ))
                     }),
             )
     }

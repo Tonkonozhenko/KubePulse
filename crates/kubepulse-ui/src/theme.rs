@@ -177,7 +177,7 @@ pub struct ThemeCatalog {
     _watcher: Option<ThemeWatcher>,
 }
 
-/// Lets panels rebuilt from a saved layout find the catalog.
+/// Lets views find the catalog.
 pub struct SharedThemes(pub Entity<ThemeCatalog>);
 
 impl Global for SharedThemes {}

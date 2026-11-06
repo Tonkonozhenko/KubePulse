@@ -54,6 +54,7 @@ fn manifest() -> Manifest {
                 title: "V".into(),
                 kind: kind(),
                 category: "C".into(),
+                icon: ViewIcon::Box,
             }],
             columns: vec![
                 ColumnContribution {
@@ -468,4 +469,28 @@ fn a_manifest_without_translations_still_parses() {
 fn the_language_messages_round_trip() {
     round_trip(&HostOperation::GetLanguage);
     round_trip(&HostResponse::Language { tag: "de".into() });
+}
+
+#[test]
+fn a_view_without_an_icon_is_generic() {
+    let view: ResourceViewContribution = serde_json::from_value(json!({
+        "id": "v", "title": "V", "kind": { "group": "", "kind": "Pod" },
+    }))
+    .unwrap();
+    assert_eq!(view.icon, ViewIcon::Generic);
+}
+
+#[test]
+fn an_unknown_icon_name_is_generic() {
+    let icon: ViewIcon = serde_json::from_value(json!("from-a-newer-contract")).unwrap();
+    assert_eq!(icon, ViewIcon::Generic);
+}
+
+#[test]
+fn icon_names_are_kebab_case_and_survive_a_round_trip() {
+    assert_eq!(
+        serde_json::to_value(ViewIcon::SettingsFile).unwrap(),
+        json!("settings-file")
+    );
+    all(&[ViewIcon::Box, ViewIcon::StorageClass, ViewIcon::Generic]);
 }

@@ -9,8 +9,9 @@ use std::{
 };
 
 use gpui_kit::{
+    assets::IconName,
     component::{
-        ActiveTheme as _, IndexPath,
+        ActiveTheme as _, Icon, IndexPath, Sizable as _,
         combobox::{Combobox, ComboboxEvent, ComboboxState},
         input::{Input, InputEvent, InputState},
         searchable_list::SearchableVec,
@@ -680,8 +681,14 @@ impl Render for ResourceBrowser {
                 div()
                     .flex()
                     .gap_2()
-                    .child(div().flex_1().child(Input::new(&self.filter)))
-                    .child(div().flex_1().child(Input::new(&self.labels)))
+                    .child(div().flex_1().child(
+                        Input::new(&self.filter).prefix(Icon::new(IconName::Funnel).xsmall()),
+                    ))
+                    .child(
+                        div().flex_1().child(
+                            Input::new(&self.labels).prefix(Icon::new(IconName::Tag).xsmall()),
+                        ),
+                    )
                     .children(self.namespaces.as_ref().map(|picker| {
                         let picker = Combobox::new(picker)
                             .placeholder(t!("browser.all_namespaces").to_string())

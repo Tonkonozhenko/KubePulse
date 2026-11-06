@@ -1,5 +1,4 @@
-//! Local files: layout, cluster display settings, and preferences. No secrets
-//! are stored.
+//! Local files: cluster display settings and preferences. No secrets are stored.
 
 use std::{
     fs, io,
@@ -8,7 +7,6 @@ use std::{
 
 #[derive(Clone, Debug)]
 pub struct ConfigPaths {
-    pub workspace: PathBuf,
     pub clusters: PathBuf,
     pub preferences: PathBuf,
     pub themes: PathBuf,
@@ -17,7 +15,6 @@ pub struct ConfigPaths {
 impl ConfigPaths {
     pub fn in_directory(directory: &Path) -> Self {
         Self {
-            workspace: directory.join("workspace.json"),
             clusters: directory.join("clusters.json"),
             preferences: directory.join("settings.json"),
             themes: directory.join("themes"),

@@ -29,7 +29,7 @@ pub trait ClusterServices: Send + Sync + 'static {
     -> Reply<ExtensionResponse, CallError>;
 }
 
-/// Lets views find the services, including those rebuilt from a saved layout.
+/// Lets views find the services.
 pub struct SharedServices(pub Arc<dyn ClusterServices>);
 
 impl Global for SharedServices {}

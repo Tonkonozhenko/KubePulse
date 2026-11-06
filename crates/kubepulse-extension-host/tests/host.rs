@@ -545,7 +545,7 @@ async fn an_incompatible_manifest_is_refused_with_a_clear_message() {
     };
     assert_eq!(
         reason,
-        "built for contract 2.0, but this application provides 1.1"
+        "built for contract 2.0, but this application provides 1.2"
     );
     assert!(contributed(&host).is_empty());
     assert_eq!(
@@ -590,12 +590,14 @@ fn translated_manifest(id: &str, category: &str, translated: &[(&str, &str, &str
                     title: "Pods".into(),
                     kind: pods(),
                     category: category.into(),
+                    icon: ViewIcon::default(),
                 },
                 ResourceViewContribution {
                     id: "jobs".into(),
                     title: "Jobs".into(),
                     kind: KindRef::new("batch", "Job"),
                     category: category.into(),
+                    icon: ViewIcon::default(),
                 },
             ],
             commands: vec![CommandContribution {
@@ -711,7 +713,7 @@ async fn a_newer_minor_contract_is_refused_by_an_older_host() {
     };
     assert_eq!(
         reason,
-        "built for contract 1.1, but this application provides 1.0"
+        "built for contract 1.2, but this application provides 1.0"
     );
 }
 

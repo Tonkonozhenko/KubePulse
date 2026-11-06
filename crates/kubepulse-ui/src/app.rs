@@ -2,14 +2,13 @@
 
 use std::{path::PathBuf, sync::Arc, time::Instant};
 
-use gpui_kit::*;
+use gpui_kit::{assets::AllAssets, *};
 use kubepulse_cluster::{SessionOptions, default_paths};
 use kubepulse_extension_api::{ActivationTrigger, Extension};
 use kubepulse_extension_host::{ExtensionHost, HostOptions};
 
 use crate::{
-    cluster_model::{ClusterModel, SharedClusterModel},
-    cluster_tab::ClusterTab,
+    cluster_model::ClusterModel,
     identity::IdentityStore,
     language,
     persistence::{ConfigPaths, read_or_default},
@@ -78,44 +77,44 @@ pub fn run_with(options: RunOptions) {
     let services = Arc::new(RuntimeServices::new(clusters, host, runtime.handle()));
     let mut on_first_frame = options.exit_after_first_frame;
 
-    gpui_kit::application().run(move |cx| {
-        gpui_kit::init(cx);
-        ClusterTab::register(cx);
-        cx.set_global(SharedServices(services.clone()));
+    gpui_kit::application()
+        .with_assets(AllAssets)
+        .run(move |cx| {
+            gpui_kit::init(cx);
+            cx.set_global(SharedServices(services.clone()));
 
-        let (state, commands) = (runtime.state(), runtime.commands());
-        cx.set_global(BackgroundRuntime(runtime));
-        let model = cx.new(|cx| ClusterModel::new(state, commands, identities, cx));
-        cx.set_global(SharedClusterModel(model.clone()));
-        let shell = cx.new(|_| ShellState::default());
-        cx.set_global(SharedShellState(shell));
-        settings_tab::init(preferences, themes, cx);
+            let (state, commands) = (runtime.state(), runtime.commands());
+            cx.set_global(BackgroundRuntime(runtime));
+            let model = cx.new(|cx| ClusterModel::new(state, commands, identities, cx));
+            let shell = cx.new(|_| ShellState::default());
+            cx.set_global(SharedShellState(shell));
+            settings_tab::init(preferences, themes, cx);
 
-        let window_options = WindowOptions {
-            titlebar: Some(TitlebarOptions {
-                title: Some("KubePulse".into()),
+            let window_options = WindowOptions {
+                titlebar: Some(TitlebarOptions {
+                    title: Some("KubePulse".into()),
+                    ..Default::default()
+                }),
+                app_id: Some("kubepulse".to_owned()),
+                icon: Some(window_icon()),
                 ..Default::default()
-            }),
-            app_id: Some("kubepulse".to_owned()),
-            icon: Some(window_icon()),
-            ..Default::default()
-        };
-        gpui_kit::open_window(window_options, cx, |window, cx| {
-            if let Some(report) = on_first_frame.take() {
-                // Frame callbacks run before the draw, and a task queued here
-                // runs right after it.
-                window.on_next_frame(move |_, cx| {
-                    cx.spawn(async move |cx| {
-                        report(started.elapsed());
-                        cx.update(|cx| cx.quit());
-                    })
-                    .detach();
-                });
-            }
-            cx.new(|cx| Workspace::new(model, config, window, cx))
-        })
-        .expect("failed to open window");
-    });
+            };
+            gpui_kit::open_window(window_options, cx, |window, cx| {
+                if let Some(report) = on_first_frame.take() {
+                    // Frame callbacks run before the draw, and a task queued here
+                    // runs right after it.
+                    window.on_next_frame(move |_, cx| {
+                        cx.spawn(async move |cx| {
+                            report(started.elapsed());
+                            cx.update(|cx| cx.quit());
+                        })
+                        .detach();
+                    });
+                }
+                cx.new(|cx| Workspace::new(model, config, window, cx))
+            })
+            .expect("failed to open window");
+        });
 }
 
 fn window_icon() -> Arc<image::RgbaImage> {

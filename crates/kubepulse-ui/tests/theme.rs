@@ -9,8 +9,7 @@ use gpui_kit::{
     test::TestWindowExt as _,
 };
 use kubepulse_ui::{
-    cluster_model::{ClusterModel, SharedClusterModel},
-    cluster_tab::ClusterTab,
+    cluster_model::ClusterModel,
     identity::{ClusterKey, IdentityStore},
     language,
     persistence::ConfigPaths,
@@ -43,10 +42,8 @@ fn setup(
     cx.update(|cx| {
         gpui_kit::init(cx);
         cx.set_reduce_motion(true);
-        ClusterTab::register(cx);
         cx.set_global(SharedServices(Arc::new(FakeServices::idle())));
         let model = cx.new(|cx| ClusterModel::new(receiver, sender, IdentityStore::default(), cx));
-        cx.set_global(SharedClusterModel(model.clone()));
         let shell = cx.new(|_| ShellState::default());
         cx.set_global(SharedShellState(shell));
         settings_tab::init(preferences, themes, cx);

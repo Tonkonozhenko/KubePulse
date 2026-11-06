@@ -5,6 +5,7 @@ use std::{cell::Cell, collections::HashSet, sync::Arc};
 
 use base64::Engine as _;
 use gpui_kit::{
+    assets::IconName,
     component::{
         ActiveTheme as _, WindowExt as _,
         button::Button,
@@ -384,6 +385,11 @@ impl DetailView {
                     )
                     .child(
                         Button::new(format!("reveal-{key}"))
+                            .icon(if shown {
+                                IconName::EyeOff
+                            } else {
+                                IconName::Eye
+                            })
                             .label(
                                 if shown {
                                     t!("detail.hide")
@@ -442,6 +448,7 @@ impl DetailView {
         let needs_name = identity.protected;
         let confirm = ((!needs_name || self.name_matches) && !self.deleting).then(|| {
             Button::new("delete-confirm")
+                .icon(IconName::Trash)
                 .label(t!("detail.delete").to_string())
                 .on_click(move |_, window, cx| {
                     let _ = view.update(cx, |this, cx| this.delete(window, cx));
@@ -674,6 +681,7 @@ impl Render for DetailView {
             )
             .child(
                 Button::new("delete-object")
+                    .icon(IconName::Trash)
                     .label(t!("detail.delete").to_string())
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.open_delete_dialog(window, cx);

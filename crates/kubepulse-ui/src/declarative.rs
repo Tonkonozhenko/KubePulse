@@ -5,6 +5,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use gpui_kit::{
+    assets::IconName,
     component::{
         ActiveTheme as _,
         button::Button,
@@ -183,9 +184,9 @@ impl DeclarativeView {
             Some(FieldState::Choice { options, value }) => {
                 let buttons = options.iter().map(|option| {
                     let (key, chosen) = (key.clone(), option.clone());
-                    let marker = if option == value { "● " } else { "" };
                     Button::new(format!("{element_id}-{option}"))
-                        .label(format!("{marker}{option}"))
+                        .label(option.clone())
+                        .when(option == value, |this| this.icon(IconName::Check))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             if let Some(FieldState::Choice { value, .. }) =
                                 this.fields.get_mut(&key)

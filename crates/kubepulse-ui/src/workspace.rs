@@ -1,15 +1,15 @@
 //! The main window: the cluster rail, the kind sidebar, and a dock of tabs and
 //! panes.
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc};
 
 use gpui_kit::{
     base::dock::PanelView,
     component::{
         ActiveTheme as _,
         dock::{
-            DockArea, DockAreaState, DockEvent, DockLayout, DockPlacement, DockSkin, InsertTarget,
-            NodeId, PaneRef, PanelId, panel_handle,
+            DockArea, DockEvent, DockLayout, DockPlacement, DockSkin, InsertTarget, NodeId,
+            PaneRef, PanelId, panel_handle,
         },
     },
     prelude::FluentBuilder as _,
@@ -26,17 +26,14 @@ use crate::{
     columns::kind_ref,
     identity::ClusterKey,
     kind_sidebar::{KindSidebar, KindSidebarEvent},
-    persistence::{ConfigPaths, read_or_default, write_atomic},
+    persistence::{ConfigPaths, write_atomic},
     preferences::{PreferencesEvent, PreferencesModel, SharedPreferences},
     settings_tab::{OpenSettings, SettingsTab},
     shell_state::{Placement, SharedShellState, ShellEvent, ShellState, place_kind},
     theme::{self, SharedThemes, ThemeCatalog},
 };
 
-const SAVE_DELAY: Duration = Duration::from_millis(500);
 const DOCK_ID: &str = "workspace";
-/// Bump when saved layouts stop being readable.
-const LAYOUT_VERSION: usize = 1;
 
 pub struct Workspace {
     model: Entity<ClusterModel>,
@@ -47,8 +44,6 @@ pub struct Workspace {
     sidebar: Entity<KindSidebar>,
     dock: Entity<DockArea>,
     paths: Option<ConfigPaths>,
-    /// Superseded saves give up, so bursts of edits write once.
-    save_generation: u64,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -64,30 +59,16 @@ impl Workspace {
         let themes = cx.global::<SharedThemes>().0.clone();
         let rail = cx.new(|cx| ClusterRail::new(model.clone(), window, cx));
         let sidebar = cx.new(|cx| KindSidebar::new(model.clone(), cx));
-        let (dock, _skin) = DockSkin::dock_area(DOCK_ID, Some(LAYOUT_VERSION), window, cx);
-
-        if let Some(paths) = &paths {
-            let saved: Option<DockAreaState> = read_or_default(&paths.workspace, |text| {
-                serde_json::from_str(text).map(Some)
-            });
-            if let Some(saved) = saved.filter(|state| state.version == Some(LAYOUT_VERSION)) {
-                dock.update(cx, |dock, cx| {
-                    if let Err(error) = dock.load(saved, window, cx) {
-                        tracing::warn!(%error, "ignoring saved layout");
-                    }
-                });
-            }
-        }
+        let (dock, _skin) = DockSkin::dock_area(DOCK_ID, None, window, cx);
 
         let subscriptions = vec![
-            cx.subscribe(&dock, |this, _, event: &DockEvent, cx| {
+            cx.subscribe(&dock, |_, _, event: &DockEvent, cx| {
                 if matches!(event, DockEvent::LayoutChanged) {
-                    this.schedule_layout_save(cx);
                     cx.notify();
                 }
             }),
-            cx.subscribe(&shell, |this, _, event: &ShellEvent, cx| match event {
-                ShellEvent::TabsChanged => this.schedule_layout_save(cx),
+            cx.subscribe_in(&shell, window, |this, _, event, window, cx| match event {
+                ShellEvent::CloseTab(id) => this.close_tab(*id, window, cx),
             }),
             cx.subscribe_in(&sidebar, window, |this, _, event, window, cx| match event {
                 KindSidebarEvent::Show { key, kind, pin } => {
@@ -148,7 +129,6 @@ impl Workspace {
             sidebar,
             dock,
             paths,
-            save_generation: 0,
             _subscriptions: subscriptions,
         }
     }
@@ -242,7 +222,12 @@ impl Workspace {
 
     /// Activates the Settings tab, opening it if needed.
     pub fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(tab) = self.shell.read(cx).settings_tab() {
+        if let Some(tab) = self
+            .shell
+            .read(cx)
+            .settings_tab()
+            .map(|tab| tab.entity_id())
+        {
             self.dock
                 .update(cx, |dock, cx| dock.select_panel(tab.into(), window, cx));
             return;
@@ -285,22 +270,16 @@ impl Workspace {
         });
     }
 
-    fn schedule_layout_save(&mut self, cx: &mut Context<Self>) {
-        let Some(path) = self.paths.as_ref().map(|paths| paths.workspace.clone()) else {
-            return;
-        };
-        self.save_generation += 1;
-        let generation = self.save_generation;
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(SAVE_DELAY).await;
-            let dump = this.update(cx, |this, cx| {
-                (this.save_generation == generation).then(|| this.dock.read(cx).dump(cx))
-            });
-            if let Ok(Some(state)) = dump {
-                save_in_background(path, serde_json::to_string_pretty(&state), cx);
+    fn close_tab(&mut self, id: EntityId, window: &mut Window, cx: &mut Context<Self>) {
+        let shell = self.shell.read(cx);
+        let (tab, settings) = (shell.tab(id), shell.settings_tab());
+        self.dock.update(cx, |dock, cx| match (tab, settings) {
+            (Some(tab), _) => dock.remove_panel(tab, window, cx),
+            (None, Some(settings)) if settings.entity_id() == id => {
+                dock.remove_panel(settings, window, cx);
             }
-        })
-        .detach();
+            _ => {}
+        });
     }
 
     /// The window's value, because the application-wide one is unreliable on
@@ -362,6 +341,8 @@ impl Render for Workspace {
                             div()
                                 .id("no-tabs-hint")
                                 .absolute()
+                                .top_0()
+                                .left_0()
                                 .size_full()
                                 .flex()
                                 .items_center()

@@ -3,10 +3,11 @@
 use std::{fs, path::PathBuf};
 
 use gpui_kit::{
+    assets::IconName,
     component::{
-        ActiveTheme as _, Sizable as _, ThemeMode,
+        ActiveTheme as _, Icon, Sizable as _, ThemeMode,
         button::Button,
-        dock::{self, PanelEvent, PanelState, panel_handle},
+        dock::{self, PanelEvent},
         menu::{DropdownMenu as _, PopupMenuItem},
         setting::{SettingField, SettingGroup, SettingItem, SettingPage, Settings},
     },
@@ -18,7 +19,7 @@ use rust_i18n::t;
 use crate::{
     language,
     preferences::{Appearance, Preferences, PreferencesModel, SharedPreferences},
-    shell_state::{SharedShellState, ShellState},
+    shell_state::{SharedShellState, ShellState, close_button},
     theme::{SharedThemes, ThemeCatalog, ThemeFileError, ThemeFileProblem, ThemeWatcher, apply},
 };
 
@@ -31,12 +32,9 @@ pub const SETTINGS_SHORTCUT: &str = if cfg!(target_os = "macos") {
 
 gpui_kit::actions!(kubepulse, [OpenSettings]);
 
-/// Must run before any window opens, because a saved layout can hold the tab
-/// and the first frame must use the chosen theme.
+/// Must run before any window opens, because the first frame must use the chosen
+/// theme.
 pub fn init(preferences: Preferences, themes: Option<ThemeWatcher>, cx: &mut App) {
-    dock::register_panel(cx, PANEL_NAME, |_, _, cx| {
-        panel_handle(cx.new(SettingsTab::new))
-    });
     cx.bind_keys([KeyBinding::new(SETTINGS_SHORTCUT, OpenSettings, None)]);
     let catalog = cx.new(|cx| ThemeCatalog::new(themes, cx));
     let system = cx.window_appearance();
@@ -217,6 +215,7 @@ impl SettingsTab {
                 SettingField::render(move |_, _, _| {
                     let folder = folder.clone();
                     Button::new("open-themes-folder")
+                        .icon(IconName::FolderOpen)
                         .label(t!("settings.open_folder").to_string())
                         .outline()
                         .small()
@@ -268,6 +267,7 @@ impl SettingsTab {
                     t!("settings.restart_to_apply").to_string(),
                     SettingField::render(|_, _, _| {
                         Button::new("language-restart")
+                            .icon(IconName::RotateCw)
                             .label(t!("settings.restart_now").to_string())
                             .outline()
                             .small()
@@ -286,8 +286,8 @@ impl gpui_kit::base::dock::Panel for SettingsTab {
         PANEL_NAME
     }
 
-    fn dump(&self, _: &App) -> PanelState {
-        PanelState::new(PANEL_NAME)
+    fn closable(&self, _: &App) -> bool {
+        false
     }
 
     fn on_added_to(
@@ -296,7 +296,7 @@ impl gpui_kit::base::dock::Panel for SettingsTab {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let tab = cx.entity_id();
+        let tab = cx.weak_entity();
         self.shell
             .update(cx, |shell, _| shell.set_settings_tab(Some(tab)));
     }
@@ -308,10 +308,15 @@ impl gpui_kit::base::dock::Panel for SettingsTab {
 }
 
 impl dock::Panel for SettingsTab {
-    fn title(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn title(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("settings-tab-title")
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(Icon::new(IconName::Settings).xsmall())
             .child(t!("settings.title").to_string())
+            .child(close_button(cx.entity_id(), self.shell.clone()))
             .test_support()
     }
 }

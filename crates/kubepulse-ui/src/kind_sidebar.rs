@@ -3,8 +3,9 @@
 use std::{collections::HashSet, sync::Arc};
 
 use gpui_kit::{
+    assets::IconName,
     component::{
-        ActiveTheme as _, Icon, IconName, Sizable as _,
+        ActiveTheme as _, Icon, Sizable as _,
         button::Button,
         menu::{ContextMenuExt as _, PopupMenuItem},
     },
@@ -19,6 +20,7 @@ use crate::{
     cluster_model::{ClusterModel, state_label},
     cluster_tab::kind_element_id,
     columns::{NavigationEntry, NavigationGroup, kind_ref, navigation},
+    icons::{state_mark, view_glyph},
     identity::ClusterKey,
     runtime::ClusterStatus,
     services::{ClusterServices, SharedServices},
@@ -111,7 +113,7 @@ impl KindSidebar {
         key: &ClusterKey,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
-        let NavigationEntry { title, kind } = entry;
+        let NavigationEntry { title, icon, kind } = entry;
         let id = kind_element_id(&kind);
         let active = self.shell.read(cx).active_tab();
         let current = active
@@ -122,10 +124,14 @@ impl KindSidebar {
         let menu_key = key.clone();
         div()
             .id(SharedString::from(id.clone()))
+            .flex()
+            .items_center()
+            .gap_2()
             .pl_4()
             .rounded_sm()
             .cursor_pointer()
             .when(current, |this| this.bg(selection))
+            .child(Icon::new(view_glyph(icon)).xsmall())
             .child(title)
             .when(current, |this| {
                 this.child(
@@ -145,16 +151,16 @@ impl KindSidebar {
             .context_menu(move |menu, _, _| {
                 let (sidebar, key, kind) = (sidebar.clone(), menu_key.clone(), kind.clone());
                 menu.item(
-                    PopupMenuItem::new(t!("sidebar.open_new_tab").to_string()).on_click(
-                        move |_, _, cx| {
+                    PopupMenuItem::new(t!("sidebar.open_new_tab").to_string())
+                        .icon(IconName::ExternalLink)
+                        .on_click(move |_, _, cx| {
                             let (key, kind) = (key.clone(), kind.clone());
                             if let Some(sidebar) = sidebar.upgrade() {
                                 sidebar.update(cx, |_, cx| {
                                     cx.emit(KindSidebarEvent::OpenInNewTab { key, kind });
                                 });
                             }
-                        },
-                    ),
+                        }),
                 )
             })
     }
@@ -230,8 +236,12 @@ impl KindSidebar {
             .child(
                 div()
                     .id("sidebar-state")
+                    .flex()
+                    .items_center()
+                    .gap_1()
                     .text_xs()
                     .text_color(muted)
+                    .child(state_mark(state, cx))
                     .child(state_label(state))
                     .test_support(),
             )
@@ -251,10 +261,12 @@ impl KindSidebar {
         &self,
         id: &'static str,
         label: String,
+        icon: IconName,
         context: String,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         Button::new(id)
+            .icon(icon)
             .label(label)
             .on_click(cx.listener(move |this, _, _, cx| this.model.read(cx).connect(&context)))
     }
@@ -272,6 +284,7 @@ impl KindSidebar {
                     self.render_connect(
                         "sidebar-connect",
                         t!("cluster.connect").to_string(),
+                        IconName::Plug,
                         context,
                         cx,
                     )
@@ -288,6 +301,7 @@ impl KindSidebar {
                 self.render_connect(
                     "sidebar-retry",
                     t!("cluster.retry").to_string(),
+                    IconName::RotateCw,
                     context,
                     cx,
                 )

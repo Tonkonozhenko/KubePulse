@@ -105,7 +105,7 @@ Delete the code instead of adding a setting, because nothing should depend on it
 - `SettingsTab`: its `register_panel` call and `dump`.
 - `ConfigPaths`: the `workspace` field.
 
-`panel_name` stays because the kit's trait requires it. The `Shared*` globals stay because tab constructors read them, so only the comments that mention saved layouts change. `ClusterTab::same_server` also stays, because the kubeconfig can change while the application runs.
+`panel_name` stays because the kit's trait requires it. `SharedClusterModel` goes too, because only the restore factory read it. The other `Shared*` globals stay because views read them, so only their comments change. `ClusterTab::same_server` also stays, because the kubeconfig can change while the application runs.
 
 The kit's default `dump` is enough, so test helpers that read tabs from `dock.dump` move to `ShellState::summaries`.
 

@@ -71,7 +71,7 @@
   "settings.open_folder": "[Öpéñ földér~~~]",
   "settings.restart_now": "[Réšţàrţ ñöw~~~]",
   "settings.restart_to_apply": "[Réšţàrţ ţö àpplý~~~~]",
-  "settings.restart_warning": "[Réšţàrţîñg dîšçöññéçţš évérý çlûšţér.~~~~~~~~~~~]",
+  "settings.restart_warning": "[Réšţàrţîñg dîšçöññéçţš évérý çlûšţér àñd çlöšéš évérý ţàb.~~~~~~~~~~~~~~~~~]",
   "settings.theme_files": "[Ţhémé fîléš~~~]",
   "settings.theme_missing": "[Ţhé ţhémé %{name} îš mîššîñg, šö ţhé défàûlţ îš šhöwîñg.~~~~~~~~~~~~~~~~]",
   "settings.theme_name_taken": "[%{file}: ţhé ñàmé %{name} îš àlréàdý ţàkéñ~~~~~~~~~~~~]",
@@ -87,6 +87,7 @@
   "state.degraded": "[Dégràdéd~~]",
   "state.disconnected": "[Dîšçöññéçţéd~~~]",
   "state.failed": "[Fàîléd~]",
+  "tab.close": "[Çlöšé ţàb~~]",
   "tab.server_changed": "[Ţhîš çöñţéxţ îš mîššîñg ör ñöw pöîñţš ţö àñöţhér šérvér.~~~~~~~~~~~~~~~~]",
   "tab.stale": "[Šhöwîñg làšţ kñöwñ dàţà.~~~~~~~]",
   "workspace.no_tabs": "[Çhööšé à kîñd fröm ţhé šîdébàr.~~~~~~~~~]"

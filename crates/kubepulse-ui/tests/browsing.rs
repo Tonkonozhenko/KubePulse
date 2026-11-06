@@ -19,7 +19,7 @@ use kubepulse_store::{
     synthetic::{SyntheticCluster, pod, pod_kind},
 };
 use kubepulse_ui::{
-    cluster_model::{ClusterModel, ClusterModelEvent, SharedClusterModel},
+    cluster_model::{ClusterModel, ClusterModelEvent},
     cluster_tab::ClusterTab,
     identity::{ClusterKey, IdentityStore},
     preferences::Preferences,
@@ -72,10 +72,8 @@ fn harness(
         gpui_kit::init(cx);
         // Dialogs close at once, with no exit animation to wait for.
         cx.set_reduce_motion(true);
-        ClusterTab::register(cx);
         cx.set_global(SharedServices(services));
         let model = cx.new(|cx| ClusterModel::new(receiver, commands, identities, cx));
-        cx.set_global(SharedClusterModel(model.clone()));
         let shell = cx.new(|cx| {
             let mut shell = ShellState::default();
             shell.select(key(), cx);
@@ -324,6 +322,28 @@ fn filtering_by_text_keeps_matches_and_updates_the_count(cx: &mut TestAppContext
         (snapshot.rows.len(), snapshot.total)
     });
     assert_eq!((shown, total), (1, TEN_THOUSAND));
+}
+
+#[gpui_kit::test]
+fn a_new_tab_has_no_filter_label_selector_or_sort(cx: &mut TestAppContext) {
+    let mut harness = ten_thousand_pods(cx, pod_columns());
+    let first = harness.cells(1).1[0][0].clone();
+    harness.update_browser(|browser, cx| {
+        browser.set_filter(&pod(1234, 0).name, cx);
+        browser.set_labels("tier=none", cx);
+        browser.set_sort(Some((SortKey::Name, SortDirection::Descending)), cx);
+    });
+
+    let tab = harness.tab().entity_id();
+    let shell = harness.shell.clone();
+    harness
+        .cx
+        .update(|_, cx| shell.update(cx, |shell, cx| shell.request_close(tab, cx)));
+    harness.cx.run_until_parked();
+    harness.open_kind(&pod_kind());
+    harness.wait_for_rows(TEN_THOUSAND);
+
+    assert_eq!(harness.cells(1).1[0][0], first);
 }
 
 #[gpui_kit::test]

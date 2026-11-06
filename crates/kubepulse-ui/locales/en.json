@@ -71,7 +71,7 @@
   "settings.open_folder": "Open folder",
   "settings.restart_now": "Restart now",
   "settings.restart_to_apply": "Restart to apply",
-  "settings.restart_warning": "Restarting disconnects every cluster.",
+  "settings.restart_warning": "Restarting disconnects every cluster and closes every tab.",
   "settings.theme_files": "Theme files",
   "settings.theme_missing": "The theme %{name} is missing, so the default is showing.",
   "settings.theme_name_taken": "%{file}: the name %{name} is already taken",
@@ -87,6 +87,7 @@
   "state.degraded": "Degraded",
   "state.disconnected": "Disconnected",
   "state.failed": "Failed",
+  "tab.close": "Close tab",
   "tab.server_changed": "This context is missing or now points to another server.",
   "tab.stale": "Showing last known data.",
   "workspace.no_tabs": "Choose a kind from the sidebar."

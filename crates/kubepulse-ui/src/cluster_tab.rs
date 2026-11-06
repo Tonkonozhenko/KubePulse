@@ -1,51 +1,38 @@
 //! A tab bound to one cluster for its whole lifetime. Tabs hold no connection,
-//! so they survive disconnection and restart, and offer a connect action. A
-//! preview tab stays open only until the next kind replaces it.
+//! so they survive disconnection and offer a connect action. A preview tab stays
+//! open only until the next kind replaces it.
 
 use std::sync::Arc;
 
 use gpui_kit::{
+    assets::IconName,
     component::{
-        ActiveTheme as _,
+        ActiveTheme as _, Icon, Sizable as _,
         button::Button,
-        dock::{self, PanelBuildContext, PanelEvent, PanelInfo, PanelState, panel_handle},
+        dock::{self, PanelEvent},
     },
     prelude::FluentBuilder as _,
     *,
 };
 use kubepulse_cluster::{ConnectionState, ObjectTarget, ResourceKind};
 use kubepulse_extension_api::KindRef;
-use serde::{Deserialize, Serialize};
 
 use rust_i18n::t;
 
 use crate::{
-    cluster_model::{ClusterModel, SharedClusterModel, can_connect, state_label},
-    columns::{columns_for, kind_ref, kind_title},
+    cluster_model::{ClusterModel, can_connect, state_label},
+    columns::{columns_for, kind_icon, kind_ref, kind_title},
     detail::{DetailEvent, DetailView},
+    icons::view_glyph,
     identity::ClusterKey,
     resource_browser::{BrowserEvent, ResourceBrowser},
     services::{ClusterServices, SharedServices},
-    shell_state::{SharedShellState, ShellState, TabSummary},
+    shell_state::{SharedShellState, ShellState, TabSummary, close_button},
 };
 
 pub const PANEL_NAME: &str = "ClusterTab";
 
 const DETAIL_WIDTH: f32 = 420.;
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClusterTabState {
-    pub key: ClusterKey,
-    #[serde(default)]
-    pub kind: Option<KindRef>,
-    #[serde(default = "pinned_by_default")]
-    pub pinned: bool,
-}
-
-/// Layouts saved before preview tabs existed hold only pinned tabs.
-fn pinned_by_default() -> bool {
-    true
-}
 
 /// The same plural can be served by two groups, so the group is part of it.
 pub fn kind_element_id(kind: &ResourceKind) -> String {
@@ -146,23 +133,6 @@ impl ClusterTab {
             .update(cx, |shell, cx| shell.activate(id, key, cx));
     }
 
-    pub fn register(cx: &mut App) {
-        dock::register_panel(cx, PANEL_NAME, |context: PanelBuildContext, window, cx| {
-            let saved: Option<ClusterTabState> = match context.info() {
-                PanelInfo::Panel(value) => serde_json::from_value(value.clone())
-                    .inspect_err(|error| tracing::warn!(%error, "ignoring saved tab"))
-                    .ok(),
-                _ => None,
-            };
-            let (key, kind, pinned) = saved.map_or_else(
-                || (ClusterKey::new("", None), None, true),
-                |state| (state.key, state.kind, state.pinned),
-            );
-            let model = cx.global::<SharedClusterModel>().0.clone();
-            panel_handle(cx.new(|cx| Self::new(key, kind, pinned, model, window, cx)))
-        });
-    }
-
     /// Whether the kubeconfig still points this context at the tab's server. If
     /// it does not, connecting would reach a different cluster.
     fn same_server(&self, model: &ClusterModel) -> bool {
@@ -245,15 +215,8 @@ impl gpui_kit::base::dock::Panel for ClusterTab {
         PANEL_NAME
     }
 
-    fn dump(&self, _: &App) -> PanelState {
-        let mut state = PanelState::new(PANEL_NAME);
-        let saved = ClusterTabState {
-            key: self.key.clone(),
-            kind: self.kind.clone(),
-            pinned: self.pinned,
-        };
-        state.info = PanelInfo::panel(serde_json::to_value(saved).expect("tab state serializes"));
-        state
+    fn closable(&self, _: &App) -> bool {
+        false
     }
 
     fn on_added_to(
@@ -285,10 +248,12 @@ impl dock::Panel for ClusterTab {
     fn title(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let identity = self.model.read(cx).identity(&self.key);
         let contributions = self.services.contributions();
-        let title = self
-            .kind
-            .as_ref()
-            .map(|kind| kind_title(kind, &contributions));
+        let title = self.kind.as_ref().map(|kind| {
+            (
+                kind_icon(kind, &contributions),
+                kind_title(kind, &contributions),
+            )
+        });
         div()
             .id(SharedString::from(format!("tab-title-{}", cx.entity_id())))
             .flex()
@@ -296,7 +261,10 @@ impl dock::Panel for ClusterTab {
             .gap_2()
             .when(!self.pinned, |this| this.italic())
             .child(div().size_2().rounded_full().bg(rgb(identity.color)))
-            .children(title)
+            .when_some(title, |this, (icon, title)| {
+                this.child(Icon::new(view_glyph(icon)).xsmall())
+                    .child(title)
+            })
             .child(identity.name)
             .when(identity.protected, |this| {
                 this.child(t!("cluster.protected_tag").to_string())
@@ -310,6 +278,7 @@ impl dock::Panel for ClusterTab {
                     this.pin(cx);
                 }
             }))
+            .child(close_button(cx.entity_id(), self.shell.clone()))
             .test_support()
     }
 }
@@ -378,6 +347,7 @@ impl Render for ClusterTab {
                     .when(connect, |this| {
                         this.child(
                             Button::new("tab-connect")
+                                .icon(IconName::Plug)
                                 .label(t!("cluster.connect").to_string())
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.model.read(cx).connect(&context);

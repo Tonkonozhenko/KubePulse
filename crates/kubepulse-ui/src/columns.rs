@@ -4,7 +4,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use kubepulse_cluster::ResourceKind;
-use kubepulse_extension_api::{ColumnSource, KindRef};
+use kubepulse_extension_api::{ColumnSource, KindRef, ViewIcon};
 use kubepulse_extension_host::ContributionSet;
 use kubepulse_store::ColumnSpec;
 use rust_i18n::t;
@@ -88,6 +88,7 @@ pub fn columns_for(kind: &ResourceKind, contributions: &ContributionSet) -> Kind
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NavigationEntry {
     pub title: String,
+    pub icon: ViewIcon,
     pub kind: ResourceKind,
 }
 
@@ -117,6 +118,15 @@ pub fn kind_title(kind: &KindRef, contributions: &ContributionSet) -> String {
         .map_or_else(|| kind.kind.clone(), |view| view.title.clone())
 }
 
+pub fn kind_icon(kind: &KindRef, contributions: &ContributionSet) -> ViewIcon {
+    contributions
+        .extensions
+        .iter()
+        .flat_map(|(_, contributed)| &contributed.resource_views)
+        .find(|view| view.kind == *kind)
+        .map_or(ViewIcon::Generic, |view| view.icon)
+}
+
 const OTHER_RESOURCES: &str = "Other resources";
 const CORE_GROUP: &str = "core";
 
@@ -136,6 +146,7 @@ pub fn navigation(
             claimed.push(kind_ref(kind));
             let entry = NavigationEntry {
                 title: view.title.clone(),
+                icon: view.icon,
                 kind: kind.clone(),
             };
             match groups.iter_mut().find(|group| group.name == view.category) {
@@ -165,6 +176,7 @@ pub fn navigation(
         };
         sections.entry(name).or_default().push(NavigationEntry {
             title: kind.plural.clone(),
+            icon: ViewIcon::Generic,
             kind: kind.clone(),
         });
     }
@@ -225,6 +237,7 @@ mod tests {
                 title: "Pods".into(),
                 kind: pod.clone(),
                 category: "Workloads".into(),
+                icon: ViewIcon::default(),
             }],
             columns: vec![
                 ColumnContribution {
@@ -287,6 +300,18 @@ mod tests {
             &ContributionSet::default(),
         );
         assert_eq!(titles(&columns), ["Size", "Created"]);
+    }
+
+    #[test]
+    fn a_kind_uses_its_views_icon_and_an_undeclared_kind_is_generic() {
+        let mut declared = pods();
+        declared.resource_views[0].icon = ViewIcon::Box;
+        let set = set(declared);
+        assert_eq!(kind_icon(&KindRef::new("", "Pod"), &set), ViewIcon::Box);
+        assert_eq!(
+            kind_icon(&KindRef::new("example.com", "Widget"), &set),
+            ViewIcon::Generic
+        );
     }
 
     #[test]

@@ -76,6 +76,35 @@ pub enum ActivationTrigger {
     },
 }
 
+/// An icon from the set the host defines. Extensions name one and never supply
+/// image data. A name this host does not know reads as `Generic`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ViewIcon {
+    Box,
+    Layers,
+    Copy,
+    Database,
+    Server,
+    Timer,
+    Schedule,
+    Network,
+    Globe,
+    Shield,
+    Waypoints,
+    SettingsFile,
+    Key,
+    Disk,
+    StorageClass,
+    Account,
+    Role,
+    Link,
+    // Serde requires the catch-all to come last.
+    #[default]
+    #[serde(other)]
+    Generic,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceViewContribution {
     pub id: String,
@@ -84,6 +113,8 @@ pub struct ResourceViewContribution {
     /// The navigation group, such as `Workloads`.
     #[serde(default)]
     pub category: String,
+    #[serde(default)]
+    pub icon: ViewIcon,
 }
 
 /// Where a column's value comes from.

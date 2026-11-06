@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use kubepulse_extension_api::{
     CONTRACT_VERSION, ColumnContribution, ColumnSource, Contributions, Extension, ExtensionError,
     ExtensionRequest, ExtensionResponse, Host, KindRef, Manifest, Permission,
-    ResourceViewContribution, Verb,
+    ResourceViewContribution, Verb, ViewIcon,
 };
 
 /// One file per language, mapping declared text to its translation.
@@ -30,6 +30,7 @@ struct KindView {
     group: &'static str,
     kind: &'static str,
     title: &'static str,
+    icon: ViewIcon,
     columns: &'static [(&'static str, &'static str)],
 }
 
@@ -37,12 +38,14 @@ const fn view(
     group: &'static str,
     kind: &'static str,
     title: &'static str,
+    icon: ViewIcon,
     columns: &'static [(&'static str, &'static str)],
 ) -> KindView {
     KindView {
         group,
         kind,
         title,
+        icon,
         columns,
     }
 }
@@ -52,6 +55,7 @@ const WORKLOADS: &[KindView] = &[
         "",
         "Pod",
         "Pods",
+        ViewIcon::Box,
         &[
             ("Status", ".status.phase"),
             ("Restarts", ".status.containerStatuses[0].restartCount"),
@@ -63,6 +67,7 @@ const WORKLOADS: &[KindView] = &[
         "apps",
         "Deployment",
         "Deployments",
+        ViewIcon::Layers,
         &[
             ("Desired", ".spec.replicas"),
             ("Ready", ".status.readyReplicas"),
@@ -73,6 +78,7 @@ const WORKLOADS: &[KindView] = &[
         "apps",
         "StatefulSet",
         "StatefulSets",
+        ViewIcon::Database,
         &[
             ("Desired", ".spec.replicas"),
             ("Ready", ".status.readyReplicas"),
@@ -82,6 +88,7 @@ const WORKLOADS: &[KindView] = &[
         "apps",
         "DaemonSet",
         "DaemonSets",
+        ViewIcon::Server,
         &[
             ("Desired", ".status.desiredNumberScheduled"),
             ("Ready", ".status.numberReady"),
@@ -91,6 +98,7 @@ const WORKLOADS: &[KindView] = &[
         "apps",
         "ReplicaSet",
         "ReplicaSets",
+        ViewIcon::Copy,
         &[
             ("Desired", ".spec.replicas"),
             ("Ready", ".status.readyReplicas"),
@@ -100,6 +108,7 @@ const WORKLOADS: &[KindView] = &[
         "batch",
         "Job",
         "Jobs",
+        ViewIcon::Timer,
         &[
             ("Completions", ".spec.completions"),
             ("Succeeded", ".status.succeeded"),
@@ -109,6 +118,7 @@ const WORKLOADS: &[KindView] = &[
         "batch",
         "CronJob",
         "CronJobs",
+        ViewIcon::Schedule,
         &[
             ("Schedule", ".spec.schedule"),
             ("Suspended", ".spec.suspend"),
@@ -122,30 +132,39 @@ const NETWORK: &[KindView] = &[
         "",
         "Service",
         "Services",
+        ViewIcon::Network,
         &[("Type", ".spec.type"), ("Cluster IP", ".spec.clusterIP")],
     ),
     view(
         "networking.k8s.io",
         "Ingress",
         "Ingresses",
+        ViewIcon::Globe,
         &[
             ("Class", ".spec.ingressClassName"),
             ("Host", ".spec.rules[0].host"),
         ],
     ),
-    view("networking.k8s.io", "NetworkPolicy", "NetworkPolicies", &[]),
+    view(
+        "networking.k8s.io",
+        "NetworkPolicy",
+        "NetworkPolicies",
+        ViewIcon::Shield,
+        &[],
+    ),
     view(
         "discovery.k8s.io",
         "EndpointSlice",
         "EndpointSlices",
+        ViewIcon::Waypoints,
         &[("Address type", ".addressType")],
     ),
 ];
 
 const CONFIG: &[KindView] = &[
-    view("", "ConfigMap", "ConfigMaps", &[]),
+    view("", "ConfigMap", "ConfigMaps", ViewIcon::SettingsFile, &[]),
     // Secret columns must never read `.data`, so values stay out of the cache.
-    view("", "Secret", "Secrets", &[("Type", ".type")]),
+    view("", "Secret", "Secrets", ViewIcon::Key, &[("Type", ".type")]),
 ];
 
 const STORAGE: &[KindView] = &[
@@ -153,6 +172,7 @@ const STORAGE: &[KindView] = &[
         "",
         "PersistentVolumeClaim",
         "PersistentVolumeClaims",
+        ViewIcon::Disk,
         &[
             ("Status", ".status.phase"),
             ("Volume", ".spec.volumeName"),
@@ -163,6 +183,7 @@ const STORAGE: &[KindView] = &[
         "",
         "PersistentVolume",
         "PersistentVolumes",
+        ViewIcon::Disk,
         &[
             ("Capacity", ".spec.capacity.storage"),
             ("Status", ".status.phase"),
@@ -173,29 +194,45 @@ const STORAGE: &[KindView] = &[
         "storage.k8s.io",
         "StorageClass",
         "StorageClasses",
+        ViewIcon::StorageClass,
         &[("Provisioner", ".provisioner")],
     ),
 ];
 
 const ACCESS: &[KindView] = &[
-    view("", "ServiceAccount", "ServiceAccounts", &[]),
-    view("rbac.authorization.k8s.io", "Role", "Roles", &[]),
+    view(
+        "",
+        "ServiceAccount",
+        "ServiceAccounts",
+        ViewIcon::Account,
+        &[],
+    ),
+    view(
+        "rbac.authorization.k8s.io",
+        "Role",
+        "Roles",
+        ViewIcon::Role,
+        &[],
+    ),
     view(
         "rbac.authorization.k8s.io",
         "RoleBinding",
         "RoleBindings",
+        ViewIcon::Link,
         &[("Role", ".roleRef.name")],
     ),
     view(
         "rbac.authorization.k8s.io",
         "ClusterRole",
         "ClusterRoles",
+        ViewIcon::Role,
         &[],
     ),
     view(
         "rbac.authorization.k8s.io",
         "ClusterRoleBinding",
         "ClusterRoleBindings",
+        ViewIcon::Link,
         &[("Role", ".roleRef.name")],
     ),
 ];
@@ -246,6 +283,7 @@ impl Extension for KindGroup {
                 title: view.title.to_owned(),
                 kind: kind.clone(),
                 category: self.name.to_owned(),
+                icon: view.icon,
             });
             for (title, path) in view.columns {
                 contributions.columns.push(ColumnContribution {

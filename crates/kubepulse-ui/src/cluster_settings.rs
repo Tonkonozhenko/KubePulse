@@ -1,6 +1,7 @@
 //! The form inside the cluster settings dialog.
 
 use gpui_kit::{
+    assets::IconName,
     component::{
         button::Button,
         input::{Input, InputEvent, InputState},
@@ -82,6 +83,11 @@ impl Render for ClusterSettingsForm {
             .child(div().flex().gap_1().children(swatches))
             .child(
                 Button::new("toggle-protected")
+                    .icon(if protected {
+                        IconName::ShieldOff
+                    } else {
+                        IconName::Shield
+                    })
                     .label(
                         if protected {
                             t!("cluster.remove_protection")

@@ -20,7 +20,7 @@ pub use manifest::{
     ActionContribution, ActivationTrigger, ColumnContribution, ColumnSource, CommandContribution,
     ContractVersion, Contributions, DetailTabContribution, KindRef, Manifest,
     NavigationContribution, Permission, ResourceViewContribution, SettingContribution, SettingKind,
-    Verb, best_language,
+    Verb, ViewIcon, best_language,
 };
 pub use ui::{
     Chart, ChartSeries, Description, Direction, FormField, FormFieldKind, Surface, SurfaceKind,
@@ -28,7 +28,7 @@ pub use ui::{
 };
 
 /// The contract version this build provides.
-pub const CONTRACT_VERSION: ContractVersion = ContractVersion { major: 1, minor: 1 };
+pub const CONTRACT_VERSION: ContractVersion = ContractVersion { major: 1, minor: 2 };
 
 // Compiles the authoring guide's examples as doctests.
 #[cfg(doctest)]

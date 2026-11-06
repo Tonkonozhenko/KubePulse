@@ -25,11 +25,6 @@ pub struct ClusterModel {
     commands: mpsc::UnboundedSender<ClusterCommand>,
 }
 
-/// Lets panels rebuilt from a saved layout find the model.
-pub struct SharedClusterModel(pub Entity<ClusterModel>);
-
-impl Global for SharedClusterModel {}
-
 pub enum ClusterModelEvent {
     IdentitiesChanged,
     NamespacesChanged(ClusterKey),
