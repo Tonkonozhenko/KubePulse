@@ -11,6 +11,7 @@ use gpui_kit::{
         button::{Button, ButtonVariants as _},
         collapsible::Collapsible,
         description_list::DescriptionList,
+        scroll::{Scrollbar, ScrollbarMode},
         tag::Tag,
     },
     *,
@@ -142,6 +143,8 @@ pub struct DetailView {
     events_error: Option<String>,
     revealed: HashSet<String>,
     annotations_open: bool,
+    events_loaded: bool,
+    body_scroll: ScrollHandle,
     tabs: Vec<(String, DetailTabContribution)>,
     extension_tab: Option<Entity<DeclarativeView>>,
     extension_error: Option<String>,
@@ -195,6 +198,7 @@ impl DetailView {
             if let Some(uid) = uid {
                 let events = event_services.events(&event_context, namespace, uid).await;
                 let _ = this.update(cx, |this, cx| {
+                    this.events_loaded = true;
                     match events {
                         Ok(events) => this.events = events,
                         Err(error) => this.events_error = Some(error.to_string()),
@@ -216,6 +220,8 @@ impl DetailView {
             events_error: None,
             revealed: HashSet::new(),
             annotations_open: false,
+            events_loaded: false,
+            body_scroll: ScrollHandle::new(),
             tabs,
             extension_tab: None,
             extension_error: None,
@@ -467,7 +473,7 @@ impl DetailView {
             .child(close);
         let logs = (loaded && is_pod(&self.target.kind)).then(|| {
             Button::new("view-logs")
-                .icon(IconName::SquareTerminal)
+                .icon(IconName::Logs)
                 .small()
                 .label(t!("detail.logs").to_string())
                 .on_click(cx.listener(|this, _, _, cx| {
@@ -642,8 +648,15 @@ impl DetailView {
                     .test_support()
             })
             .collect();
+        let none = self.events_loaded && self.events.is_empty() && self.events_error.is_none();
         section("detail-events", t!("detail.events").to_string(), muted)
             .children(events)
+            .children(none.then(|| {
+                div()
+                    .id("no-events")
+                    .child(t!("detail.no_events").to_string())
+                    .test_support()
+            }))
             .children(self.events_error.clone().map(|error| {
                 div()
                     .id("events-error")
@@ -738,40 +751,66 @@ impl Render for DetailView {
 
         let secret = self.is_secret().then(|| self.render_secret(&object, cx));
 
+        // The sections sit in their own column, so that too little room scrolls
+        // the body rather than shrinking them.
+        let sections = div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(div().id("detail-summary").child(list).test_support())
+            .children(self.render_labels(&object, muted))
+            .children(self.render_conditions(&object, muted))
+            .children(self.render_annotations(&object, muted, cx))
+            .children((!owner_rows.is_empty()).then(|| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_color(muted)
+                            .child(t!("detail.owners").to_string()),
+                    )
+                    .children(owner_rows)
+            }))
+            .children(secret)
+            .child(self.render_events(muted))
+            .child(div().flex().gap_1().children(tab_buttons))
+            .children(self.extension_tab.clone())
+            .children(
+                self.extension_error
+                    .clone()
+                    .map(|error| div().id("detail-tab-error").child(error).test_support()),
+            );
+
         root.child(
             div()
-                .id("detail-body")
+                .flex()
                 .flex_1()
                 .min_h_0()
-                .flex()
-                .flex_col()
-                .gap_3()
-                .overflow_y_scroll()
-                .child(list)
-                .children(self.render_labels(&object, muted))
-                .children(self.render_conditions(&object, muted))
-                .children(self.render_annotations(&object, muted, cx))
-                .children((!owner_rows.is_empty()).then(|| {
+                .child(
                     div()
-                        .flex()
-                        .flex_col()
-                        .items_start()
-                        .gap_1()
+                        .id("detail-body")
+                        .flex_1()
+                        .min_w_0()
+                        .h_full()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.body_scroll)
+                        .child(sections)
+                        .test_support(),
+                )
+                .child(
+                    div()
+                        .relative()
+                        .flex_none()
+                        .h_full()
+                        .w(Scrollbar::width())
                         .child(
-                            div()
-                                .text_color(muted)
-                                .child(t!("detail.owners").to_string()),
-                        )
-                        .children(owner_rows)
-                }))
-                .children(secret)
-                .child(self.render_events(muted))
-                .child(div().flex().gap_1().children(tab_buttons))
-                .children(self.extension_tab.clone())
-                .children(
-                    self.extension_error
-                        .clone()
-                        .map(|error| div().id("detail-tab-error").child(error).test_support()),
+                            Scrollbar::vertical(&self.body_scroll)
+                                .viewport_from_layout()
+                                .mode(ScrollbarMode::Always),
+                        ),
                 ),
         )
         .test_support()

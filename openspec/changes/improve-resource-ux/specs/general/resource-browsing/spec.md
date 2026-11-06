@@ -45,7 +45,7 @@ Every table SHALL show a pinned actions column, and the same actions SHALL be av
 
 #### Scenario: Actions on a pod
 - **WHEN** the user views a Pods table
-- **THEN** each row offers Logs, Edit, and Delete
+- **THEN** each row offers Logs, Shell, Edit, and Delete
 
 #### Scenario: Actions on another kind
 - **WHEN** the user views a table of any other kind
@@ -188,6 +188,10 @@ The detail panel SHALL show the object's kind, name, status, and actions at its 
 - **WHEN** the user scrolls down a long detail panel
 - **THEN** the title, status, close button, and actions stay visible
 
+#### Scenario: Too little room
+- **WHEN** the panel's content is taller than the panel
+- **THEN** a scrollbar shows, every section keeps its full height, and the user can scroll to the last one
+
 ### Requirement: Labels are shown as tags
 The detail panel SHALL show each label as its own wrapping tag holding the full key and value.
 
@@ -224,6 +228,10 @@ The detail panel SHALL show each event's type, reason, count, and message, with 
 #### Scenario: Warning event
 - **WHEN** an object has a Warning event
 - **THEN** its type shows in a warning-colored tag, and its message shows exactly as received
+
+#### Scenario: No events
+- **WHEN** the cluster holds no events for an object, for example because they have expired
+- **THEN** the section says there are no recent events, rather than staying blank
 
 ### Requirement: Annotations are available
 The detail panel SHALL list an object's annotations in a section that starts collapsed, and showing it SHALL reveal each full key and value. On a Secret, the panel MUST show annotation keys only, because an annotation can hold a copy of the Secret's data.

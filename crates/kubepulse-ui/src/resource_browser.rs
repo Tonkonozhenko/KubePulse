@@ -51,6 +51,7 @@ const ACTIONS_PADDING: f32 = 24.;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RowAction {
     Logs,
+    Shell,
     Edit,
     Delete,
 }
@@ -59,6 +60,7 @@ impl RowAction {
     fn button_id(self) -> &'static str {
         match self {
             Self::Logs => "row-logs",
+            Self::Shell => "row-shell",
             Self::Edit => "row-edit",
             Self::Delete => "row-delete",
         }
@@ -66,7 +68,8 @@ impl RowAction {
 
     fn icon(self) -> IconName {
         match self {
-            Self::Logs => IconName::SquareTerminal,
+            Self::Logs => IconName::Logs,
+            Self::Shell => IconName::SquareTerminal,
             Self::Edit => IconName::Pencil,
             Self::Delete => IconName::Trash,
         }
@@ -75,6 +78,7 @@ impl RowAction {
     fn label(self) -> String {
         match self {
             Self::Logs => t!("detail.logs"),
+            Self::Shell => t!("detail.shell"),
             Self::Edit => t!("detail.edit"),
             Self::Delete => t!("detail.delete"),
         }
@@ -84,7 +88,12 @@ impl RowAction {
 
 fn row_actions(kind: &ResourceKind) -> &'static [RowAction] {
     if is_pod(kind) {
-        &[RowAction::Logs, RowAction::Edit, RowAction::Delete]
+        &[
+            RowAction::Logs,
+            RowAction::Shell,
+            RowAction::Edit,
+            RowAction::Delete,
+        ]
     } else {
         &[RowAction::Edit, RowAction::Delete]
     }
@@ -446,6 +455,7 @@ pub enum BrowserEvent {
     /// The user dismissed the open object from the table.
     Close,
     Logs(ObjectTarget),
+    Shell(ObjectTarget),
     Edit(ObjectTarget),
     Delete(Vec<ObjectTarget>),
 }
@@ -739,6 +749,7 @@ impl ResourceBrowser {
         let target = self.target(row);
         cx.emit(match action {
             RowAction::Logs => BrowserEvent::Logs(target),
+            RowAction::Shell => BrowserEvent::Shell(target),
             RowAction::Edit => BrowserEvent::Edit(target),
             RowAction::Delete => BrowserEvent::Delete(vec![target]),
         });

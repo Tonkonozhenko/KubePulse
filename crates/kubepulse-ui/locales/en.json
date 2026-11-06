@@ -159,5 +159,6 @@
   "delete.type_cluster": "Type the cluster's name",
   "detail.annotations": "Annotations",
   "detail.close": "Close",
-  "detail.event_count": "x%{count}"
+  "detail.event_count": "x%{count}",
+  "detail.no_events": "No recent events"
 }

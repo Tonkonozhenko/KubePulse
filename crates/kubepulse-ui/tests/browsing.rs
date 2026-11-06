@@ -1684,11 +1684,13 @@ fn pods_offer_logs_and_other_kinds_do_not(cx: &mut TestAppContext) {
 
     harness.open_kind(&pod_kind());
     assert!(harness.exists_at(("row-logs", 0usize)));
+    assert!(harness.exists_at(("row-shell", 0usize)));
     assert!(harness.exists_at(("row-edit", 0usize)));
     assert!(harness.exists_at(("row-delete", 0usize)));
 
     harness.open_kind(&secret_kind());
     assert!(!harness.exists_at(("row-logs", 0usize)));
+    assert!(!harness.exists_at(("row-shell", 0usize)));
     assert!(harness.exists_at(("row-edit", 0usize)));
     assert!(harness.exists_at(("row-delete", 0usize)));
 }
@@ -1717,23 +1719,25 @@ fn open_panels(harness: &mut Harness<'_>) -> usize {
 }
 
 #[gpui_kit::test]
-fn the_logs_and_edit_buttons_open_their_tabs_and_not_the_panel(cx: &mut TestAppContext) {
+fn row_buttons_open_their_tabs_and_not_the_panel(cx: &mut TestAppContext) {
     let (mut harness, _, _) = few_pods(cx, 2, false);
     let tab = harness.tab();
     let before = open_panels(&mut harness);
 
-    harness.click_at(("row-logs", 1usize));
-    assert_eq!(open_panels(&mut harness), before + 1);
-
     let panel = gpui_kit::component::dock::PanelId::from(tab.entity_id());
     let workspace = harness.workspace.clone();
-    harness.cx.update(|window, cx| {
-        let dock = workspace.read(cx).dock().clone();
-        dock.update(cx, |dock, cx| dock.select_panel(panel, window, cx));
-    });
-    harness.cx.run_until_parked();
-    harness.click_at(("row-edit", 1usize));
-    assert_eq!(open_panels(&mut harness), before + 2);
+    for (opened, button) in ["row-logs", "row-shell", "row-edit"]
+        .into_iter()
+        .enumerate()
+    {
+        harness.cx.update(|window, cx| {
+            let dock = workspace.read(cx).dock().clone();
+            dock.update(cx, |dock, cx| dock.select_panel(panel, window, cx));
+        });
+        harness.cx.run_until_parked();
+        harness.click_at((button, 1usize));
+        assert_eq!(open_panels(&mut harness), before + opened + 1, "{button}");
+    }
 
     let detail = harness.cx.update(|_, cx| tab.read(cx).detail().cloned());
     assert!(detail.is_none());
@@ -1755,7 +1759,7 @@ fn the_right_click_menu_keeps_its_object_when_rows_move(cx: &mut TestAppContext)
 
     harness.cx.update(|window, cx| {
         window.render_frame(cx);
-        window.within("popup-menu").click(ElementId::Integer(2), cx);
+        window.within("popup-menu").click(ElementId::Integer(3), cx);
     });
     harness.cx.run_until_parked();
     assert!(dialog_open(&mut harness));
@@ -2204,6 +2208,90 @@ fn labels_conditions_and_events_have_their_sections(cx: &mut TestAppContext) {
         conditions.iter().map(|c| c.tone).collect::<Vec<_>>()
     });
     assert_eq!(tones, [Tone::Warning, Tone::Danger]);
+}
+
+#[gpui_kit::test]
+fn events_can_be_scrolled_into_view_below_a_tall_panel(cx: &mut TestAppContext) {
+    let conditions: Vec<Value> = (0..40)
+        .map(|index| {
+            json!({"type": format!("Check{index}"), "status": "True", "reason": "Fine",
+                "message": "a message long enough to need its own line in the panel"})
+        })
+        .collect();
+    let object = json!({
+        "metadata": {"name": "web", "uid": "uid-web"},
+        "status": {"conditions": conditions},
+    });
+    let mut harness = detailed(cx, object, pod_kind());
+    let detail = harness.detail().unwrap();
+    wait_until(harness.cx, "the events", |cx| {
+        cx.update(|_, cx| !detail.read(cx).events().is_empty())
+    });
+
+    let bounds = |id: ElementId, harness: &mut Harness<'_>| {
+        harness.cx.update(|window, cx| {
+            window.render_frame(cx);
+            window.try_find(id).expect("the element").bounds()
+        })
+    };
+    let body = bounds("detail-body".into(), &mut harness);
+    let event = ElementId::from(("detail-event", 0usize));
+    assert!(body.size.height < gpui_kit::px(1000.), "{body:?}");
+    assert!(bounds(event.clone(), &mut harness).top() > body.bottom());
+
+    harness.cx.update(|window, cx| {
+        window.render_frame(cx);
+        window.scroll(
+            "detail-body",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(-5000.))),
+            cx,
+        );
+    });
+    harness.cx.run_until_parked();
+
+    let shown = bounds(event, &mut harness);
+    assert!(shown.bottom() <= body.bottom(), "{shown:?} in {body:?}");
+    assert!(shown.top() >= body.top(), "{shown:?} in {body:?}");
+}
+
+#[gpui_kit::test]
+fn a_short_window_scrolls_the_panel_rather_than_squashing_it(cx: &mut TestAppContext) {
+    let mut harness = detailed(cx, detailed_pod(), pod_kind());
+    let detail = harness.detail().unwrap();
+    wait_until(harness.cx, "the events", |cx| {
+        cx.update(|_, cx| !detail.read(cx).events().is_empty())
+    });
+
+    let height = gpui_kit::px(400.);
+    harness
+        .cx
+        .simulate_resize(gpui_kit::size(gpui_kit::px(1280.), height));
+    harness.cx.run_until_parked();
+
+    for id in [
+        "detail-summary",
+        "detail-labels",
+        "detail-conditions",
+        "detail-events",
+    ] {
+        let bounds = harness.cx.update(|window, cx| {
+            window.render_frame(cx);
+            let found = window.try_find(SharedString::from(id));
+            found.expect("the section").bounds()
+        });
+        assert!(bounds.size.height > gpui_kit::px(20.), "{id}: {bounds:?}");
+    }
+}
+
+#[gpui_kit::test]
+fn a_pod_with_no_events_says_so(cx: &mut TestAppContext) {
+    let (mut harness, _, _) = few_pods(cx, 1, false);
+    assert!(!harness.exists("no-events".into()));
+
+    harness.click("table-cell-0:2".into());
+    harness.wait_for_detail();
+
+    assert!(harness.exists("no-events".into()));
 }
 
 #[gpui_kit::test]

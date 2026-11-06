@@ -779,7 +779,7 @@ impl dock::Panel for LogTab {
             .items_center()
             .gap_2()
             .child(div().size_2().rounded_full().bg(rgb(identity.color)))
-            .child(Icon::new(IconName::SquareTerminal).xsmall())
+            .child(Icon::new(IconName::Logs).xsmall())
             .child(t!("log.title", name = self.target.name).to_string())
             .child(identity.name)
             .when(identity.protected, |this| {

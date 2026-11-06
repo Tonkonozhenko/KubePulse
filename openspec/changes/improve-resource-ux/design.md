@@ -24,7 +24,7 @@ See `proposal.md` for the motivation and the specs for required behavior. These 
 **Non-Goals:**
 
 - Rendering extension `ActionContribution`s in rows. That needs its own contract work, and this change records it in `TODO.md`.
-- Shell and port-forward row actions, which wait for groups 11 and 12.
+- A port-forward row action, which waits for group 12.
 - Keyboard selection of checkboxes.
 - Coloring numeric columns such as Ready.
 - Showing `Terminating` for objects with a deletion timestamp, because a status column reads values and cannot map a timestamp to a word.

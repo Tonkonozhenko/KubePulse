@@ -159,5 +159,6 @@
   "delete.type_cluster": "[Ţýpé ţhé çlûšţér'š ñàmé~~~~~~]",
   "detail.annotations": "[Àññöţàţîöñš~~~]",
   "detail.close": "[Çlöšé~]",
-  "detail.event_count": "[x%{count}~~]"
+  "detail.event_count": "[x%{count}~~]",
+  "detail.no_events": "[Ñö réçéñţ évéñţš~~~~]"
 }

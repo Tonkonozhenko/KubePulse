@@ -10,7 +10,7 @@ Resource tables and the detail panel show plain text, so problems are hard to sp
 - Make a pod's Status show the first waiting container's reason, such as `CrashLoopBackOff`, and otherwise its phase.
 - Show labels as tags. Show conditions with their health, reason, and message. Show events by severity. Add annotations as a collapsed section, with values withheld on Secrets.
 - Move the detail panel's title, status, and actions to its top, so they do not scroll out of reach.
-- Add a pinned actions column to every table with Logs (pods only), Edit, and Delete, and offer the same actions from a right-click menu on the row.
+- Add a pinned actions column to every table with Logs and Shell (pods only), Edit, and Delete, and offer the same actions from a right-click menu on the row.
 - Add a pinned checkbox column. A click toggles one row, Shift+click selects every row between the last clicked row and this one, and the header checkbox selects every row shown.
 - Add deleting several objects at once, with a confirmation that lists every object, and reports each failure.
 - Add a close button to the detail panel. Escape in the table also closes it.
