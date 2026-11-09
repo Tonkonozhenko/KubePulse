@@ -12,7 +12,7 @@ On the UI side, `gpui-kit` deliberately leaves `cmd-q`, `cmd-w`, and `alt-f4` un
 
 ## Goals / Non-Goals
 
-**Goals:**
+**Goals:*
 - Show the helper's own message for an authentication failure, and the specific cause for other authentication errors.
 - Keep anything a helper writes to stdout out of the UI, and any helper output out of logs.
 - One standard quit path per platform.
