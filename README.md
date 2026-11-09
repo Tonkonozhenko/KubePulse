@@ -1,6 +1,6 @@
 # KubePulse
 
-A lightweight, native Kubernetes IDE for Linux, macOS, and Windows, written in Rust.
+A lightweight, native Kubernetes IDE for Linux, macOS, and Windows, written in Rust. Project page: <https://tonkonozhenko.github.io/KubePulse/>
 
 KubePulse is in early development. Pre-built installers are published on the [releases page](https://github.com/Tonkonozhenko/KubePulse/releases), and you should expect missing features and breaking changes between versions.
 
