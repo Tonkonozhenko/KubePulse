@@ -101,6 +101,10 @@ The system SHALL authenticate using the mechanisms defined in the kubeconfig, in
 - **WHEN** a context uses a credential helper
 - **THEN** the system runs that helper to obtain credentials
 
+#### Scenario: Helper found through the login shell
+- **WHEN** the application is opened from a desktop launcher and the kubeconfig names a credential helper by command name only, from a directory on the `PATH` of the user's login shell
+- **THEN** the system finds and runs that helper, as it would when started from a terminal
+
 #### Scenario: Application logs
 - **WHEN** the application writes diagnostic logs
 - **THEN** tokens, certificates, and other credentials are absent from them
