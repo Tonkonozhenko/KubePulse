@@ -34,6 +34,8 @@ use crate::{
     },
 };
 
+gpui_kit::actions!(kubepulse, [OpenLocalTerminal]);
+
 pub const PANEL_NAME: &str = "TerminalTab";
 const CONTEXT: &str = "Terminal";
 const START_SIZE: ExecSize = ExecSize { cols: 80, rows: 24 };
@@ -207,11 +209,20 @@ fn paint_frame(
     }
 }
 
+/// Where the shell runs.
+enum Source {
+    Container {
+        key: ClusterKey,
+        target: Box<ObjectTarget>,
+        model: Entity<ClusterModel>,
+    },
+    /// This machine, outside every cluster.
+    Local,
+}
+
 pub struct TerminalTab {
-    key: ClusterKey,
-    target: ObjectTarget,
+    source: Source,
     requested: Option<String>,
-    model: Entity<ClusterModel>,
     shell: Entity<ShellState>,
     services: Arc<dyn ClusterServices>,
     containers: Containers,
@@ -247,27 +258,47 @@ impl TerminalTab {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let observer = cx.observe_in(&model, window, |this, _, window, cx| {
+            this.sync_with_connection(window, cx);
+            cx.notify();
+        });
+        let target = Box::new(target);
+        let source = Source::Container { key, target, model };
+        let mut tab = Self::with_source(source, requested, window, cx);
+        tab._subscriptions.push(observer);
+        tab.load_containers(window, cx);
+        tab
+    }
+
+    /// A shell on this machine, which starts at once.
+    pub fn local(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let mut tab = Self::with_source(Source::Local, None, window, cx);
+        tab.start_session(window, cx);
+        tab
+    }
+
+    fn with_source(
+        source: Source,
+        requested: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let services = cx.global::<SharedServices>().0.clone();
         let shell = cx.global::<SharedShellState>().0.clone();
         let command_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(t!("shell.command").to_string()));
-        let subscriptions = vec![
-            cx.subscribe_in(&command_input, window, |this, _, event, window, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) {
-                    this.run_entered_command(window, cx);
-                }
-            }),
-            cx.observe_in(&model, window, |this, _, window, cx| {
-                this.sync_with_connection(window, cx);
-                cx.notify();
-            }),
-        ];
+        let subscriptions =
+            vec![
+                cx.subscribe_in(&command_input, window, |this, _, event, window, cx| {
+                    if matches!(event, InputEvent::PressEnter { .. }) {
+                        this.run_entered_command(window, cx);
+                    }
+                }),
+            ];
         let palette = Palette::from_theme(cx.theme());
-        let mut tab = Self {
-            key,
-            target,
+        Self {
+            source,
             requested,
-            model,
             shell,
             services,
             containers: Containers::Loading,
@@ -290,17 +321,15 @@ impl TerminalTab {
             _frames: None,
             _states: None,
             _subscriptions: subscriptions,
-        };
-        tab.load_containers(window, cx);
-        tab
+        }
     }
 
-    pub fn key(&self) -> &ClusterKey {
-        &self.key
-    }
-
-    pub fn target(&self) -> &ObjectTarget {
-        &self.target
+    /// The tab's cluster, or `None` for a shell on this machine.
+    pub fn key(&self) -> Option<&ClusterKey> {
+        match &self.source {
+            Source::Container { key, .. } => Some(key),
+            Source::Local => None,
+        }
     }
 
     pub fn selected(&self) -> Option<&str> {
@@ -336,14 +365,21 @@ impl TerminalTab {
     }
 
     fn activate(&self, cx: &mut Context<Self>) {
-        activate_tab(cx.entity_id(), &self.key, &self.model, &self.shell, cx);
+        let id = cx.entity_id();
+        match &self.source {
+            Source::Container { key, model, .. } => activate_tab(id, key, model, &self.shell, cx),
+            Source::Local => self
+                .shell
+                .update(cx, |shell, cx| shell.activate(id, None, cx)),
+        }
     }
 
     fn load_containers(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Source::Container { key, target, .. } = &self.source else {
+            return;
+        };
         self.containers = Containers::Loading;
-        let reply = self
-            .services
-            .get_object(&self.key.context, self.target.clone());
+        let reply = self.services.get_object(&key.context, (**target).clone());
         cx.spawn_in(window, async move |this, cx| {
             let pod = reply.await;
             let _ = this.update_in(cx, |this, window, cx| match pod {
@@ -390,23 +426,30 @@ impl TerminalTab {
     }
 
     fn start_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(container) = self.selected.clone() else {
-            return;
-        };
-        let request = ExecRequest {
-            namespace: self.target.namespace.clone().unwrap_or_default(),
-            pod: self.target.name.clone(),
-            container,
-            command: self.command.clone(),
+        let request = match &self.source {
+            Source::Container { key, target, .. } => {
+                let Some(container) = self.selected.clone() else {
+                    return;
+                };
+                let request = ExecRequest {
+                    namespace: target.namespace.clone().unwrap_or_default(),
+                    pod: target.name.clone(),
+                    container,
+                    command: self.command.clone(),
+                };
+                Some((key.context.clone(), request))
+            }
+            Source::Local => None,
         };
         if self.state.is_some() {
             self.emulator.restore_modes();
         }
         self.stream = None;
-        let Some(mut stream) = self
-            .services
-            .open_exec(&self.key.context, request, self.size)
-        else {
+        let stream = match request {
+            Some((context, request)) => self.services.open_exec(&context, request, self.size),
+            None => Some(self.services.open_local_shell(self.size)),
+        };
+        let Some(mut stream) = stream else {
             self.state = Some(ExecState::Failed(t!("shell.not_connected").to_string()));
             cx.notify();
             return;
@@ -485,17 +528,25 @@ impl TerminalTab {
     /// A shell never comes back on its own, because a new one would not be the
     /// one the user left. Reconnecting is their choice.
     fn sync_with_connection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let model = self.model.read(cx);
-        let live = is_live(&model.connection(&self.key.context));
-        if live && model.same_server(&self.key) && matches!(self.containers, Containers::Failed(_))
-        {
+        let Source::Container { key, model, .. } = &self.source else {
+            return;
+        };
+        let model = model.read(cx);
+        let live = is_live(&model.connection(&key.context));
+        if live && model.same_server(key) && matches!(self.containers, Containers::Failed(_)) {
             self.load_containers(window, cx);
         }
     }
 
-    fn can_reconnect(&self, cx: &App) -> bool {
-        let model = self.model.read(cx);
-        model.same_server(&self.key) && is_live(&model.connection(&self.key.context))
+    /// Whether a new session can start in place of an ended one.
+    fn can_restart(&self, cx: &App) -> bool {
+        match &self.source {
+            Source::Container { key, model, .. } => {
+                let model = model.read(cx);
+                model.same_server(key) && is_live(&model.connection(&key.context))
+            }
+            Source::Local => true,
+        }
     }
 
     /// Fits the grid to the space it has, and tells the container.
@@ -781,11 +832,15 @@ impl TerminalTab {
             self.state,
             Some(ExecState::Exited(_) | ExecState::Dropped | ExecState::Failed(_))
         );
-        if ended && self.can_reconnect(cx) {
+        if ended && self.can_restart(cx) {
+            let (id, label) = match self.source {
+                Source::Container { .. } => ("terminal-reconnect", t!("shell.reconnect")),
+                Source::Local => ("terminal-start-again", t!("local_terminal.start_again")),
+            };
             notes.push(
-                Button::new("terminal-reconnect")
+                Button::new(id)
                     .icon(IconName::RotateCw)
-                    .label(t!("shell.reconnect").to_string())
+                    .label(label.to_string())
                     .small()
                     .on_click(cx.listener(|this, _, window, cx| this.start_session(window, cx)))
                     .into_any_element(),
@@ -859,19 +914,28 @@ impl gpui_kit::base::dock::Panel for TerminalTab {
 
 impl dock::Panel for TerminalTab {
     fn title(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let identity = self.model.read(cx).identity(&self.key);
-        div()
+        let title = div()
             .id(SharedString::from(format!("tab-title-{}", cx.entity_id())))
             .flex()
             .items_center()
-            .gap_2()
-            .child(div().size_2().rounded_full().bg(rgb(identity.color)))
-            .child(Icon::new(IconName::SquareTerminal).xsmall())
-            .child(t!("shell.title", name = self.target.name).to_string())
-            .child(identity.name)
-            .when(identity.protected, |this| {
-                this.child(t!("cluster.protected_tag").to_string())
-            })
+            .gap_2();
+        let title = match &self.source {
+            Source::Container { key, target, model } => {
+                let identity = model.read(cx).identity(key);
+                title
+                    .child(div().size_2().rounded_full().bg(rgb(identity.color)))
+                    .child(Icon::new(IconName::SquareTerminal).xsmall())
+                    .child(t!("shell.title", name = target.name).to_string())
+                    .child(identity.name)
+                    .when(identity.protected, |this| {
+                        this.child(t!("cluster.protected_tag").to_string())
+                    })
+            }
+            Source::Local => title
+                .child(Icon::new(IconName::SquareTerminal).xsmall())
+                .child(t!("local_terminal.title").to_string()),
+        };
+        title
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| this.activate(cx)),
@@ -898,16 +962,7 @@ impl Render for TerminalTab {
             self.emulator.set_palette(palette);
         }
 
-        let identity = self.model.read(cx).identity(&self.key);
-        let on_its_cluster = self.model.read(cx).same_server(&self.key);
-        let failure = match &self.containers {
-            Containers::Failed(reason) => Some(reason.clone()),
-            _ => None,
-        };
-        let namespace = self.target.namespace.clone().unwrap_or_default();
-        let container = self.selected.clone().unwrap_or_default();
-        let target = t!("log.target", pod = self.target.name, container = container);
-        div()
+        let tab = div()
             .id("terminal-tab")
             .capture_any_mouse_down(cx.listener(|this, _, _, cx| this.activate(cx)))
             .size_full()
@@ -915,8 +970,36 @@ impl Render for TerminalTab {
             .flex_col()
             .items_start()
             .gap_2()
-            .p_2()
-            .child(div().h_1().w_full().flex_none().bg(rgb(identity.color)))
+            .p_2();
+        let tab = match &self.source {
+            Source::Container { key, target, model } => {
+                self.render_container_header(tab, key, target, model, cx)
+            }
+            Source::Local => tab.children(self.render_status(cx)),
+        };
+        tab.child(self.render_grid(cx)).test_support()
+    }
+}
+
+impl TerminalTab {
+    fn render_container_header(
+        &self,
+        tab: Stateful<Div>,
+        key: &ClusterKey,
+        target: &ObjectTarget,
+        model: &Entity<ClusterModel>,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let identity = model.read(cx).identity(key);
+        let on_its_cluster = model.read(cx).same_server(key);
+        let failure = match &self.containers {
+            Containers::Failed(reason) => Some(reason.clone()),
+            _ => None,
+        };
+        let namespace = target.namespace.clone().unwrap_or_default();
+        let container = self.selected.clone().unwrap_or_default();
+        let target = t!("log.target", pod = target.name, container = container);
+        tab.child(div().h_1().w_full().flex_none().bg(rgb(identity.color)))
             .child(
                 div()
                     .id("terminal-target")
@@ -935,7 +1018,7 @@ impl Render for TerminalTab {
                     .child(target.to_string())
                     .test_support(),
             )
-            .children(connection_notes(&self.key, &self.model, cx))
+            .children(connection_notes(key, model, cx))
             .children(failure.map(|reason| {
                 div()
                     .id("terminal-load-error")
@@ -946,7 +1029,5 @@ impl Render for TerminalTab {
                 this.children(self.render_containers(cx))
                     .children(self.render_status(cx))
             })
-            .child(self.render_grid(cx))
-            .test_support()
     }
 }

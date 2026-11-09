@@ -82,6 +82,10 @@ impl ClusterServices for Services {
         None
     }
 
+    fn open_local_shell(&self, size: ExecSize) -> ExecStream {
+        kubepulse_cluster::exec_channel(size).1
+    }
+
     fn start_forward(&self, _: &str, _: ForwardRequest) -> Result<PortForward, ForwardStartError> {
         Err(ForwardStartError::NotConnected)
     }

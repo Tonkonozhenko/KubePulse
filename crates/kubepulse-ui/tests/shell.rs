@@ -1446,6 +1446,38 @@ fn the_gear_button_opens_one_settings_tab(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn the_terminal_button_sits_above_the_gear_and_opens_a_local_terminal(cx: &mut TestAppContext) {
+    let harness = harness(cx, vec![]);
+    let (_, cx) = window(cx, &harness.model, None);
+    let bounds = |id: &'static str, cx: &mut VisualTestContext| {
+        cx.update(|window, cx| {
+            window.render_frame(cx);
+            window.find(id).bounds()
+        })
+    };
+    let forwards = bounds("rail-forwards", cx);
+    let terminal = bounds("rail-local-terminal", cx);
+    let gear = bounds("rail-settings", cx);
+    assert_eq!(terminal.origin.x, gear.origin.x);
+    assert!(forwards.bottom() <= terminal.top());
+    assert!(terminal.bottom() <= gear.top());
+    assert!(
+        gear.top() - terminal.bottom() < gear.size.height,
+        "nothing between them"
+    );
+
+    click("rail-local-terminal", cx);
+    cx.run_until_parked();
+
+    let opened = cx.update(|_, cx| {
+        let shell = harness.shell.read(cx);
+        let tab = shell.terminal_tab(shell.active().expect("an active tab"));
+        tab.map(|tab| tab.read(cx).key().is_none())
+    });
+    assert_eq!(opened, Some(true), "a local terminal is active");
+}
+
+#[gpui_kit::test]
 fn the_quit_shortcut_is_bound_to_quit(cx: &mut TestAppContext) {
     let harness = harness(cx, vec![]);
     let (_, cx) = window(cx, &harness.model, None);
@@ -1577,6 +1609,22 @@ fn the_palette_opens_a_kind_using_only_the_keyboard(cx: &mut TestAppContext) {
     );
     assert_eq!(selected(&harness, cx), Some(key("a")));
     no_commands(&mut harness);
+}
+
+#[gpui_kit::test]
+fn the_palette_opens_a_local_terminal(cx: &mut TestAppContext) {
+    let harness = harness(cx, vec![]);
+    let (_, cx) = window(cx, &harness.model, None);
+
+    open_palette("local terminal", cx);
+    confirm_palette(cx);
+
+    let opened = cx.update(|_, cx| {
+        let shell = harness.shell.read(cx);
+        let tab = shell.terminal_tab(shell.active().expect("an active tab"));
+        tab.map(|tab| tab.read(cx).key().is_none())
+    });
+    assert_eq!(opened, Some(true), "a local terminal is active");
 }
 
 #[gpui_kit::test]

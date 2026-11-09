@@ -44,7 +44,7 @@ use crate::{
     services::SharedServices,
     settings_tab::{OpenSettings, SettingsTab},
     shell_state::{Placement, SharedShellState, ShellEvent, ShellState, place_kind},
-    terminal_tab::TerminalTab,
+    terminal_tab::{OpenLocalTerminal, TerminalTab},
     theme::{self, SharedThemes, ThemeCatalog},
 };
 
@@ -139,6 +139,13 @@ impl Workspace {
         on_shortcut::<OpenCommandPalette>(Self::open_command_palette, window, cx);
         on_shortcut::<OpenPortForwards>(Self::open_forwards, window, cx);
         on_shortcut::<OpenAbout>(Self::open_about, window, cx);
+        on_shortcut::<OpenLocalTerminal>(
+            |this, window, cx| {
+                this.open_local_terminal(window, cx);
+            },
+            window,
+            cx,
+        );
         Self {
             model,
             shell,
@@ -356,6 +363,9 @@ impl Workspace {
             PaletteAction::Disconnect(context) => {
                 request_disconnect(&self.model, &context, window, cx);
             }
+            PaletteAction::OpenLocalTerminal => {
+                self.open_local_terminal(window, cx);
+            }
             PaletteAction::OpenSettings => self.open_settings(window, cx),
             PaletteAction::OpenForwards => self.open_forwards(window, cx),
             PaletteAction::OpenAbout => self.open_about(window, cx),
@@ -529,6 +539,18 @@ impl Workspace {
     ) -> Entity<TerminalTab> {
         let model = self.model.clone();
         let tab = cx.new(|cx| TerminalTab::new(key, target, container, model, window, cx));
+        self.add_to_dock(panel_handle(tab.clone()), window, cx);
+        tab.update(cx, |tab, cx| tab.focus_grid(window, cx));
+        tab
+    }
+
+    /// Opens a shell on this machine in a tab of its own.
+    pub fn open_local_terminal(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<TerminalTab> {
+        let tab = cx.new(|cx| TerminalTab::local(window, cx));
         self.add_to_dock(panel_handle(tab.clone()), window, cx);
         tab.update(cx, |tab, cx| tab.focus_grid(window, cx));
         tab

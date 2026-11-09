@@ -45,6 +45,8 @@ pub trait ClusterServices: Send + Sync + 'static {
     fn open_logs(&self, context: &str, request: LogRequest) -> Option<LogStream>;
     /// Starts a shell, or returns `None` if the cluster is not connected.
     fn open_exec(&self, context: &str, request: ExecRequest, size: ExecSize) -> Option<ExecStream>;
+    /// Starts the user's shell on this machine, outside every cluster session.
+    fn open_local_shell(&self, size: ExecSize) -> ExecStream;
     /// Starts a port-forward that belongs to the cluster's session.
     fn start_forward(
         &self,

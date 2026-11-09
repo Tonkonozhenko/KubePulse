@@ -175,6 +175,8 @@ pub struct FakeServices {
     /// One feed per opened log stream, newest last.
     pub log_feeds: Mutex<Vec<(LogRequest, LogFeed)>>,
     pub exec_feeds: Mutex<Vec<(ExecRequest, ExecFeed)>>,
+    /// One per started local shell, oldest first.
+    pub local_feeds: Mutex<Vec<ExecFeed>>,
     /// One per started forward, oldest first.
     pub forwards: Mutex<Vec<FakeForward>>,
     /// Limits for the buffers of streams opened from now on.
@@ -232,6 +234,7 @@ impl FakeServices {
             write_results: Mutex::default(),
             log_feeds: Mutex::default(),
             exec_feeds: Mutex::default(),
+            local_feeds: Mutex::default(),
             forwards: Mutex::default(),
             log_limits: Mutex::default(),
             logs_disconnected: Mutex::default(),
@@ -363,6 +366,12 @@ impl ClusterServices for FakeServices {
         let (feed, stream) = kubepulse_cluster::exec_channel(size);
         self.exec_feeds.lock().unwrap().push((request, feed));
         Some(stream)
+    }
+
+    fn open_local_shell(&self, size: ExecSize) -> ExecStream {
+        let (feed, stream) = kubepulse_cluster::exec_channel(size);
+        self.local_feeds.lock().unwrap().push(feed);
+        stream
     }
 
     fn start_forward(

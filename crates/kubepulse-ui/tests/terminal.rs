@@ -10,7 +10,8 @@ use gpui_kit::{
     test::TestWindowExt as _,
 };
 use kubepulse_cluster::{
-    ClusterEntry, ConnectionState, ExecRequest, ExecSize, ExecState, ObjectTarget, ResourceKind,
+    ClusterEntry, ConnectionState, ExecFeed, ExecRequest, ExecSize, ExecState, ObjectTarget,
+    ResourceKind,
 };
 use kubepulse_store::synthetic::pod_kind;
 use kubepulse_ui::{
@@ -781,4 +782,163 @@ fn closing_the_tab_ends_the_session(cx: &mut TestAppContext) {
     settle(cx);
 
     assert!(fixture.services.exec_feeds.lock().unwrap()[0].1.abandoned());
+}
+
+fn open_local(fixture: &Fixture, cx: &mut VisualTestContext) -> Entity<TerminalTab> {
+    let tab = cx.update(|window, cx| {
+        fixture.workspace.update(cx, |workspace, cx| {
+            workspace.open_local_terminal(window, cx)
+        })
+    });
+    settle(cx);
+    tab
+}
+
+fn local_feed<R>(fixture: &Fixture, run: impl FnOnce(&mut ExecFeed) -> R) -> R {
+    let mut feeds = fixture.services.local_feeds.lock().unwrap();
+    run(feeds.last_mut().expect("a local shell"))
+}
+
+fn open_local_running(fixture: &Fixture, cx: &mut VisualTestContext) -> Entity<TerminalTab> {
+    let tab = open_local(fixture, cx);
+    local_feed(fixture, |feed| feed.set_state(ExecState::Running));
+    settle(cx);
+    tab
+}
+
+fn local_output(
+    fixture: &Fixture,
+    tab: &Entity<TerminalTab>,
+    text: &[u8],
+    last_line: &str,
+    cx: &mut VisualTestContext,
+) {
+    local_feed(fixture, |feed| feed.output(text.to_vec()));
+    let tab = tab.clone();
+    wait_until(cx, "the output", |cx| {
+        lines(&tab, cx).iter().any(|l| l == last_line)
+    });
+    settle(cx);
+}
+
+#[gpui_kit::test]
+fn a_local_terminal_shows_output_and_sends_keys(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let tab = open_local_running(&fixture, cx);
+
+    local_output(&fixture, &tab, b"$ ", "$", cx);
+    cx.simulate_keystrokes("l s enter");
+    settle(cx);
+
+    assert_eq!(local_feed(&fixture, ExecFeed::typed), b"ls\r");
+    assert_eq!(tab.read_with(cx, |tab, _| tab.key().cloned()), None);
+    assert!(fixture.services.exec_feeds.lock().unwrap().is_empty());
+}
+
+#[gpui_kit::test]
+fn a_local_terminal_follows_the_pane_size(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let tab = open_local_running(&fixture, cx);
+
+    cx.simulate_resize(gpui_kit::size(px(900.), px(600.)));
+    settle(cx);
+
+    let grid = tab.read_with(cx, |tab, _| tab.grid_size());
+    assert_ne!(grid, ExecSize { cols: 80, rows: 24 });
+    assert_eq!(local_feed(&fixture, |feed| feed.size()), grid);
+}
+
+#[gpui_kit::test]
+fn each_open_starts_another_local_shell(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let first = open_local_running(&fixture, cx);
+    let second = open_local_running(&fixture, cx);
+
+    assert_ne!(first.entity_id(), second.entity_id());
+    assert_eq!(fixture.services.local_feeds.lock().unwrap().len(), 2);
+    assert!(!fixture.services.local_feeds.lock().unwrap()[0].abandoned());
+    let active = fixture.shell.read_with(cx, |shell, _| shell.active());
+    assert_eq!(active, Some(second.entity_id()));
+}
+
+#[gpui_kit::test]
+fn a_local_terminal_leaves_the_selected_cluster_alone(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    open_running(&fixture, cx);
+    let selected = fixture
+        .shell
+        .read_with(cx, |shell, _| shell.selected().cloned());
+    assert_eq!(selected, Some(key()));
+
+    let tab = open_local_running(&fixture, cx);
+
+    let shell = fixture
+        .shell
+        .read_with(cx, |shell, _| (shell.active(), shell.selected().cloned()));
+    assert_eq!(shell, (Some(tab.entity_id()), Some(key())));
+}
+
+#[gpui_kit::test]
+fn an_ended_local_shell_keeps_its_output_and_starts_again(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let tab = open_local_running(&fixture, cx);
+    local_output(&fixture, &tab, b"before exit\r\n", "before exit", cx);
+
+    local_feed(&fixture, |feed| feed.set_state(ExecState::Exited(3)));
+    settle(cx);
+
+    assert!(exists("terminal-exited", cx));
+    assert!(!exists("terminal-reconnect", cx));
+    assert!(lines(&tab, cx).contains(&"before exit".to_owned()));
+
+    click("terminal-start-again", cx);
+    local_feed(&fixture, |feed| feed.set_state(ExecState::Running));
+    settle(cx);
+
+    assert_eq!(fixture.services.local_feeds.lock().unwrap().len(), 2);
+    assert!(!exists("terminal-exited", cx));
+    local_output(&fixture, &tab, b"after", "after", cx);
+    assert!(lines(&tab, cx).contains(&"before exit".to_owned()));
+}
+
+#[gpui_kit::test]
+fn a_local_shell_that_cannot_start_shows_the_error(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    open_local(&fixture, cx);
+
+    local_feed(&fixture, |feed| {
+        feed.set_state(ExecState::Failed("No such file or directory".into()));
+    });
+    settle(cx);
+
+    assert!(exists("terminal-failed", cx));
+    assert!(exists("terminal-start-again", cx));
+}
+
+#[gpui_kit::test]
+fn a_cluster_disconnect_leaves_a_local_shell_running(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let tab = open_local_running(&fixture, cx);
+    let mut disconnected = connected("a", kinds());
+    disconnected.state = ConnectionState::Disconnected;
+
+    fixture.state.send_replace(publish(vec![disconnected]));
+    settle(cx);
+
+    assert_eq!(state(&tab, cx), Some(ExecState::Running));
+    assert!(!exists("tab-connect", cx));
+}
+
+#[gpui_kit::test]
+fn closing_a_local_terminal_ends_its_shell(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    let tab = open_local_running(&fixture, cx);
+
+    let id = tab.entity_id();
+    fixture
+        .shell
+        .update(cx, |shell, cx| shell.request_close(id, cx));
+    settle(cx);
+
+    assert!(fixture.services.local_feeds.lock().unwrap()[0].abandoned());
 }

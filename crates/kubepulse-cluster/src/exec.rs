@@ -19,7 +19,7 @@ use crate::resource_watch::SessionHandle;
 
 /// Tried in this order, so the friendliest shell a container has wins.
 const SHELLS: [&str; 3] = ["bash", "ash", "sh"];
-const CHUNK_BYTES: usize = 64 * 1024;
+pub(crate) const CHUNK_BYTES: usize = 64 * 1024;
 const QUEUED_CHUNKS: usize = 16;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,10 +50,10 @@ pub enum ExecState {
 
 /// The server's end of an [`ExecStream`].
 pub struct ExecFeed {
-    output: mpsc::Sender<Vec<u8>>,
-    input: mpsc::UnboundedReceiver<Vec<u8>>,
-    size: watch::Receiver<ExecSize>,
-    state: watch::Sender<ExecState>,
+    pub(crate) output: mpsc::Sender<Vec<u8>>,
+    pub(crate) input: mpsc::UnboundedReceiver<Vec<u8>>,
+    pub(crate) size: watch::Receiver<ExecSize>,
+    pub(crate) state: watch::Sender<ExecState>,
 }
 
 impl ExecFeed {
@@ -112,6 +112,10 @@ impl ExecStream {
     /// how the process ended.
     pub fn subscribe(&self) -> watch::Receiver<ExecState> {
         self.state.clone()
+    }
+
+    pub(crate) fn stop_on_drop(&mut self, stop: CancellationToken) {
+        self._stop = Some(stop.drop_guard());
     }
 }
 
@@ -316,7 +320,7 @@ impl SessionHandle {
     pub fn open_exec(&self, request: ExecRequest, size: ExecSize, label: &str) -> ExecStream {
         let (feed, mut stream) = exec_channel(size);
         let stop = CancellationToken::new();
-        stream._stop = Some(stop.clone().drop_guard());
+        stream.stop_on_drop(stop.clone());
         let work = self.track_work(label);
         self.spawn_stream(stop, async move |client| {
             let _work = work;

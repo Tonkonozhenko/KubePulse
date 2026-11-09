@@ -26,6 +26,7 @@ use crate::{
     runtime::ClusterStatus,
     settings_tab::OpenSettings,
     shell_state::{SharedShellState, ShellState},
+    terminal_tab::OpenLocalTerminal,
 };
 
 const RAIL_WIDTH: f32 = 48.;
@@ -599,6 +600,15 @@ impl Render for ClusterRail {
                     .tooltip(t!("forward.title").to_string())
                     .on_click(|_, window, cx| {
                         window.dispatch_action(Box::new(OpenPortForwards), cx);
+                    }),
+            )
+            .child(
+                Button::new("rail-local-terminal")
+                    .icon(IconName::SquareTerminal)
+                    .ghost()
+                    .tooltip(t!("local_terminal.open").to_string())
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(OpenLocalTerminal), cx);
                     }),
             )
             .child(

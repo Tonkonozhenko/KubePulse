@@ -393,6 +393,11 @@ impl ClusterServices for RuntimeServices {
         Some(cluster.handle.open_exec(request, size, &label))
     }
 
+    fn open_local_shell(&self, size: ExecSize) -> ExecStream {
+        let _runtime = self.runtime.enter();
+        kubepulse_cluster::open_local_shell(size)
+    }
+
     fn start_forward(
         &self,
         context: &str,

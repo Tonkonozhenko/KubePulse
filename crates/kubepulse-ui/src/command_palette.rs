@@ -39,6 +39,7 @@ pub enum PaletteAction {
     RunCommand { extension: String, command: String },
     Connect(String),
     Disconnect(String),
+    OpenLocalTerminal,
     OpenSettings,
     OpenForwards,
     OpenAbout,
@@ -130,6 +131,12 @@ pub fn palette_groups(
                 },
             })
         });
+    let local_terminal = PaletteEntry {
+        label: t!("local_terminal.open").to_string(),
+        keywords: Vec::new(),
+        icon: Icon::new(IconName::SquareTerminal),
+        action: PaletteAction::OpenLocalTerminal,
+    };
     let settings = PaletteEntry {
         label: t!("settings.title").to_string(),
         keywords: Vec::new(),
@@ -153,7 +160,9 @@ pub fn palette_groups(
     };
     groups.push(PaletteGroup {
         heading: t!("palette.commands").to_string(),
-        entries: commands.chain([settings, forwards, about]).collect(),
+        entries: commands
+            .chain([local_terminal, settings, forwards, about])
+            .collect(),
     });
 
     let connections = clusters.iter().filter_map(|status| {

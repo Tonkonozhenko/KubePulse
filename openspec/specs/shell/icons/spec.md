@@ -10,7 +10,7 @@ The application SHALL make its icon catalog available before opening a window, s
 
 #### Scenario: Rail buttons
 - **WHEN** the application opens
-- **THEN** the rail's search and settings buttons show their icons
+- **THEN** the rail's search, local terminal, and settings buttons show their icons
 
 #### Scenario: Protected cluster mark
 - **WHEN** a protected cluster is on the rail
