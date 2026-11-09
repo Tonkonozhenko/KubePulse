@@ -34,11 +34,23 @@ The system SHALL let the user select log text with the mouse. Dragging selects c
 - **THEN** the selection is cleared
 
 ### Requirement: Copy log text
-The system SHALL copy the selected log text as plain text when the user presses the platform copy shortcut in the log view. Each log line SHALL be one line of the copied text, timestamps SHALL be included when shown, and a line cut for display SHALL be copied whole when the selection reaches its cut end.
+The system SHALL copy the selected log text as plain text when the user presses the platform copy shortcut in the log view, or chooses Copy from the menu that right-clicking the log lines opens. The Copy item SHALL show the copy shortcut and SHALL be disabled while no log text is selected. Each log line SHALL be one line of the copied text, timestamps SHALL be included when shown, and a line cut for display SHALL be copied whole when the selection reaches its cut end.
 
 #### Scenario: Copying several lines
 - **WHEN** the user selects text spanning three log lines and presses the copy shortcut
 - **THEN** the clipboard holds the selected text with a line break between each log line
+
+#### Scenario: Copying from the right-click menu
+- **WHEN** the user selects text spanning three log lines, right-clicks the selection, and chooses Copy
+- **THEN** the selection stays highlighted while the menu is open, and the clipboard then holds the same text the copy shortcut would copy
+
+#### Scenario: Right-clicking with nothing selected
+- **WHEN** no log text is selected and the user right-clicks the log lines
+- **THEN** the menu opens with Copy disabled, and choosing it leaves the clipboard unchanged
+
+#### Scenario: Right-clicking while the search field has focus
+- **WHEN** the search field has focus, log text is selected, and the user chooses Copy from the log lines' menu
+- **THEN** the selected log text is copied, not the search field's text
 
 #### Scenario: Copying with timestamps shown
 - **WHEN** timestamps are shown and the user copies whole lines

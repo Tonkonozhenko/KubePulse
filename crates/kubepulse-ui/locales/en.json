@@ -52,6 +52,7 @@
   "detail.type_name": "Type the object's name",
   "detail.uid": "UID",
   "language.name": "English",
+  "log.copy": "Copy",
   "log.dropped": "Older lines removed: %{count}",
   "log.ended": "The log has ended.",
   "log.ephemeral_container": "%{name} (ephemeral)",

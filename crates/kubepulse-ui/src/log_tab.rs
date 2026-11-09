@@ -11,7 +11,8 @@ use gpui_kit::{
         button::Button,
         checkbox::Checkbox,
         dock::{self, PanelEvent},
-        input::{Input, InputEvent, InputState},
+        input::{Copy, Input, InputEvent, InputState},
+        menu::{ContextMenuExt as _, PopupMenuItem},
         scroll::{Scrollbar, ScrollbarMode},
     },
     prelude::FluentBuilder as _,
@@ -783,16 +784,45 @@ impl LogTab {
                 .font_family(cx.theme().mono_font_family.clone())
                 .text_sm()
                 .child(
-                    div().flex_1().min_h_0().flex().child(rows).child(
-                        div()
-                            .id("log-vertical-scrollbar")
-                            .relative()
-                            .flex_none()
-                            .h_full()
-                            .w(Scrollbar::width())
-                            .child(scrollbar)
-                            .test_support(),
-                    ),
+                    div()
+                        .id("log-line-area")
+                        .flex_1()
+                        .min_h_0()
+                        .flex()
+                        .child(rows)
+                        .child(
+                            div()
+                                .id("log-vertical-scrollbar")
+                                .relative()
+                                .flex_none()
+                                .h_full()
+                                .w(Scrollbar::width())
+                                .child(scrollbar)
+                                .test_support(),
+                        )
+                        .test_support()
+                        .context_menu({
+                            let focus = self.focus.clone();
+                            // Pressing the item clears the window selection
+                            // before it is clicked, so the text is read when
+                            // the menu opens.
+                            move |menu, window, cx| {
+                                let text =
+                                    TextSelection::selected_text(window, cx).trim().to_string();
+                                let empty = text.is_empty();
+                                menu.action_context(focus.clone()).item(
+                                    PopupMenuItem::new(t!("log.copy").to_string())
+                                        .icon(IconName::Copy)
+                                        .action(Box::new(Copy))
+                                        .disabled(empty)
+                                        .on_click(move |_, _, cx| {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                text.clone(),
+                                            ));
+                                        }),
+                                )
+                            }
+                        }),
                 )
                 .when(self.wrapped.is_none(), |this| {
                     this.child(

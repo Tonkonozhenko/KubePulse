@@ -3,8 +3,8 @@ mod support;
 use std::{sync::Arc, time::Duration};
 
 use gpui_kit::{
-    AppContext as _, Bounds, Entity, Modifiers, MouseButton, Pixels, Point, ScrollDelta,
-    SharedString, TestAppContext, VisualTestContext, WindowOptions, point, px,
+    AppContext as _, Bounds, ClipboardItem, ElementId, Entity, Modifiers, MouseButton, Pixels,
+    Point, ScrollDelta, SharedString, TestAppContext, VisualTestContext, WindowOptions, point, px,
     test::{ClickOptions, TestWindowExt as _},
 };
 use kubepulse_cluster::{
@@ -870,6 +870,88 @@ fn copying_in_the_search_field_copies_its_own_text(cx: &mut TestAppContext) {
     cx.update(|window, cx| window.press(select_all, cx));
 
     assert_eq!(copy(cx).as_deref(), Some("needle"));
+}
+
+fn right_click_line(seq: u32, cx: &mut VisualTestContext) {
+    let options = ClickOptions::new()
+        .with_button(MouseButton::Right)
+        .with_offset(point(px(10.), px(4.)));
+    let id = SharedString::from(format!("log-line-{seq}"));
+    cx.update(|window, cx| window.click_with_options(id, options, cx));
+    settle(cx);
+}
+
+fn choose_copy(cx: &mut VisualTestContext) -> Option<String> {
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        window.within("popup-menu").click(ElementId::Integer(0), cx);
+    });
+    settle(cx);
+    cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
+}
+
+#[gpui_kit::test]
+fn copy_in_the_right_click_menu_copies_the_selected_lines(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"]));
+    let tab = open(&fixture, cx);
+    send(&fixture, numbered(0..10), cx);
+    select_three_lines(cx);
+    let shown = selected(&tab, cx);
+
+    right_click_line(4, cx);
+    assert_eq!(
+        selected(&tab, cx),
+        shown,
+        "a right click keeps the selection"
+    );
+    let copied = choose_copy(cx).expect("copied text");
+
+    assert_three_lines(&copied);
+}
+
+#[gpui_kit::test]
+fn copy_in_the_right_click_menu_is_disabled_without_a_selection(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"]));
+    open(&fixture, cx);
+    send(&fixture, numbered(0..10), cx);
+    cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_string("before".into())));
+
+    right_click_line(4, cx);
+    assert!(exists("popup-menu", cx), "the menu opens");
+
+    assert_eq!(choose_copy(cx).as_deref(), Some("before"));
+}
+
+#[gpui_kit::test]
+fn copy_in_the_right_click_menu_ignores_a_focused_search_field(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"]));
+    let tab = open(&fixture, cx);
+    send(&fixture, numbered(0..10), cx);
+    select_three_lines(cx);
+    search(&tab, "needle", cx);
+    let input = cx.update(|_, cx| tab.read(cx).search_input().clone());
+    cx.update(|window, cx| input.update(cx, |input, cx| input.focus(window, cx)));
+
+    right_click_line(4, cx);
+    let copied = choose_copy(cx).expect("copied text");
+
+    assert_three_lines(&copied);
+}
+
+#[gpui_kit::test]
+fn copy_in_the_right_click_menu_works_on_wrapped_lines(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"]));
+    open(&fixture, cx);
+    send(&fixture, with_wide_line(0..10, 4), cx);
+    click("log-wrap", cx);
+    select_three_lines(cx);
+
+    right_click_line(4, cx);
+    let copied = choose_copy(cx).expect("copied text");
+
+    let lines: Vec<&str> = copied.split('\n').collect();
+    assert_eq!(lines.len(), 3, "{copied:?}");
+    assert_eq!(lines[1], "word ".repeat(400));
 }
 
 fn visible(id: &str, cx: &mut VisualTestContext) -> bool {

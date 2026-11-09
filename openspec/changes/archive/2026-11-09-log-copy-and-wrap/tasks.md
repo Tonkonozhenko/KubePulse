@@ -13,6 +13,9 @@
 - [x] 2.1 Implement `copy_with` to read the selected lines from the buffer, rebuild shown text, join lines with `\n`, copy a cut line whole when the range reaches the cut marker, and start at the oldest retained line when the start was dropped; cover the text building with unit tests for partial lines, timestamps, and a cut line, and verify with `cargo test -p kubepulse-ui --lib log_tab`
 - [x] 2.2 Track a focus handle on the line area so a click there takes focus from the search field, and verify with a test that selects three lines, dispatches the platform copy shortcut, and reads the expected text from the test clipboard
 - [x] 2.3 Add a test that the copy shortcut in a focused search field copies the field's own selection and leaves the clipboard without log text, and verify `cargo test -p kubepulse-ui --test logs` passes
+- [x] 2.4 Add `log.copy` ("Copy") to `crates/kubepulse-ui/locales/en.json`, run `python3 scripts/check-i18n.py --write`, and verify `python3 scripts/check-i18n.py` passes
+- [x] 2.5 Add `context_menu` to the line area in `log_tab.rs` with one Copy item that uses `IconName::Copy`, shows Root's `Copy` shortcut through `action_context` set to the log focus handle, reads and trims the selected text when the menu opens, writes it to the clipboard on click, and is disabled when that text is empty; verify with a test that selects three lines, right-clicks the selection, finds it still selected, chooses Copy, and reads the same text as the shortcut test
+- [x] 2.6 Add tests that right-clicking with nothing selected shows Copy disabled and leaves the clipboard unchanged, that choosing Copy while the search field has focus copies the log selection, and that the menu works on wrapped lines; verify `cargo test -p kubepulse-ui --test logs` passes
 
 ## 3. Wrapping lines
 
@@ -25,4 +28,4 @@
 ## 4. Integration
 
 - [x] 4.1 Run `cargo test --workspace`, `cargo clippy --workspace --all-targets`, `cargo fmt --all --check`, and `python3 scripts/check-crate-graph.py`, and verify all pass
-- [ ] 4.2 On the `kubepulse-e2e` minikube profile, open logs in a real window for a quiet pod and for a pod writing at high volume, and confirm selection by drag, word, line, and shift-click, copying with the platform shortcut, drag auto-scroll, the wrap checkbox on and off with following and paused, and a responsive view while wrapped at high volume, in light, dark, and `en-XA`
+- [x] 4.2 On the `kubepulse-e2e` minikube profile, open logs in a real window for a quiet pod and for a pod writing at high volume, and confirm selection by drag, word, line, and shift-click, copying with the platform shortcut and from the right-click menu, drag auto-scroll, the wrap checkbox on and off with following and paused, and a responsive view while wrapped at high volume, in light, dark, and `en-XA`

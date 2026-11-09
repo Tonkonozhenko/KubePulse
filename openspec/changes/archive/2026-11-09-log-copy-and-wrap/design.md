@@ -24,7 +24,7 @@ See proposal.md for motivation and `specs/pod/log/spec.md` for the required beha
 
 **Non-Goals:**
 - Remembering the wrap setting across tabs or restarts. Each tab starts unwrapped.
-- A copy button, a context menu, or copying all retained lines at once. Triple-click and drag cover lines, and the shortcut is the only copy path for now.
+- A copy button, other items in the right-click menu (such as select all or copy line), or copying all retained lines at once. Triple-click and drag cover lines, and the shortcut and the menu's Copy item are the copy paths for now.
 - Selecting text while a match is being stepped to. Search keeps its own highlight.
 
 ## Decisions
@@ -44,6 +44,20 @@ The alternative was a line-based selection model of our own, with click and shif
 `copy_with` receives the selection's anchor and cursor keys, orders them, and reads the lines from the buffer. For each line it rebuilds the shown text, takes the selected range, and joins lines with `\n`. When the range on a line reaches the cut marker, it takes the rest of the received line instead, so a cut line is copied whole. When the start line has already been dropped, copying starts at the oldest retained line, which matches the highlight the user sees.
 
 Copying is bound by `Root`'s existing `cmd-c` and `ctrl-c` bindings. The search `Input` has a deeper key context with its own copy binding, so it keeps copying its own text while it has focus. The log view gets a focus handle tracked on its list area, so a click on the lines moves focus out of the search field.
+
+### The right-click menu copies the text selected when it opens
+
+The line area, the element that holds the rows and the vertical scrollbar in both wrap modes, gets the toolkit's `context_menu`, as the kind sidebar and cluster rail already have. The menu has one item, **Copy** (`log.copy`, with the copy icon).
+
+The window text selection reacts only to the left button, so a right-click keeps the selection. But it clears the selection in the capture phase of every left-button press in the window, including a press on a menu item, and it exempts only touch-selection UI. By the time the item's click handler runs, the selection is gone. So the menu builder, which runs when the menu opens, reads `TextSelection::selected_text` and trims it as `Root`'s copy handler does. The item's `on_click` writes that text to the clipboard. As a result:
+
+- The copied text is what the shortcut would copy, because both go through `copy_with` and the same trimming.
+- The item is disabled when that text is empty.
+- The item carries Root's `Copy` action with `action_context(focus)`, but only so it shows the platform shortcut from the existing key bindings. The click handler takes precedence over the action.
+- The search field's focus does not matter, because nothing is dispatched through focus.
+- The selection is cleared when the item is pressed, like any left click in the window.
+
+Dispatching Root's `Copy` from the item was the first plan. It copied nothing, because the press on the item had already cleared the selection.
 
 ### Two list elements, one per wrap mode
 
