@@ -4343,7 +4343,7 @@ dependencies = [
 
 [[package]]
 name = "kubepulse"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "kubepulse-builtin",
@@ -4362,7 +4362,7 @@ dependencies = [
 
 [[package]]
 name = "kubepulse-builtin"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "kubepulse-extension-api",
@@ -4371,7 +4371,7 @@ dependencies = [
 
 [[package]]
 name = "kubepulse-cluster"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "backon",
  "futures",
@@ -4394,7 +4394,7 @@ dependencies = [
 
 [[package]]
 name = "kubepulse-extension-api"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "serde",
@@ -4403,7 +4403,7 @@ dependencies = [
 
 [[package]]
 name = "kubepulse-extension-host"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "kubepulse-extension-api",
@@ -4414,7 +4414,7 @@ dependencies = [
 
 [[package]]
 name = "kubepulse-store"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "internment",
  "kubepulse-cluster",
@@ -4427,7 +4427,7 @@ dependencies = [
 
 [[package]]
 name = "kubepulse-ui"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "alacritty_terminal",
  "async-trait",
