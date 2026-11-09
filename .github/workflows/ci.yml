@@ -48,9 +48,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Install Linux system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig1-dev libfreetype-dev libwayland-dev \
+            libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p kubepulse-store --release --locked --test scale -- --ignored --nocapture --test-threads=1
+      - run: cargo test -p kubepulse-ui --release --locked --test browsing -- --ignored --nocapture --test-threads=1
 
   package:
     name: Package (${{ matrix.os }})

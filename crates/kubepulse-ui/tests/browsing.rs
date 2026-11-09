@@ -1925,6 +1925,7 @@ fn the_selection_bar_appears_with_checks_and_clears_them(cx: &mut TestAppContext
 }
 
 #[gpui_kit::test]
+#[ignore = "run in release mode"]
 fn selecting_every_row_of_ten_thousand_is_quick(cx: &mut TestAppContext) {
     let (mut harness, _) = selectable(cx);
     let browser = harness.browser();

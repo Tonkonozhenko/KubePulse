@@ -138,7 +138,12 @@ impl KubeconfigWatcher {
         let (sender, list) = watch::channel(Arc::new(load(&paths)));
 
         let (changed, changes) = mpsc::channel();
-        let watched = paths.clone();
+        // Some platforms report events under the path with symlinks resolved.
+        let watched: HashSet<PathBuf> = paths
+            .iter()
+            .cloned()
+            .chain(paths.iter().filter_map(|p| resolved(p)))
+            .collect();
         let mut watcher = notify::recommended_watcher(move |event: notify::Result<Event>| {
             match event {
                 // Reading a kubeconfig reports access events, including the
@@ -185,6 +190,10 @@ impl KubeconfigWatcher {
 
 fn absolute(path: &Path) -> PathBuf {
     std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn resolved(path: &Path) -> Option<PathBuf> {
+    Some(path.parent()?.canonicalize().ok()?.join(path.file_name()?))
 }
 
 #[cfg(test)]
