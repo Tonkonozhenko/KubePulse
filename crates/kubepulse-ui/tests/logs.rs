@@ -1,10 +1,11 @@
 mod support;
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use gpui_kit::{
-    AppContext as _, Entity, Pixels, ScrollDelta, SharedString, TestAppContext, VisualTestContext,
-    WindowOptions, point, px, test::TestWindowExt as _,
+    AppContext as _, Bounds, Entity, Modifiers, MouseButton, Pixels, Point, ScrollDelta,
+    SharedString, TestAppContext, VisualTestContext, WindowOptions, point, px,
+    test::{ClickOptions, TestWindowExt as _},
 };
 use kubepulse_cluster::{
     ClusterEntry, ConnectionState, LogLine, LogRequest, LogState, ObjectTarget, ResourceKind,
@@ -673,4 +674,421 @@ fn closing_the_tab_stops_the_stream_and_leaves_the_cluster_connected(cx: &mut Te
 
     assert!(cx.update(|_, cx| fixture.shell.read(cx).log_tab(id).is_none()));
     assert_eq!(cx.update(|_, cx| tab.read(cx).retained()), None);
+}
+
+const COPY: &str = if cfg!(target_os = "macos") {
+    "cmd-c"
+} else {
+    "ctrl-c"
+};
+
+fn bounds_of(id: &str, cx: &mut VisualTestContext) -> Bounds<Pixels> {
+    let id = SharedString::from(id.to_owned());
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        window.find(id).bounds()
+    })
+}
+
+/// A point `x` into the text of a line, halfway down its first row.
+fn on_line(seq: u32, x: Pixels, cx: &mut VisualTestContext) -> Point<Pixels> {
+    let bounds = bounds_of(&format!("log-line-{seq}"), cx);
+    point(bounds.origin.x + x, bounds.origin.y + px(4.))
+}
+
+fn drag(from: Point<Pixels>, to: Point<Pixels>, cx: &mut VisualTestContext) {
+    cx.update(|window, cx| window.drag(from, to, cx));
+    settle(cx);
+}
+
+fn click_line(seq: u32, x: Pixels, count: usize, cx: &mut VisualTestContext) {
+    let options = ClickOptions::new()
+        .with_offset(point(x, px(4.)))
+        .with_count(count);
+    let id = SharedString::from(format!("log-line-{seq}"));
+    cx.update(|window, cx| window.click_with_options(id, options, cx));
+    settle(cx);
+}
+
+fn selected(tab: &Entity<LogTab>, cx: &mut VisualTestContext) -> String {
+    cx.update(|_, cx| tab.read(cx).selected_text(cx))
+}
+
+fn copy(cx: &mut VisualTestContext) -> Option<String> {
+    cx.update(|window, cx| window.press(COPY, cx));
+    settle(cx);
+    cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
+}
+
+/// Selects from the middle of line 3 to the middle of line 5.
+fn select_three_lines(cx: &mut VisualTestContext) {
+    let from = on_line(3, px(30.), cx);
+    let to = on_line(5, px(30.), cx);
+    drag(from, to, cx);
+}
+
+fn assert_three_lines(text: &str) {
+    let lines: Vec<&str> = text.split('\n').collect();
+    assert_eq!(lines.len(), 3, "{text:?}");
+    assert!(
+        !lines[0].is_empty() && "line 3".ends_with(lines[0]),
+        "{text:?}"
+    );
+    assert_eq!(lines[1], "line 4");
+    assert!(
+        !lines[2].is_empty() && "line 5".starts_with(lines[2]),
+        "{text:?}"
+    );
+}
+
+#[gpui_kit::test]
+fn dragging_across_lines_selects_the_text_between(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"]));
+    let tab = open(&fixture, cx);
+    send(&fixture, numbered(0..10), cx);
+
+    select_three_lines(cx);
+
+    assert_three_lines(&selected(&tab, cx));
+}
+
+#[gpui_kit::test]
+fn a_double_click_selects_a_word_and_a_triple_click_a_line(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"]));
+    let tab = open(&fixture, cx);
+    send(&fixture, numbered(0..10), cx);
+
+    click_line(3, px(4.), 2, cx);
+    assert_eq!(selected(&tab, cx), "line");
+
+    click_line(3, px(4.), 3, cx);
+    assert_eq!(selected(&tab, cx), "line 3");
+}
+
+#[gpui_kit::test]
+fn a_new_stream_or_timestamps_clear_the_selection(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app", "sidecar"]));
+    let tab = open(&fixture, cx);
+    send(&fixture, numbered(0..10), cx);
+
+    select_three_lines(cx);
+    click("log-timestamps", cx);
+    assert_eq!(selected(&tab, cx), "");
+
+    select_three_lines(cx);
+    click("log-previous", cx);
+    assert_eq!(selected(&tab, cx), "");
+
+    send(&fixture, numbered(0..10), cx);
+    select_three_lines(cx);
+    click("log-container-sidecar", cx);
+    assert_eq!(selected(&tab, cx), "");
+}
+
+#[gpui_kit::test]
+fn new_lines_keep_the_same_text_selected(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"]));
+    let tab = open(&fixture, cx);
+    send(&fixture, numbered(0..10), cx);
+    select_three_lines(cx);
+    let before = selected(&tab, cx);
+
+    send(&fixture, numbered(10..500), cx);
+
+    assert_eq!(selected(&tab, cx), before);
+}
+
+#[gpui_kit::test]
+fn dropped_lines_leave_the_selection(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"]));
+    *fixture.services.log_limits.lock().unwrap() = Some((400, usize::MAX));
+    let tab = open(&fixture, cx);
+    send(&fixture, numbered(0..10), cx);
+    select_three_lines(cx);
+
+    send(&fixture, numbered(10..404), cx);
+
+    let text = selected(&tab, cx);
+    let lines: Vec<&str> = text.split('\n').collect();
+    assert_eq!(lines[0], "line 4", "{text:?}");
+    assert_eq!(lines.len(), 2, "{text:?}");
+}
+
+#[gpui_kit::test]
+fn dragging_above_the_view_scrolls_and_stops_following(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"]));
+    let tab = open(&fixture, cx);
+    send(&fixture, numbered(0..500), cx);
+    let list = bounds_of("log-vertical-scrollbar", cx);
+    let from = on_line(495, px(30.), cx);
+    let above = point(from.x, list.origin.y - px(40.));
+
+    cx.simulate_mouse_move(from, None, Modifiers::none());
+    cx.simulate_mouse_down(from, MouseButton::Left, Modifiers::none());
+    for step in 1..=8 {
+        let y = from.y + (above.y - from.y) * (step as f32 / 8.);
+        cx.simulate_mouse_move(point(from.x, y), MouseButton::Left, Modifiers::none());
+    }
+    for _ in 0..10 {
+        cx.executor().advance_clock(Duration::from_millis(50));
+        settle(cx);
+    }
+    cx.simulate_mouse_up(above, MouseButton::Left, Modifiers::none());
+    settle(cx);
+
+    assert!(!following(&tab, cx));
+    assert!(!exists("log-line-499", cx), "the view moved up");
+    assert!(selected(&tab, cx).lines().count() > 5);
+}
+
+#[gpui_kit::test]
+fn the_copy_shortcut_copies_the_selected_lines(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"]));
+    open(&fixture, cx);
+    send(&fixture, numbered(0..10), cx);
+    select_three_lines(cx);
+
+    let copied = copy(cx).expect("copied text");
+
+    assert_three_lines(&copied);
+}
+
+#[gpui_kit::test]
+fn copying_in_the_search_field_copies_its_own_text(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"]));
+    let tab = open(&fixture, cx);
+    send(&fixture, numbered(0..10), cx);
+    select_three_lines(cx);
+    search(&tab, "needle", cx);
+    let input = cx.update(|_, cx| tab.read(cx).search_input().clone());
+    cx.update(|window, cx| input.update(cx, |input, cx| input.focus(window, cx)));
+    let select_all = if cfg!(target_os = "macos") {
+        "cmd-a"
+    } else {
+        "ctrl-a"
+    };
+    cx.update(|window, cx| window.press(select_all, cx));
+
+    assert_eq!(copy(cx).as_deref(), Some("needle"));
+}
+
+fn visible(id: &str, cx: &mut VisualTestContext) -> bool {
+    let id = SharedString::from(id.to_owned());
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        window.try_find(id).is_some_and(|line| line.visible())
+    })
+}
+
+fn first_visible(cx: &mut VisualTestContext) -> u32 {
+    (0u32..1000)
+        .find(|line| visible(&format!("log-line-{line}"), cx))
+        .expect("a line in view")
+}
+
+fn height(seq: u32, cx: &mut VisualTestContext) -> Pixels {
+    bounds_of(&format!("log-line-{seq}"), cx).size.height
+}
+
+fn wrapping(tab: &Entity<LogTab>, cx: &mut VisualTestContext) -> bool {
+    cx.update(|_, cx| tab.read(cx).wrapping())
+}
+
+fn with_wide_line(range: std::ops::Range<u32>, wide: u32) -> Vec<String> {
+    let mut lines = numbered(range.clone());
+    lines[(wide - range.start) as usize] = "word ".repeat(400);
+    lines
+}
+
+#[gpui_kit::test]
+fn turning_wrapping_on_wraps_wide_lines_and_ends_sideways_scrolling(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"]));
+    let tab = open(&fixture, cx);
+    send(&fixture, with_wide_line(0..20, 10), cx);
+    let row = height(9, cx);
+    assert_eq!(height(10, cx), row);
+    assert!(exists("log-horizontal-scrollbar", cx));
+
+    click("log-wrap", cx);
+    assert!(wrapping(&tab, cx));
+    assert!(height(10, cx) > row * 2.);
+    assert_eq!(height(9, cx), row);
+    assert!(!exists("log-horizontal-scrollbar", cx));
+
+    click("log-wrap", cx);
+    assert!(!wrapping(&tab, cx));
+    assert_eq!(height(10, cx), row);
+    assert!(exists("log-horizontal-scrollbar", cx));
+}
+
+#[gpui_kit::test]
+fn wrapped_lines_rewrap_when_the_view_changes_width(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"]));
+    open(&fixture, cx);
+    send(&fixture, with_wide_line(0..20, 10), cx);
+    click("log-wrap", cx);
+    let wide = height(10, cx);
+
+    cx.simulate_resize(gpui_kit::size(px(700.), px(900.)));
+    settle(cx);
+
+    assert!(height(10, cx) > wide);
+}
+
+#[gpui_kit::test]
+fn wrapped_lines_follow_until_the_user_scrolls_up(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"]));
+    let tab = open(&fixture, cx);
+    click("log-wrap", cx);
+    send(&fixture, with_wide_line(0..500, 498), cx);
+    assert!(visible("log-line-499", cx), "the newest line is in view");
+    assert!(following(&tab, cx));
+
+    scroll_up(cx);
+    assert!(!following(&tab, cx));
+
+    send(&fixture, numbered(500..600), cx);
+    assert!(!visible("log-line-599", cx), "the view stays in place");
+    assert!(
+        !following(&tab, cx),
+        "reaching the end does not follow again"
+    );
+
+    click("log-follow", cx);
+    assert!(following(&tab, cx));
+    assert!(visible("log-line-599", cx));
+}
+
+#[gpui_kit::test]
+fn moving_the_scrollbar_up_pauses_wrapped_lines(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"]));
+    let tab = open(&fixture, cx);
+    click("log-wrap", cx);
+    send(&fixture, numbered(0..500), cx);
+
+    cx.update(|window, cx| {
+        window.click_at("log-vertical-scrollbar", point(px(8.), px(8.)), cx);
+    });
+    settle(cx);
+
+    assert!(!following(&tab, cx));
+    assert!(!visible("log-line-499", cx), "the view moved up");
+}
+
+#[gpui_kit::test]
+fn wrapped_lines_keep_their_place_when_old_lines_are_dropped(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"]));
+    *fixture.services.log_limits.lock().unwrap() = Some((400, usize::MAX));
+    let tab = open(&fixture, cx);
+    click("log-wrap", cx);
+    send(&fixture, numbered(0..400), cx);
+    scroll_up(cx);
+    assert!(!following(&tab, cx));
+    let before = first_visible(cx);
+
+    send(&fixture, numbered(400..450), cx);
+
+    let after = first_visible(cx);
+    assert!(
+        after.abs_diff(before) <= 1,
+        "the same lines stay in view: {before} then {after}"
+    );
+}
+
+#[gpui_kit::test]
+fn moving_to_a_match_shows_it_in_wrapped_lines(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"]));
+    let tab = open(&fixture, cx);
+    click("log-wrap", cx);
+    send(&fixture, numbered(0..500), cx);
+
+    search(&tab, "line 10", cx);
+    wait_until(cx, "the search", |cx| !matches(&tab, cx).is_empty());
+    settle(cx);
+
+    assert!(!following(&tab, cx));
+    assert!(visible("log-line-10", cx));
+}
+
+#[gpui_kit::test]
+fn toggling_wrapping_while_paused_keeps_the_top_line(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"]));
+    let tab = open(&fixture, cx);
+    send(&fixture, numbered(0..500), cx);
+    scroll_up(cx);
+    scroll_up(cx);
+    let top = first_visible(cx);
+
+    click("log-wrap", cx);
+    assert!(first_visible(cx).abs_diff(top) <= 1, "wrapping on");
+    assert!(!following(&tab, cx));
+
+    scroll_up(cx);
+    let top = first_visible(cx);
+    click("log-wrap", cx);
+    assert!(first_visible(cx).abs_diff(top) <= 1, "wrapping off");
+    assert!(!following(&tab, cx));
+}
+
+#[gpui_kit::test]
+fn toggling_wrapping_while_following_keeps_following(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"]));
+    let tab = open(&fixture, cx);
+    send(&fixture, numbered(0..500), cx);
+
+    click("log-wrap", cx);
+    assert!(following(&tab, cx));
+    assert!(visible("log-line-499", cx));
+    send(&fixture, numbered(500..510), cx);
+    assert!(visible("log-line-509", cx));
+
+    click("log-wrap", cx);
+    assert!(following(&tab, cx));
+    assert!(visible("log-line-509", cx));
+}
+
+#[gpui_kit::test]
+fn another_container_keeps_wrapping(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app", "sidecar"]));
+    let tab = open(&fixture, cx);
+    click("log-wrap", cx);
+
+    click("log-container-sidecar", cx);
+    send(&fixture, with_wide_line(0..20, 10), cx);
+
+    assert!(wrapping(&tab, cx));
+    assert!(height(10, cx) > height(9, cx) * 2.);
+    assert!(following(&tab, cx));
+}
+
+#[gpui_kit::test]
+fn copying_wrapped_lines_breaks_only_between_lines(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"]));
+    let tab = open(&fixture, cx);
+    send(&fixture, with_wide_line(0..10, 4), cx);
+    click("log-wrap", cx);
+
+    select_three_lines(cx);
+
+    let text = selected(&tab, cx);
+    let lines: Vec<&str> = text.split('\n').collect();
+    assert_eq!(lines.len(), 3, "{text:?}");
+    assert_eq!(lines[1], "word ".repeat(400));
+}
+
+#[gpui_kit::test]
+fn a_high_volume_stream_stays_bounded_while_wrapping(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"]));
+    let tab = open(&fixture, cx);
+    click("log-wrap", cx);
+
+    for frame in 0..60 {
+        send(&fixture, numbered(frame * 3334..(frame + 1) * 3334), cx);
+    }
+    send(&fixture, numbered(200_040..300_000), cx);
+
+    let retained = cx.update(|_, cx| tab.read(cx).retained()).unwrap();
+    assert_eq!(retained.end - retained.start, 100_000);
+    assert!(following(&tab, cx));
+    assert!(visible("log-line-299999", cx));
 }

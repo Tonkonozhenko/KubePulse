@@ -69,6 +69,7 @@
   "log.target": "Pod %{pod}, container %{container}",
   "log.timestamps": "Timestamps",
   "log.title": "Logs: %{name}",
+  "log.wrap": "Wrap lines",
   "manifest.access_unknown": "Could not check your access: %{error}",
   "manifest.applied": "The change was applied.",
   "manifest.apply": "Apply",

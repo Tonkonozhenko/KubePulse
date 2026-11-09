@@ -69,6 +69,7 @@
   "log.target": "[Pöd %{pod}, çöñţàîñér %{container}~~~~~~~~~~]",
   "log.timestamps": "[Ţîméšţàmpš~~~]",
   "log.title": "[Lögš: %{name}~~~]",
+  "log.wrap": "[Wràp lîñéš~~~]",
   "manifest.access_unknown": "[Çöûld ñöţ çhéçk ýöûr àççéšš: %{error}~~~~~~~~~~~]",
   "manifest.applied": "[Ţhé çhàñgé wàš àpplîéd.~~~~~~]",
   "manifest.apply": "[Àpplý~]",

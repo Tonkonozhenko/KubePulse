@@ -21,6 +21,7 @@ pub mod icons;
 pub mod identity;
 pub mod kind_sidebar;
 pub mod language;
+mod log_selection;
 pub mod log_tab;
 pub mod manifest_tab;
 pub mod persistence;
