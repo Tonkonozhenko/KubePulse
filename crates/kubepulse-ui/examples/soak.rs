@@ -102,6 +102,14 @@ impl ClusterServices for Services {
         Box::pin(async { Err(ObjectError::NotConnected) })
     }
 
+    fn restart_object(&self, _: &str, _: ObjectTarget) -> Reply<()> {
+        Box::pin(async { Err(ObjectError::NotConnected) })
+    }
+
+    fn run_cronjob(&self, _: &str, _: ObjectTarget) -> Reply<String> {
+        Box::pin(async { Err(ObjectError::NotConnected) })
+    }
+
     fn contributions(&self) -> Arc<ContributionSet> {
         Arc::default()
     }

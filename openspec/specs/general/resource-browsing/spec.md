@@ -224,6 +224,14 @@ Every table SHALL show a pinned actions column, and the same actions SHALL be av
 - **WHEN** the user views a Pods table
 - **THEN** each row offers Logs, Shell, Edit, and Delete
 
+#### Scenario: Actions on a restartable workload
+- **WHEN** the user views a Deployments, StatefulSets, or DaemonSets table
+- **THEN** each row offers Restart, Edit, and Delete
+
+#### Scenario: Actions on a CronJob
+- **WHEN** the user views a CronJobs table
+- **THEN** each row offers Run now, Edit, and Delete
+
 #### Scenario: Actions on another kind
 - **WHEN** the user views a table of any other kind
 - **THEN** each row offers Edit and Delete

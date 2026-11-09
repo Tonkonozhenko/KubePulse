@@ -77,7 +77,7 @@ These rules hold the design together:
 - **Scale:** the target is 10k pods in each cluster. Watches are shared and reference-counted per cluster and resource kind, the store keeps compact rows rather than full objects, and snapshots publish at most once per frame.
 - **Extensions:** built-in features use the same contract as plugins, with no private access to core state. Every value crossing the contract is owned and serializable, so a sandboxed loader can be added later without changing it.
 - **Extension UI:** extensions describe interfaces with host-defined elements and never receive toolkit types or credentials. Log, terminal, and editor surfaces are host-owned, so high-rate data stays out of the contract.
-- **Cluster changes:** every change, including one from an extension, goes through dry run, diff review, user confirmation, then a replace carrying `resourceVersion`. Deleting is the exception: it runs after an explicit confirmation naming the cluster, namespace, and object.
+- **Cluster changes:** every change, including one from an extension, goes through dry run, diff review, user confirmation, then a replace carrying `resourceVersion`. Deleting, restarting a workload, and running a CronJob are the exceptions: each runs after an explicit confirmation naming the cluster, namespace, and objects. A restart still writes with `resourceVersion`.
 
 ## Constraints
 

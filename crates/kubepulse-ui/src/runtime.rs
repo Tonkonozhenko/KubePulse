@@ -349,6 +349,16 @@ impl ClusterServices for RuntimeServices {
         self.on_runtime(async move { session?.delete_object(&target).await })
     }
 
+    fn restart_object(&self, context: &str, target: ObjectTarget) -> Reply<()> {
+        let session = self.session(context);
+        self.on_runtime(async move { session?.restart_object(&target).await })
+    }
+
+    fn run_cronjob(&self, context: &str, target: ObjectTarget) -> Reply<String> {
+        let session = self.session(context);
+        self.on_runtime(async move { session?.run_cronjob(&target).await })
+    }
+
     fn replace_object(
         &self,
         context: &str,

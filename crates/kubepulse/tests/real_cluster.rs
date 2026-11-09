@@ -443,6 +443,77 @@ fn browses_a_real_cluster() {
         row(&table, "live").is_none().then_some(())
     });
 
+    // A restart rolls out a new ReplicaSet with the restart time on its pods.
+    let replica_sets = || {
+        kubectl
+            .run(&[
+                "get",
+                "replicasets",
+                "-l",
+                "app=web",
+                "-o",
+                "name",
+                "-n",
+                NAMESPACE,
+            ])
+            .lines()
+            .count()
+    };
+    assert_eq!(replica_sets(), 1);
+    let deployments = served(&state, "Deployment").expect("Deployments are served");
+    let target = ObjectTarget {
+        kind: deployments,
+        namespace: Some(NAMESPACE.to_owned()),
+        name: "web".to_owned(),
+    };
+    browser
+        .wait(browser.services.restart_object(CONTEXT, target))
+        .expect("the restart succeeds");
+    let restarted_at = kubectl.run(&[
+        "get",
+        "deployment",
+        "web",
+        "-o",
+        r"jsonpath={.spec.template.metadata.annotations.kubectl\.kubernetes\.io/restartedAt}",
+        "-n",
+        NAMESPACE,
+    ]);
+    assert!(!restarted_at.is_empty());
+    wait_for("the new ReplicaSet", WAIT, || {
+        (replica_sets() == 2).then_some(())
+    });
+
+    // Running a CronJob creates a Job it owns.
+    kubectl.run(&[
+        "create",
+        "cronjob",
+        "backup",
+        "--image=registry.k8s.io/pause:3.9",
+        "--schedule=0 0 1 1 *",
+        "-n",
+        NAMESPACE,
+    ]);
+    let cronjobs = served(&state, "CronJob").expect("CronJobs are served");
+    let target = ObjectTarget {
+        kind: cronjobs,
+        namespace: Some(NAMESPACE.to_owned()),
+        name: "backup".to_owned(),
+    };
+    let job = browser
+        .wait(browser.services.run_cronjob(CONTEXT, target))
+        .expect("the run succeeds");
+    assert!(job.starts_with("backup-manual-"), "{job}");
+    let owner = kubectl.run(&[
+        "get",
+        "job",
+        &job,
+        "-o",
+        "jsonpath={.metadata.ownerReferences[0].kind}/{.metadata.ownerReferences[0].name}",
+        "-n",
+        NAMESPACE,
+    ]);
+    assert_eq!(owner, "CronJob/backup");
+
     // A definition installed now joins the navigation with no reconnect.
     assert!(served(&state, "Widget").is_none());
     kubectl.apply(WIDGET_DEFINITION);

@@ -1,15 +1,20 @@
-//! Single-object requests: opening, listing, changing, deleting, and related
-//! events.
+//! Single-object requests: opening, listing, changing, deleting, restarting,
+//! running, and related events.
 
-use k8s_openapi::api::{
-    authorization::v1::{ResourceAttributes, SelfSubjectAccessReview, SelfSubjectAccessReviewSpec},
-    core::v1::Event,
+use k8s_openapi::{
+    api::{
+        authorization::v1::{
+            ResourceAttributes, SelfSubjectAccessReview, SelfSubjectAccessReviewSpec,
+        },
+        core::v1::Event,
+    },
+    jiff::Timestamp,
 };
 use kube::{
     Api, Client,
     api::{DeleteParams, DynamicObject, ListParams, PostParams},
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::{
     resource_watch::{SessionHandle, api_resource},
@@ -87,6 +92,63 @@ impl WriteMode {
 pub struct UpdateAccess {
     pub allowed: bool,
     pub reason: Option<String>,
+}
+
+/// The pod template annotation the cluster's own tooling sets to restart a
+/// workload.
+const RESTARTED_AT: &str = "kubectl.kubernetes.io/restartedAt";
+/// The annotation that marks a Job as started by hand from its CronJob.
+const INSTANTIATE: &str = "cronjob.kubernetes.io/instantiate";
+const RESTART_ATTEMPTS: usize = 3;
+
+/// Records `time` on the pod template, so the controller rolls out new pods.
+pub fn stamp_restart(object: &mut Value, time: Timestamp) {
+    object["spec"]["template"]["metadata"]["annotations"][RESTARTED_AT] =
+        time.strftime("%Y-%m-%dT%H:%M:%SZ").to_string().into();
+}
+
+/// A Job copied from the CronJob's job template, owned by the CronJob. The
+/// server completes its name.
+pub fn job_from_cronjob(cronjob: &Value) -> Value {
+    let metadata = &cronjob["metadata"];
+    let template = &cronjob["spec"]["jobTemplate"];
+    let mut annotations = template["metadata"]["annotations"].clone();
+    annotations[INSTANTIATE] = "manual".into();
+    let mut labels = template["metadata"]["labels"].clone();
+    if labels.is_null() {
+        labels = json!({});
+    }
+    json!({
+        "apiVersion": "batch/v1",
+        "kind": "Job",
+        "metadata": {
+            "generateName": format!("{}-manual-", metadata["name"].as_str().unwrap_or_default()),
+            "namespace": metadata["namespace"],
+            "labels": labels,
+            "annotations": annotations,
+            "ownerReferences": [{
+                "apiVersion": cronjob["apiVersion"],
+                "kind": cronjob["kind"],
+                "name": metadata["name"],
+                "uid": metadata["uid"],
+                "controller": true,
+                "blockOwnerDeletion": true,
+            }],
+        },
+        "spec": template["spec"],
+    })
+}
+
+fn job_kind() -> ResourceKind {
+    ResourceKind {
+        group: "batch".to_owned(),
+        version: "v1".to_owned(),
+        kind: "Job".to_owned(),
+        plural: "jobs".to_owned(),
+        namespaced: true,
+        verbs: Vec::new(),
+        printer_columns: Vec::new(),
+    }
 }
 
 fn write_body(object: Value) -> Result<DynamicObject, ObjectError> {
@@ -213,6 +275,38 @@ impl SessionHandle {
         Ok(())
     }
 
+    /// Stamps the restart time on the newest version of the object. Each
+    /// attempt adds only the annotation, so retrying after a conflict never
+    /// overwrites someone else's change.
+    pub async fn restart_object(&self, target: &ObjectTarget) -> Result<(), ObjectError> {
+        let mut attempt = 1;
+        loop {
+            let mut object = self.get_object(target).await?;
+            stamp_restart(&mut object, Timestamp::now());
+            match self.replace_object(target, object, WriteMode::Apply).await {
+                Err(ObjectError::Conflict(_)) if attempt < RESTART_ATTEMPTS => attempt += 1,
+                result => return result.map(drop),
+            }
+        }
+    }
+
+    /// Creates a Job from the CronJob's template and returns the Job's name.
+    pub async fn run_cronjob(&self, target: &ObjectTarget) -> Result<String, ObjectError> {
+        let cronjob = self.get_object(target).await?;
+        let job = ObjectTarget {
+            kind: job_kind(),
+            namespace: target.namespace.clone(),
+            name: String::new(),
+        };
+        let created = self
+            .create_object(&job, job_from_cronjob(&cronjob), WriteMode::Apply)
+            .await?;
+        Ok(created["metadata"]["name"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned())
+    }
+
     /// Events about the object with this UID, newest first.
     pub async fn events_for(
         &self,
@@ -239,5 +333,130 @@ impl SessionHandle {
             .collect();
         records.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
         Ok(records)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn time(text: &str) -> Timestamp {
+        text.parse().unwrap()
+    }
+
+    fn deployment() -> Value {
+        json!({
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {"name": "web", "resourceVersion": "5"},
+            "spec": {
+                "replicas": 2,
+                "template": {
+                    "metadata": {"labels": {"app": "web"}},
+                    "spec": {"containers": [{"name": "web", "image": "web:1"}]},
+                },
+            },
+        })
+    }
+
+    #[test]
+    fn a_restart_adds_the_annotation_to_a_template_without_annotations() {
+        let mut object = deployment();
+        stamp_restart(&mut object, time("2026-11-09T10:20:30.123Z"));
+
+        let annotations = &object["spec"]["template"]["metadata"]["annotations"];
+        assert_eq!(annotations[RESTARTED_AT], "2026-11-09T10:20:30Z");
+    }
+
+    #[test]
+    fn a_later_restart_replaces_the_earlier_time() {
+        let mut object = deployment();
+        stamp_restart(&mut object, time("2026-11-09T10:00:00Z"));
+        stamp_restart(&mut object, time("2026-11-09T11:00:00Z"));
+
+        let annotations = &object["spec"]["template"]["metadata"]["annotations"];
+        assert_eq!(annotations, &json!({RESTARTED_AT: "2026-11-09T11:00:00Z"}));
+    }
+
+    #[test]
+    fn a_restart_changes_nothing_else() {
+        let mut object = deployment();
+        object["spec"]["template"]["metadata"]["annotations"] = json!({"team": "a"});
+        let mut expected = object.clone();
+        stamp_restart(&mut object, time("2026-11-09T10:00:00Z"));
+
+        expected["spec"]["template"]["metadata"]["annotations"][RESTARTED_AT] =
+            "2026-11-09T10:00:00Z".into();
+        assert_eq!(object, expected);
+    }
+
+    fn cronjob() -> Value {
+        json!({
+            "apiVersion": "batch/v1",
+            "kind": "CronJob",
+            "metadata": {"name": "backup", "namespace": "ops", "uid": "u-1"},
+            "spec": {
+                "schedule": "0 * * * *",
+                "suspend": true,
+                "jobTemplate": {
+                    "metadata": {
+                        "labels": {"team": "ops"},
+                        "annotations": {"note": "nightly"},
+                    },
+                    "spec": {"backoffLimit": 1, "template": {"spec": {"restartPolicy": "Never"}}},
+                },
+            },
+        })
+    }
+
+    #[test]
+    fn a_manual_job_copies_the_template() {
+        let job = job_from_cronjob(&cronjob());
+
+        assert_eq!(job["apiVersion"], "batch/v1");
+        assert_eq!(job["kind"], "Job");
+        assert_eq!(job["metadata"]["generateName"], "backup-manual-");
+        assert_eq!(job["metadata"]["namespace"], "ops");
+        assert_eq!(job["metadata"]["labels"], json!({"team": "ops"}));
+        assert_eq!(
+            job["metadata"]["annotations"],
+            json!({"note": "nightly", INSTANTIATE: "manual"})
+        );
+        assert_eq!(job["spec"], cronjob()["spec"]["jobTemplate"]["spec"]);
+    }
+
+    #[test]
+    fn a_manual_job_is_owned_by_its_cronjob() {
+        let job = job_from_cronjob(&cronjob());
+
+        assert_eq!(
+            job["metadata"]["ownerReferences"],
+            json!([{
+                "apiVersion": "batch/v1",
+                "kind": "CronJob",
+                "name": "backup",
+                "uid": "u-1",
+                "controller": true,
+                "blockOwnerDeletion": true,
+            }])
+        );
+    }
+
+    #[test]
+    fn a_template_without_metadata_still_marks_the_job_manual() {
+        let mut source = cronjob();
+        source["spec"]["jobTemplate"]
+            .as_object_mut()
+            .unwrap()
+            .remove("metadata");
+
+        let job = job_from_cronjob(&source);
+
+        assert_eq!(job["metadata"]["labels"], json!({}));
+        assert_eq!(
+            job["metadata"]["annotations"],
+            json!({INSTANTIATE: "manual"})
+        );
+        write_body(job).unwrap();
     }
 }

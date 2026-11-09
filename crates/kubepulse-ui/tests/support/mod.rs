@@ -163,10 +163,12 @@ pub struct FakeServices {
     pub objects: Mutex<Vec<(ObjectTarget, Value)>>,
     pub events: Mutex<Vec<EventRecord>>,
     pub deleted: Mutex<Vec<ObjectTarget>>,
-    /// How deleting the object of this name fails.
-    pub delete_errors: Mutex<HashMap<String, ObjectError>>,
-    /// Holds delete replies back until it has permits.
-    pub delete_gate: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
+    pub restarted: Mutex<Vec<ObjectTarget>>,
+    pub ran: Mutex<Vec<ObjectTarget>>,
+    /// How deleting, restarting, or running the object of this name fails.
+    pub action_errors: Mutex<HashMap<String, ObjectError>>,
+    /// Holds delete, restart, and run replies back until it has permits.
+    pub action_gate: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
     /// Every write, in order.
     pub writes: Mutex<Vec<(WriteMode, Value)>>,
     /// What the next writes answer, oldest first. With none left, a write
@@ -228,8 +230,10 @@ impl FakeServices {
             objects: Mutex::default(),
             events: Mutex::default(),
             deleted: Mutex::default(),
-            delete_errors: Mutex::default(),
-            delete_gate: Mutex::default(),
+            restarted: Mutex::default(),
+            ran: Mutex::default(),
+            action_errors: Mutex::default(),
+            action_gate: Mutex::default(),
             writes: Mutex::default(),
             write_results: Mutex::default(),
             log_feeds: Mutex::default(),
@@ -270,6 +274,25 @@ impl FakeServices {
         Box::pin(async move { result })
     }
 
+    /// Records an object operation and answers `ok` unless the object's name
+    /// has an error, after the gate lets it through.
+    fn act<T: Send + 'static>(
+        &self,
+        target: ObjectTarget,
+        record: &Mutex<Vec<ObjectTarget>>,
+        ok: T,
+    ) -> Reply<T> {
+        let named = self.action_errors.lock().unwrap().remove(&target.name);
+        record.lock().unwrap().push(target);
+        let gate = self.action_gate.lock().unwrap().clone();
+        Box::pin(async move {
+            if let Some(gate) = gate {
+                let _permit = gate.acquire().await;
+            }
+            named.map_or(Ok(ok), Err)
+        })
+    }
+
     /// Makes extensions stop answering until `release_extensions`.
     pub fn stall_extensions(&self) {
         self.gate.send_replace(false);
@@ -303,19 +326,21 @@ impl ClusterServices for FakeServices {
     }
 
     fn delete_object(&self, _: &str, target: ObjectTarget) -> Reply<()> {
-        let named = self.delete_errors.lock().unwrap().remove(&target.name);
-        self.deleted.lock().unwrap().push(target);
         let failure = self.delete_failure.lock().unwrap().take();
-        let gate = self.delete_gate.lock().unwrap().clone();
+        let reply = self.act(target, &self.deleted, ());
         Box::pin(async move {
-            if let Some(gate) = gate {
-                let _permit = gate.acquire().await;
-            }
-            if let Some(error) = named {
-                return Err(error);
-            }
+            reply.await?;
             failure.map_or(Ok(()), |message| Err(ObjectError::Failed(message)))
         })
+    }
+
+    fn restart_object(&self, _: &str, target: ObjectTarget) -> Reply<()> {
+        self.act(target, &self.restarted, ())
+    }
+
+    fn run_cronjob(&self, _: &str, target: ObjectTarget) -> Reply<String> {
+        let job = format!("{}-manual-{}", target.name, self.ran.lock().unwrap().len());
+        self.act(target, &self.ran, job)
     }
 
     fn replace_object(

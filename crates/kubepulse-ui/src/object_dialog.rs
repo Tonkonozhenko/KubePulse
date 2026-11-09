@@ -1,6 +1,7 @@
-//! Asks before deleting. It names the cluster and every object, and on a
-//! protected cluster it asks for a typed name. A failed object stays in the list
-//! with its error, so confirming again retries only what failed.
+//! Asks before deleting, restarting, or running objects. It names the cluster
+//! and every object, and on a protected cluster it asks for a typed name. A
+//! failed object stays in the list with its error, so confirming again retries
+//! only what failed.
 
 use std::{cell::Cell, ops::Range, rc::Rc, sync::Arc};
 
@@ -12,6 +13,7 @@ use gpui_kit::{
         button::Button,
         dialog::Dialog,
         input::{Input, InputEvent, InputState},
+        notification::Notification,
         tooltip::Tooltip,
     },
     prelude::FluentBuilder as _,
@@ -23,12 +25,98 @@ use rust_i18n::t;
 use crate::{cluster_model::ClusterModel, identity::ClusterKey, services::ClusterServices};
 
 /// Enough to finish quickly without flooding the API server.
-const MAX_CONCURRENT_DELETES: usize = 8;
+const MAX_CONCURRENT_REQUESTS: usize = 8;
 const MAX_LISTED_ROWS: usize = 8;
 const ROW_HEIGHT: f32 = 24.;
 const ROW_WITH_ERROR_HEIGHT: f32 = 40.;
 
-type OnDeleted = Rc<dyn Fn(Vec<ObjectTarget>, &mut Window, &mut App)>;
+type OnDone = Rc<dyn Fn(Vec<ObjectTarget>, &mut Window, &mut App)>;
+
+/// What the dialog does to its objects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Operation {
+    Delete,
+    /// Rolls out new pods for a workload.
+    Restart,
+    /// Creates a Job from a CronJob.
+    Run,
+}
+
+impl Operation {
+    pub fn icon(self) -> IconName {
+        match self {
+            Self::Delete => IconName::Trash,
+            Self::Restart => IconName::RotateCw,
+            Self::Run => IconName::Play,
+        }
+    }
+
+    pub fn label(self) -> String {
+        match self {
+            Self::Delete => t!("detail.delete"),
+            Self::Restart => t!("restart.action"),
+            Self::Run => t!("run.action"),
+        }
+        .to_string()
+    }
+
+    fn title(self, kind: &str, name: &str) -> String {
+        match self {
+            Self::Delete => t!("detail.delete_title", kind = kind, name = name),
+            Self::Restart => t!("restart.title", kind = kind, name = name),
+            Self::Run => t!("run.title", kind = kind, name = name),
+        }
+        .to_string()
+    }
+
+    fn title_several(self, kind: &str, count: usize) -> String {
+        match self {
+            Self::Delete => t!("delete.title_several", kind = kind, count = count),
+            Self::Restart => t!("restart.title_several", kind = kind, count = count),
+            Self::Run => t!("run.title_several", kind = kind, count = count),
+        }
+        .to_string()
+    }
+
+    fn progress(self, done: usize, total: usize) -> String {
+        match self {
+            Self::Delete => t!("delete.progress", done = done, total = total),
+            Self::Restart => t!("restart.progress", done = done, total = total),
+            Self::Run => t!("run.progress", done = done, total = total),
+        }
+        .to_string()
+    }
+
+    fn failed(self, error: &ObjectError) -> String {
+        match self {
+            Self::Delete => t!("detail.delete_failed", error = error),
+            Self::Restart => t!("restart.failed", error = error),
+            Self::Run => t!("run.failed", error = error),
+        }
+        .to_string()
+    }
+
+    /// Runs the operation on one object. A run answers with the created Job's
+    /// name.
+    async fn apply(
+        self,
+        services: Arc<dyn ClusterServices>,
+        context: String,
+        target: ObjectTarget,
+    ) -> Result<Option<String>, ObjectError> {
+        match self {
+            Self::Delete => match services.delete_object(&context, target).await {
+                Err(ObjectError::NotFound(_)) => Ok(None),
+                result => result.map(|()| None),
+            },
+            Self::Restart => services
+                .restart_object(&context, target)
+                .await
+                .map(|()| None),
+            Self::Run => services.run_cronjob(&context, target).await.map(Some),
+        }
+    }
+}
 
 struct Item {
     target: ObjectTarget,
@@ -44,7 +132,8 @@ impl Item {
     }
 }
 
-pub struct DeleteDialog {
+pub struct ObjectDialog {
+    operation: Operation,
     key: ClusterKey,
     model: Entity<ClusterModel>,
     services: Arc<dyn ClusterServices>,
@@ -56,22 +145,26 @@ pub struct DeleteDialog {
     cancelled: bool,
     done: usize,
     total: usize,
+    /// Jobs created by runs and not yet announced.
+    created: Vec<String>,
     typed_name: Entity<InputState>,
     name_matches: bool,
-    on_deleted: OnDeleted,
+    on_done: OnDone,
     list: UniformListScrollHandle,
     _subscription: Subscription,
 }
 
-impl DeleteDialog {
-    /// Opens the dialog. `on_deleted` hears about every object that went, even
-    /// if others failed or the user cancelled.
+impl ObjectDialog {
+    /// Opens the dialog. `on_done` hears about every object the operation
+    /// succeeded on, even if others failed or the user cancelled.
+    #[expect(clippy::too_many_arguments, reason = "each is a separate input")]
     pub fn open(
+        operation: Operation,
         key: ClusterKey,
         targets: Vec<ObjectTarget>,
         model: Entity<ClusterModel>,
         services: Arc<dyn ClusterServices>,
-        on_deleted: impl Fn(Vec<ObjectTarget>, &mut Window, &mut App) + 'static,
+        on_done: impl Fn(Vec<ObjectTarget>, &mut Window, &mut App) + 'static,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
@@ -92,6 +185,7 @@ impl DeleteDialog {
                 }
             });
             Self {
+                operation,
                 key,
                 model,
                 services,
@@ -107,9 +201,10 @@ impl DeleteDialog {
                 cancelled: false,
                 done: 0,
                 total: 0,
+                created: Vec::new(),
                 typed_name,
                 name_matches: false,
-                on_deleted: Rc::new(on_deleted),
+                on_done: Rc::new(on_done),
                 list: UniformListScrollHandle::new(),
                 _subscription: subscription,
             }
@@ -138,7 +233,7 @@ impl DeleteDialog {
         }
     }
 
-    fn delete(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn start(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.running = true;
         self.done = 0;
         self.total = self.items.len();
@@ -147,30 +242,34 @@ impl DeleteDialog {
         }
         cx.notify();
 
+        let operation = self.operation;
         let services = self.services.clone();
         let context = self.key.context.clone();
         let targets: Vec<_> = self.items.iter().map(|item| item.target.clone()).collect();
         let mut results = stream::iter(targets)
             .map(move |target| {
-                let reply = services.delete_object(&context, target.clone());
+                let reply = operation.apply(services.clone(), context.clone(), target.clone());
                 async move { (target, reply.await) }
             })
-            .buffer_unordered(MAX_CONCURRENT_DELETES);
+            .buffer_unordered(MAX_CONCURRENT_REQUESTS);
         // The dialog holds the only other handle, and closing it must not lose
-        // what was already deleted.
+        // what was already done.
         let alive = cx.entity();
         cx.spawn_in(window, async move |this, cx| {
-            let mut deleted = Vec::new();
+            let mut succeeded = Vec::new();
             let mut failed = Vec::new();
             while let Some((target, result)) = results.next().await {
-                match result {
-                    Ok(()) | Err(ObjectError::NotFound(_)) => deleted.push(target),
-                    Err(error) => failed.push(Item {
-                        target,
-                        error: Some(t!("detail.delete_failed", error = error).to_string()),
-                    }),
-                }
                 let cancelled = this.update(cx, |this, cx| {
+                    match result {
+                        Ok(created) => {
+                            this.created.extend(created);
+                            succeeded.push(target);
+                        }
+                        Err(error) => failed.push(Item {
+                            target,
+                            error: Some(this.operation.failed(&error)),
+                        }),
+                    }
                     this.done += 1;
                     cx.notify();
                     this.cancelled
@@ -180,7 +279,7 @@ impl DeleteDialog {
                 }
             }
             let _ = this.update_in(cx, |this, window, cx| {
-                this.finish(deleted, failed, window, cx);
+                this.finish(succeeded, failed, window, cx);
             });
             drop(alive);
         })
@@ -189,7 +288,7 @@ impl DeleteDialog {
 
     fn finish(
         &mut self,
-        deleted: Vec<ObjectTarget>,
+        succeeded: Vec<ObjectTarget>,
         failed: Vec<Item>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -203,13 +302,31 @@ impl DeleteDialog {
         if close {
             window.close_dialog(cx);
         }
-        if !deleted.is_empty() {
-            (self.on_deleted)(deleted, window, cx);
+        if close || self.cancelled {
+            self.announce(window, cx);
+        }
+        if !succeeded.is_empty() {
+            (self.on_done)(succeeded, window, cx);
         }
     }
 
-    fn cancel(&mut self) {
+    /// Names the Jobs created so far, once.
+    fn announce(&mut self, window: &mut Window, cx: &mut App) {
+        if self.created.is_empty() {
+            return;
+        }
+        let names = std::mem::take(&mut self.created).join(", ");
+        let message = t!("run.created", names = names).to_string();
+        window.push_notification(Notification::success(message), cx);
+    }
+
+    /// Stops starting new requests. When nothing is running, the Jobs already
+    /// created are announced now, because no finish will follow.
+    fn cancel(&mut self, window: &mut Window, cx: &mut App) {
         self.cancelled = true;
+        if !self.running {
+            self.announce(window, cx);
+        }
     }
 
     fn row_height(&self) -> Pixels {
@@ -229,7 +346,7 @@ impl DeleteDialog {
             .map(|(index, item)| {
                 let error = item.error.clone();
                 div()
-                    .id(("delete-item", index))
+                    .id(("object-item", index))
                     .h(height)
                     .flex()
                     .flex_col()
@@ -251,9 +368,9 @@ impl DeleteDialog {
     fn render_list(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         let view = cx.entity();
         let height = self.row_height() * self.items.len().min(MAX_LISTED_ROWS) as f32;
-        div().id("delete-list").h(height).test_support().child(
+        div().id("object-list").h(height).test_support().child(
             uniform_list(
-                "delete-items",
+                "object-items",
                 self.items.len(),
                 move |range, _, cx: &mut App| view.read(cx).render_rows(range, cx),
             )
@@ -264,18 +381,14 @@ impl DeleteDialog {
 
     fn title(&self) -> String {
         match &*self.items {
-            [item] if !self.several => t!(
-                "detail.delete_title",
-                kind = item.target.kind.kind,
-                name = item.target.name
-            ),
-            items => t!(
-                "delete.title_several",
-                kind = items.first().map_or("", |item| &item.target.kind.kind),
-                count = items.len()
+            [item] if !self.several => self
+                .operation
+                .title(&item.target.kind.kind, &item.target.name),
+            items => self.operation.title_several(
+                items.first().map_or("", |item| &item.target.kind.kind),
+                items.len(),
             ),
         }
-        .to_string()
     }
 
     fn dialog(&self, dialog: Dialog, cx: &mut Context<Self>) -> Dialog {
@@ -285,25 +398,25 @@ impl DeleteDialog {
         let view = cx.weak_entity();
         let confirm = ((!needs_name || self.name_matches) && !self.running).then(|| {
             let view = view.clone();
-            Button::new("delete-confirm")
-                .icon(IconName::Trash)
-                .label(t!("detail.delete").to_string())
+            Button::new("object-confirm")
+                .icon(self.operation.icon())
+                .label(self.operation.label())
                 .on_click(move |_, window, cx| {
-                    let _ = view.update(cx, |this, cx| this.delete(window, cx));
+                    let _ = view.update(cx, |this, cx| this.start(window, cx));
                 })
         });
         let cancel_view = view.clone();
         dialog
             .title(self.title())
             .overlay_closable(false)
-            // Enter never deletes, so deleting always takes a deliberate click.
+            // Enter never confirms, so every operation takes a deliberate click.
             .on_ok(|_, _, _| false)
-            .on_close(move |_, _, cx| {
-                let _ = view.update(cx, |this, _| this.cancel());
+            .on_close(move |_, window, cx| {
+                let _ = view.update(cx, |this, cx| this.cancel(window, cx));
             })
             .child(
                 div()
-                    .id("delete-confirmation")
+                    .id("object-confirmation")
                     .flex()
                     .flex_col()
                     .gap_2()
@@ -321,7 +434,7 @@ impl DeleteDialog {
                         this.child(t!("detail.namespace_line", namespace = namespace).to_string())
                             .children(
                                 item.error.clone().map(|error| {
-                                    div().id("delete-error").child(error).test_support()
+                                    div().id("object-error").child(error).test_support()
                                 }),
                             )
                     })
@@ -331,12 +444,9 @@ impl DeleteDialog {
                     .when(self.running, |this| {
                         this.child(
                             div()
-                                .id("delete-progress")
+                                .id("object-progress")
                                 .text_xs()
-                                .child(
-                                    t!("delete.progress", done = self.done, total = self.total)
-                                        .to_string(),
-                                )
+                                .child(self.operation.progress(self.done, self.total))
                                 .test_support(),
                         )
                     })
@@ -348,10 +458,10 @@ impl DeleteDialog {
                     .justify_end()
                     .gap_2()
                     .child(
-                        Button::new("delete-cancel")
+                        Button::new("object-cancel")
                             .label(t!("common.cancel").to_string())
                             .on_click(move |_, window, cx| {
-                                let _ = cancel_view.update(cx, |this, _| this.cancel());
+                                let _ = cancel_view.update(cx, |this, cx| this.cancel(window, cx));
                                 window.close_dialog(cx);
                             }),
                     )

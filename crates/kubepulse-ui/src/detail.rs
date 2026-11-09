@@ -1,5 +1,6 @@
 //! One object: its metadata, status, events, and owners. Secret values stay
-//! hidden until revealed, and deleting always names the target first.
+//! hidden until revealed, and deleting, restarting, or running always names the
+//! target first.
 
 use std::{collections::HashSet, sync::Arc};
 
@@ -26,9 +27,10 @@ use rust_i18n::t;
 
 use crate::{
     cluster_model::ClusterModel,
-    columns::{columns_for, is_pod, is_service, kind_ref},
+    columns::{columns_for, is_pod, is_service, kind_operation, kind_ref},
     declarative::{DeclarativeView, FormSubmitted},
     identity::ClusterKey,
+    object_dialog::Operation,
     resource_browser::cell_text,
     services::ClusterServices,
     status::{Tone, condition_tone, event_tone, status_tag, tone_tag},
@@ -40,7 +42,8 @@ pub enum DetailEvent {
     Logs(ObjectTarget),
     Shell(ObjectTarget),
     Forward(ObjectTarget),
-    Delete(ObjectTarget),
+    /// Asks before deleting, restarting, or running the object.
+    Confirm(Operation, ObjectTarget),
     Close,
 }
 
@@ -500,6 +503,21 @@ impl DetailView {
                     cx.emit(DetailEvent::Forward(this.target.clone()));
                 }))
         });
+        let operation = kind_operation(&self.target.kind)
+            .filter(|_| loaded)
+            .map(|operation| {
+                let id = match operation {
+                    Operation::Run => "run-object",
+                    _ => "restart-object",
+                };
+                Button::new(id)
+                    .icon(operation.icon())
+                    .small()
+                    .label(operation.label())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.emit(DetailEvent::Confirm(operation, this.target.clone()));
+                    }))
+            });
         let actions = loaded.then(|| {
             div()
                 .flex()
@@ -508,6 +526,7 @@ impl DetailView {
                 .children(logs)
                 .children(shell)
                 .children(forward)
+                .children(operation)
                 .child(
                     Button::new("edit-object")
                         .icon(IconName::Pencil)
@@ -523,7 +542,7 @@ impl DetailView {
                         .small()
                         .label(t!("detail.delete").to_string())
                         .on_click(cx.listener(|this, _, _, cx| {
-                            cx.emit(DetailEvent::Delete(this.target.clone()));
+                            cx.emit(DetailEvent::Confirm(Operation::Delete, this.target.clone()));
                         })),
                 )
         });

@@ -26,6 +26,9 @@ pub trait ClusterServices: Send + Sync + 'static {
         uid: String,
     ) -> Reply<Vec<EventRecord>>;
     fn delete_object(&self, context: &str, target: ObjectTarget) -> Reply<()>;
+    fn restart_object(&self, context: &str, target: ObjectTarget) -> Reply<()>;
+    /// Creates a Job from the CronJob and returns the Job's name.
+    fn run_cronjob(&self, context: &str, target: ObjectTarget) -> Reply<String>;
     fn replace_object(
         &self,
         context: &str,

@@ -9,6 +9,8 @@ use kubepulse_extension_host::ContributionSet;
 use kubepulse_store::ColumnSpec;
 use rust_i18n::t;
 
+use crate::object_dialog::Operation;
+
 #[derive(Clone, Debug)]
 pub struct ColumnDef {
     pub title: Arc<str>,
@@ -41,6 +43,30 @@ pub fn is_service(kind: &ResourceKind) -> bool {
 
 pub fn is_pod(kind: &ResourceKind) -> bool {
     kind.group.is_empty() && kind.kind == "Pod"
+}
+
+/// A workload whose pods restart through its own rollout.
+pub fn is_restartable(kind: &ResourceKind) -> bool {
+    kind.group == "apps"
+        && matches!(
+            kind.kind.as_str(),
+            "Deployment" | "StatefulSet" | "DaemonSet"
+        )
+}
+
+pub fn is_cronjob(kind: &ResourceKind) -> bool {
+    kind.group == "batch" && kind.kind == "CronJob"
+}
+
+/// The operation, besides deleting, that this kind offers on its objects.
+pub fn kind_operation(kind: &ResourceKind) -> Option<Operation> {
+    if is_restartable(kind) {
+        Some(Operation::Restart)
+    } else if is_cronjob(kind) {
+        Some(Operation::Run)
+    } else {
+        None
+    }
 }
 
 fn declared(id: &str, title: &str, paths: &[impl AsRef<str>], status: bool) -> Option<ColumnDef> {
@@ -450,5 +476,33 @@ mod tests {
         let mut review = kind("authentication.k8s.io", "TokenReview", vec![]);
         review.verbs = vec!["create".into()];
         assert!(navigation(&[review], &ContributionSet::default()).is_empty());
+    }
+
+    #[test]
+    fn only_apps_workloads_restart_and_only_batch_cronjobs_run() {
+        for name in ["Deployment", "StatefulSet", "DaemonSet"] {
+            assert_eq!(
+                kind_operation(&kind("apps", name, vec![])),
+                Some(Operation::Restart),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            kind_operation(&kind("batch", "CronJob", vec![])),
+            Some(Operation::Run)
+        );
+        for (group, name) in [
+            ("", "Pod"),
+            ("apps", "ReplicaSet"),
+            ("batch", "Job"),
+            ("example.com", "Deployment"),
+            ("example.com", "CronJob"),
+        ] {
+            assert_eq!(
+                kind_operation(&kind(group, name, vec![])),
+                None,
+                "{group}/{name}"
+            );
+        }
     }
 }

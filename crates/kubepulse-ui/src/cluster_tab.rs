@@ -20,11 +20,11 @@ use rust_i18n::t;
 use crate::{
     cluster_model::{ClusterModel, can_connect},
     columns::{columns_for, kind_icon, kind_ref, kind_title},
-    delete_dialog::DeleteDialog,
     detail::{DetailEvent, DetailView},
     forward_dialog::ForwardDialog,
     icons::view_glyph,
     identity::ClusterKey,
+    object_dialog::{ObjectDialog, Operation},
     resource_browser::{BrowserEvent, ResourceBrowser},
     services::{ClusterServices, SharedServices},
     shell_state::{SharedShellState, ShellState, TabSummary, close_button, close_on_middle_click},
@@ -53,7 +53,7 @@ pub struct ClusterTab {
     services: Arc<dyn ClusterServices>,
     browser: Option<Entity<ResourceBrowser>>,
     detail: Option<Entity<DetailView>>,
-    delete_dialog: WeakEntity<DeleteDialog>,
+    object_dialog: WeakEntity<ObjectDialog>,
     forward_dialog: WeakEntity<ForwardDialog>,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -83,7 +83,7 @@ impl ClusterTab {
             services,
             browser: None,
             detail: None,
-            delete_dialog: WeakEntity::new_invalid(),
+            object_dialog: WeakEntity::new_invalid(),
             forward_dialog: WeakEntity::new_invalid(),
             focus: cx.focus_handle(),
             _subscriptions: vec![subscription],
@@ -106,8 +106,8 @@ impl ClusterTab {
         self.forward_dialog.upgrade()
     }
 
-    pub fn delete_dialog(&self) -> Option<Entity<DeleteDialog>> {
-        self.delete_dialog.upgrade()
+    pub fn object_dialog(&self) -> Option<Entity<ObjectDialog>> {
+        self.object_dialog.upgrade()
     }
 
     pub fn pinned(&self) -> bool {
@@ -185,8 +185,8 @@ impl ClusterTab {
                         this.open_forward(target.clone(), window, cx);
                     }
                     BrowserEvent::Edit(target) => this.open_editor(target.clone(), cx),
-                    BrowserEvent::Delete(targets) => {
-                        this.confirm_delete(targets.clone(), window, cx);
+                    BrowserEvent::Confirm(operation, targets) => {
+                        this.confirm(*operation, targets.clone(), window, cx);
                     }
                 },
             );
@@ -211,8 +211,8 @@ impl ClusterTab {
                 DetailEvent::Shell(target) => this.open_shell(target.clone(), cx),
                 DetailEvent::Forward(target) => this.open_forward(target.clone(), window, cx),
                 DetailEvent::Edit(target) => this.open_editor(target.clone(), cx),
-                DetailEvent::Delete(target) => {
-                    this.confirm_delete(vec![target.clone()], window, cx);
+                DetailEvent::Confirm(operation, target) => {
+                    this.confirm(*operation, vec![target.clone()], window, cx);
                 }
                 DetailEvent::Close => this.close_detail(cx),
             });
@@ -252,25 +252,29 @@ impl ClusterTab {
         cx.notify();
     }
 
-    fn confirm_delete(
+    fn confirm(
         &mut self,
+        operation: Operation,
         targets: Vec<ObjectTarget>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let tab = cx.weak_entity();
-        let dialog = DeleteDialog::open(
+        let dialog = ObjectDialog::open(
+            operation,
             self.key.clone(),
             targets,
             self.model.clone(),
             self.services.clone(),
-            move |deleted, _, cx| {
-                let _ = tab.update(cx, |tab, cx| tab.objects_deleted(&deleted, cx));
+            move |done, _, cx| {
+                if operation == Operation::Delete {
+                    let _ = tab.update(cx, |tab, cx| tab.objects_deleted(&done, cx));
+                }
             },
             window,
             cx,
         );
-        self.delete_dialog = dialog.downgrade();
+        self.object_dialog = dialog.downgrade();
     }
 
     fn objects_deleted(&mut self, deleted: &[ObjectTarget], cx: &mut Context<Self>) {

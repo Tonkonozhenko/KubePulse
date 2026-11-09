@@ -33,8 +33,12 @@ use rust_i18n::t;
 
 use crate::{
     cluster_model::{ClusterModel, ClusterModelEvent},
-    columns::{ComputedColumn, KindColumns, is_pod, is_service, kind_ref},
+    columns::{
+        ComputedColumn, KindColumns, is_cronjob, is_pod, is_restartable, is_service,
+        kind_operation, kind_ref,
+    },
     identity::ClusterKey,
+    object_dialog::Operation,
     services::ClusterServices,
     status::{Tone, status_tag, status_tone},
 };
@@ -53,6 +57,8 @@ pub enum RowAction {
     Logs,
     Shell,
     Forward,
+    Restart,
+    Run,
     Edit,
     Delete,
 }
@@ -63,6 +69,8 @@ impl RowAction {
             Self::Logs => "row-logs",
             Self::Shell => "row-shell",
             Self::Forward => "row-forward",
+            Self::Restart => "row-restart",
+            Self::Run => "row-run",
             Self::Edit => "row-edit",
             Self::Delete => "row-delete",
         }
@@ -73,6 +81,8 @@ impl RowAction {
             Self::Logs => IconName::Logs,
             Self::Shell => IconName::SquareTerminal,
             Self::Forward => IconName::ArrowRightLeft,
+            Self::Restart => Operation::Restart.icon(),
+            Self::Run => Operation::Run.icon(),
             Self::Edit => IconName::Pencil,
             Self::Delete => IconName::Trash,
         }
@@ -80,13 +90,14 @@ impl RowAction {
 
     fn label(self) -> String {
         match self {
-            Self::Logs => t!("detail.logs"),
-            Self::Shell => t!("detail.shell"),
-            Self::Forward => t!("forward.action"),
-            Self::Edit => t!("detail.edit"),
-            Self::Delete => t!("detail.delete"),
+            Self::Logs => t!("detail.logs").to_string(),
+            Self::Shell => t!("detail.shell").to_string(),
+            Self::Forward => t!("forward.action").to_string(),
+            Self::Restart => Operation::Restart.label(),
+            Self::Run => Operation::Run.label(),
+            Self::Edit => t!("detail.edit").to_string(),
+            Self::Delete => Operation::Delete.label(),
         }
-        .to_string()
     }
 }
 
@@ -101,6 +112,10 @@ fn row_actions(kind: &ResourceKind) -> &'static [RowAction] {
         ]
     } else if is_service(kind) {
         &[RowAction::Forward, RowAction::Edit, RowAction::Delete]
+    } else if is_restartable(kind) {
+        &[RowAction::Restart, RowAction::Edit, RowAction::Delete]
+    } else if is_cronjob(kind) {
+        &[RowAction::Run, RowAction::Edit, RowAction::Delete]
     } else {
         &[RowAction::Edit, RowAction::Delete]
     }
@@ -465,7 +480,8 @@ pub enum BrowserEvent {
     Shell(ObjectTarget),
     Forward(ObjectTarget),
     Edit(ObjectTarget),
-    Delete(Vec<ObjectTarget>),
+    /// Asks before deleting, restarting, or running these objects.
+    Confirm(Operation, Vec<ObjectTarget>),
 }
 
 impl EventEmitter<BrowserEvent> for ResourceBrowser {}
@@ -762,7 +778,9 @@ impl ResourceBrowser {
             RowAction::Shell => BrowserEvent::Shell(target),
             RowAction::Forward => BrowserEvent::Forward(target),
             RowAction::Edit => BrowserEvent::Edit(target),
-            RowAction::Delete => BrowserEvent::Delete(vec![target]),
+            RowAction::Restart => BrowserEvent::Confirm(Operation::Restart, vec![target]),
+            RowAction::Run => BrowserEvent::Confirm(Operation::Run, vec![target]),
+            RowAction::Delete => BrowserEvent::Confirm(Operation::Delete, vec![target]),
         });
     }
 
@@ -1111,13 +1129,32 @@ impl Render for ResourceBrowser {
                                 .child(t!("browser.checked", count = checked).to_string())
                                 .test_support(),
                         )
+                        .children(kind_operation(&self.kind).map(|operation| {
+                            let (id, label) = match operation {
+                                Operation::Run => ("run-checked", t!("browser.run_checked")),
+                                _ => ("restart-checked", t!("browser.restart_checked")),
+                            };
+                            Button::new(id)
+                                .icon(operation.icon())
+                                .xsmall()
+                                .label(label.to_string())
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.emit(BrowserEvent::Confirm(
+                                        operation,
+                                        this.checked_targets(cx),
+                                    ));
+                                }))
+                        }))
                         .child(
                             Button::new("delete-checked")
                                 .icon(IconName::Trash)
                                 .xsmall()
                                 .label(t!("browser.delete_checked").to_string())
                                 .on_click(cx.listener(|this, _, _, cx| {
-                                    cx.emit(BrowserEvent::Delete(this.checked_targets(cx)));
+                                    cx.emit(BrowserEvent::Confirm(
+                                        Operation::Delete,
+                                        this.checked_targets(cx),
+                                    ));
                                 })),
                         )
                         .child(

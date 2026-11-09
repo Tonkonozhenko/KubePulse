@@ -1,6 +1,10 @@
 mod support;
 
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use gpui_kit::{
     AppContext as _, ElementId, Entity, Modifiers, SharedString, TestAppContext, VisualTestContext,
@@ -959,7 +963,7 @@ fn dialog_open(harness: &mut Harness<'_>) -> bool {
 fn type_name(harness: &mut Harness<'_>, text: &str) {
     let tab = harness.tab();
     harness.cx.update(|_, cx| {
-        let dialog = tab.read(cx).delete_dialog().expect("an open dialog");
+        let dialog = tab.read(cx).object_dialog().expect("an open dialog");
         dialog.update(cx, |dialog, cx| dialog.type_name(text, cx));
     });
     harness.cx.run_until_parked();
@@ -970,10 +974,10 @@ fn nothing_is_deleted_until_the_user_confirms(cx: &mut TestAppContext) {
     let (mut harness, services) = deletable(cx, false);
 
     assert!(dialog_open(&mut harness));
-    assert!(harness.exists("delete-confirmation".into()));
+    assert!(harness.exists("object-confirmation".into()));
     assert!(deletions(&services).is_empty());
 
-    harness.click("delete-confirm".into());
+    harness.click("object-confirm".into());
 
     assert_eq!(
         deletions(&services),
@@ -987,7 +991,7 @@ fn nothing_is_deleted_until_the_user_confirms(cx: &mut TestAppContext) {
 fn cancelling_deletes_nothing(cx: &mut TestAppContext) {
     let (mut harness, services) = deletable(cx, false);
 
-    harness.click("delete-cancel".into());
+    harness.click("object-cancel".into());
 
     assert!(!dialog_open(&mut harness));
     assert!(deletions(&services).is_empty());
@@ -1055,10 +1059,10 @@ fn a_refused_delete_stays_open_and_says_why(cx: &mut TestAppContext) {
     let (mut harness, services) = deletable(cx, false);
     *services.delete_failure.lock().unwrap() = Some("forbidden".into());
 
-    harness.click("delete-confirm".into());
+    harness.click("object-confirm".into());
 
     assert!(dialog_open(&mut harness));
-    assert!(harness.exists("delete-error".into()));
+    assert!(harness.exists("object-error".into()));
     assert!(harness.detail().is_some());
 }
 
@@ -1066,16 +1070,16 @@ fn a_refused_delete_stays_open_and_says_why(cx: &mut TestAppContext) {
 fn a_protected_cluster_requires_typing_the_name(cx: &mut TestAppContext) {
     let (mut harness, services) = deletable(cx, true);
 
-    assert!(!harness.exists("delete-confirm".into()));
+    assert!(!harness.exists("object-confirm".into()));
 
     type_name(&mut harness, "wrong");
-    assert!(!harness.exists("delete-confirm".into()));
+    assert!(!harness.exists("object-confirm".into()));
 
     type_name(&mut harness, "web");
-    assert!(harness.exists("delete-confirm".into()));
+    assert!(harness.exists("object-confirm".into()));
     assert!(deletions(&services).is_empty());
 
-    harness.click("delete-confirm".into());
+    harness.click("object-confirm".into());
     assert_eq!(deletions(&services).len(), 1);
 }
 
@@ -1089,7 +1093,7 @@ fn closing_on_a_protected_cluster_forgets_the_typed_name(cx: &mut TestAppContext
     harness.click("delete-object".into());
 
     assert!(dialog_open(&mut harness));
-    assert!(!harness.exists("delete-confirm".into()));
+    assert!(!harness.exists("object-confirm".into()));
 }
 
 fn node_kind() -> ResourceKind {
@@ -1575,21 +1579,33 @@ fn few_pods<'a>(
     count: usize,
     protected: bool,
 ) -> (Harness<'a>, Arc<FakeServices>, Arc<ScriptedSource>) {
-    let names = (0..count).map(|index| format!("pod-{index:02}"));
+    few(cx, pod_kind(), "pod", count, protected)
+}
+
+/// Objects of `kind` named `<prefix>-00` onward in `shop`, sorted by name, all
+/// of which can be opened.
+fn few<'a>(
+    cx: &'a mut TestAppContext,
+    kind: ResourceKind,
+    prefix: &str,
+    count: usize,
+    protected: bool,
+) -> (Harness<'a>, Arc<FakeServices>, Arc<ScriptedSource>) {
+    let names = named(prefix, 0..count);
     let objects = names
-        .clone()
-        .map(|name| raw(&name, Some("shop"), json!({})))
+        .iter()
+        .map(|name| raw(name, Some("shop"), json!({})))
         .collect();
-    let source = Arc::new(ScriptedSource::default().with("Pod", objects));
+    let source = Arc::new(ScriptedSource::default().with(&kind.kind, objects));
     let services = Arc::new(FakeServices::new(
         source.clone() as Arc<dyn WatchSource>,
         ContributionSet::default(),
     ));
-    for name in names {
-        services.add_object(&pod_kind(), Some("shop"), owned(&name, None));
+    for name in &names {
+        services.add_object(&kind, Some("shop"), owned(name, None));
     }
-    let mut harness = harness(cx, services.clone(), vec![pod_kind()], protected);
-    harness.open_kind(&pod_kind());
+    let mut harness = harness(cx, services.clone(), vec![kind.clone()], protected);
+    harness.open_kind(&kind);
     harness.wait_for_rows(count);
     harness.update_browser(|browser, cx| {
         browser.set_sort(Some((SortKey::Name, SortDirection::Ascending)), cx);
@@ -1667,9 +1683,13 @@ impl Harness<'_> {
 }
 
 fn names(indices: impl IntoIterator<Item = usize>) -> Vec<String> {
+    named("pod", indices)
+}
+
+fn named(prefix: &str, indices: impl IntoIterator<Item = usize>) -> Vec<String> {
     indices
         .into_iter()
-        .map(|index| format!("pod-{index:02}"))
+        .map(|index| format!("{prefix}-{index:02}"))
         .collect()
 }
 
@@ -1704,7 +1724,7 @@ fn row_buttons_act_without_opening_the_panel_or_changing_checks(cx: &mut TestApp
 
     harness.click_at(("row-delete", 1usize));
     assert!(dialog_open(&mut harness));
-    harness.click("delete-confirm".into());
+    harness.click("object-confirm".into());
     assert_eq!(harness.deleted_names(&services), names([1]));
 
     assert!(harness.detail().is_none());
@@ -1765,7 +1785,7 @@ fn the_right_click_menu_keeps_its_object_when_rows_move(cx: &mut TestAppContext)
     });
     harness.cx.run_until_parked();
     assert!(dialog_open(&mut harness));
-    harness.click("delete-confirm".into());
+    harness.click("object-confirm".into());
 
     assert_eq!(harness.deleted_names(&services), names([1]));
 }
@@ -1961,18 +1981,18 @@ fn several_objects_are_listed_and_nothing_goes_until_confirmed(cx: &mut TestAppC
 
     harness.click("delete-checked".into());
 
-    assert!(harness.exists("delete-confirmation".into()));
-    assert!(harness.exists("delete-list".into()));
+    assert!(harness.exists("object-confirmation".into()));
+    assert!(harness.exists("object-list".into()));
     for row in 0..3usize {
-        assert!(harness.exists_at(("delete-item", row)));
+        assert!(harness.exists_at(("object-item", row)));
     }
-    assert!(!harness.exists_at(("delete-item", 3usize)));
+    assert!(!harness.exists_at(("object-item", 3usize)));
 
     harness.cx.update(|window, cx| window.press("enter", cx));
     harness.cx.run_until_parked();
     assert!(deletions(&services).is_empty());
 
-    harness.click("delete-confirm".into());
+    harness.click("object-confirm".into());
     assert_eq!(harness.deleted_names(&services), names(0..3));
     assert!(!dialog_open(&mut harness));
     assert!(harness.checked().is_empty());
@@ -1985,12 +2005,12 @@ fn several_objects_on_a_protected_cluster_need_the_cluster_name(cx: &mut TestApp
     harness.check(1);
     harness.click("delete-checked".into());
 
-    assert!(!harness.exists("delete-confirm".into()));
+    assert!(!harness.exists("object-confirm".into()));
     type_name(&mut harness, "pod-00");
-    assert!(!harness.exists("delete-confirm".into()));
+    assert!(!harness.exists("object-confirm".into()));
 
     type_name(&mut harness, CONTEXT);
-    assert!(harness.exists("delete-confirm".into()));
+    assert!(harness.exists("object-confirm".into()));
     assert!(deletions(&services).is_empty());
 }
 
@@ -2000,33 +2020,33 @@ fn a_row_delete_on_a_protected_cluster_needs_the_object_name(cx: &mut TestAppCon
     harness.click_at(("row-delete", 1usize));
 
     type_name(&mut harness, CONTEXT);
-    assert!(!harness.exists("delete-confirm".into()));
+    assert!(!harness.exists("object-confirm".into()));
 
     type_name(&mut harness, "pod-01");
-    assert!(harness.exists("delete-confirm".into()));
+    assert!(harness.exists("object-confirm".into()));
 }
 
 #[gpui_kit::test]
 fn a_failure_leaves_the_rest_deleted_and_only_it_is_retried(cx: &mut TestAppContext) {
     let (mut harness, services, _) = few_pods(cx, 3, false);
     services
-        .delete_errors
+        .action_errors
         .lock()
         .unwrap()
         .insert("pod-01".into(), ObjectError::Denied("forbidden".into()));
     harness.click("select-all".into());
     harness.click("delete-checked".into());
 
-    harness.click("delete-confirm".into());
+    harness.click("object-confirm".into());
 
     assert!(dialog_open(&mut harness), "the failure keeps it open");
     assert_eq!(harness.deleted_names(&services), names(0..3));
-    assert!(harness.exists_at(("delete-item", 0usize)));
-    assert!(!harness.exists_at(("delete-item", 1usize)));
+    assert!(harness.exists_at(("object-item", 0usize)));
+    assert!(!harness.exists_at(("object-item", 1usize)));
     assert_eq!(harness.checked(), names([1]));
 
     services.deleted.lock().unwrap().clear();
-    harness.click("delete-confirm".into());
+    harness.click("object-confirm".into());
 
     assert_eq!(harness.deleted_names(&services), names([1]));
     assert!(!dialog_open(&mut harness));
@@ -2037,14 +2057,14 @@ fn a_failure_leaves_the_rest_deleted_and_only_it_is_retried(cx: &mut TestAppCont
 fn an_object_already_gone_counts_as_deleted(cx: &mut TestAppContext) {
     let (mut harness, services, _) = few_pods(cx, 2, false);
     services
-        .delete_errors
+        .action_errors
         .lock()
         .unwrap()
         .insert("pod-00".into(), ObjectError::NotFound("gone".into()));
     harness.click("select-all".into());
     harness.click("delete-checked".into());
 
-    harness.click("delete-confirm".into());
+    harness.click("object-confirm".into());
 
     assert!(!dialog_open(&mut harness));
     assert!(harness.checked().is_empty());
@@ -2054,15 +2074,15 @@ fn an_object_already_gone_counts_as_deleted(cx: &mut TestAppContext) {
 fn cancelling_starts_no_more_deletions(cx: &mut TestAppContext) {
     let (mut harness, services, _) = few_pods(cx, 12, false);
     let gate = Arc::new(tokio::sync::Semaphore::new(0));
-    *services.delete_gate.lock().unwrap() = Some(gate.clone());
+    *services.action_gate.lock().unwrap() = Some(gate.clone());
     harness.click("select-all".into());
     harness.click("delete-checked".into());
 
-    harness.click("delete-confirm".into());
+    harness.click("object-confirm".into());
     assert_eq!(deletions(&services).len(), 8, "at most eight at once");
-    assert!(harness.exists("delete-progress".into()));
+    assert!(harness.exists("object-progress".into()));
 
-    harness.click("delete-cancel".into());
+    harness.click("object-cancel".into());
     gate.add_permits(12);
     harness.settle();
 
@@ -2074,10 +2094,10 @@ fn cancelling_starts_no_more_deletions(cx: &mut TestAppContext) {
 fn escape_during_deletion_starts_no_more_of_them(cx: &mut TestAppContext) {
     let (mut harness, services, _) = few_pods(cx, 12, false);
     let gate = Arc::new(tokio::sync::Semaphore::new(0));
-    *services.delete_gate.lock().unwrap() = Some(gate.clone());
+    *services.action_gate.lock().unwrap() = Some(gate.clone());
     harness.click("select-all".into());
     harness.click("delete-checked".into());
-    harness.click("delete-confirm".into());
+    harness.click("object-confirm".into());
 
     harness.cx.update(|window, cx| window.press("escape", cx));
     harness.cx.run_until_parked();
@@ -2096,9 +2116,287 @@ fn deleting_the_open_object_with_others_closes_the_panel(cx: &mut TestAppContext
     harness.click("select-all".into());
     harness.click("delete-checked".into());
 
-    harness.click("delete-confirm".into());
+    harness.click("object-confirm".into());
 
     assert!(harness.detail().is_none());
+}
+
+// Restarting and running
+
+fn stateful_set_kind() -> ResourceKind {
+    kind("apps", "StatefulSet", "statefulsets", true)
+}
+
+fn cronjob_kind() -> ResourceKind {
+    kind("batch", "CronJob", "cronjobs", true)
+}
+
+fn job_kind() -> ResourceKind {
+    kind("batch", "Job", "jobs", true)
+}
+
+fn sorted_names(targets: &Mutex<Vec<ObjectTarget>>) -> Vec<String> {
+    let mut names: Vec<_> = targets
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|target| target.name.clone())
+        .collect();
+    names.sort();
+    names
+}
+
+fn notification_count(harness: &mut Harness<'_>) -> usize {
+    harness
+        .cx
+        .update(|window, cx| window.notifications(cx).len())
+}
+
+#[gpui_kit::test]
+fn workloads_offer_restart_and_cronjobs_offer_run(cx: &mut TestAppContext) {
+    let (mut harness, _, _) = few(cx, deployment_kind(), "web", 2, false);
+    assert!(harness.exists_at(("row-restart", 0usize)));
+    assert!(!harness.exists_at(("row-run", 0usize)));
+    assert!(!harness.exists("restart-checked".into()));
+    harness.check(0);
+    assert!(harness.exists("restart-checked".into()));
+    assert!(!harness.exists("run-checked".into()));
+}
+
+#[gpui_kit::test]
+fn cronjobs_offer_run_and_not_restart(cx: &mut TestAppContext) {
+    let (mut harness, _, _) = few(cx, cronjob_kind(), "backup", 2, false);
+    assert!(harness.exists_at(("row-run", 0usize)));
+    assert!(!harness.exists_at(("row-restart", 0usize)));
+    harness.check(0);
+    assert!(harness.exists("run-checked".into()));
+    assert!(!harness.exists("restart-checked".into()));
+}
+
+#[gpui_kit::test]
+fn pods_offer_neither_restart_nor_run(cx: &mut TestAppContext) {
+    let (mut harness, _, _) = few_pods(cx, 2, false);
+    assert!(!harness.exists_at(("row-restart", 0usize)));
+    assert!(!harness.exists_at(("row-run", 0usize)));
+    harness.check(0);
+    assert!(!harness.exists("restart-checked".into()));
+    assert!(!harness.exists("run-checked".into()));
+}
+
+#[gpui_kit::test]
+fn a_row_restart_waits_for_a_click_and_changes_no_checks(cx: &mut TestAppContext) {
+    let (mut harness, services, _) = few(cx, deployment_kind(), "web", 3, false);
+    harness.check(0);
+
+    harness.click_at(("row-restart", 1usize));
+    assert!(dialog_open(&mut harness));
+    harness.cx.update(|window, cx| window.press("enter", cx));
+    harness.cx.run_until_parked();
+    assert!(services.restarted.lock().unwrap().is_empty());
+
+    harness.click("object-confirm".into());
+
+    assert_eq!(sorted_names(&services.restarted), named("web", [1]));
+    assert!(!dialog_open(&mut harness));
+    assert!(harness.detail().is_none());
+    assert_eq!(harness.checked(), named("web", [0]));
+}
+
+#[gpui_kit::test]
+fn the_right_click_menu_offers_restart_first(cx: &mut TestAppContext) {
+    let (mut harness, services, _) = few(cx, deployment_kind(), "web", 2, false);
+    harness.cx.update(|window, cx| {
+        window.render_frame(cx);
+        window.right_click(SharedString::from("table-cell-1:2"), cx);
+    });
+    harness.cx.run_until_parked();
+    harness.cx.update(|window, cx| {
+        window.render_frame(cx);
+        window.within("popup-menu").click(ElementId::Integer(0), cx);
+    });
+    harness.cx.run_until_parked();
+
+    harness.click("object-confirm".into());
+    assert_eq!(sorted_names(&services.restarted), named("web", [1]));
+}
+
+#[gpui_kit::test]
+fn restarting_several_lists_them_and_keeps_them_checked(cx: &mut TestAppContext) {
+    let (mut harness, services, _) = few(cx, deployment_kind(), "web", 4, false);
+    harness.check(0);
+    harness.shift_check(2);
+
+    harness.click("restart-checked".into());
+    for row in 0..3usize {
+        assert!(harness.exists_at(("object-item", row)));
+    }
+    assert!(services.restarted.lock().unwrap().is_empty());
+
+    harness.click("object-confirm".into());
+
+    assert_eq!(sorted_names(&services.restarted), named("web", 0..3));
+    assert!(!dialog_open(&mut harness));
+    assert_eq!(harness.checked(), named("web", 0..3));
+}
+
+#[gpui_kit::test]
+fn a_restart_on_a_protected_cluster_needs_a_typed_name(cx: &mut TestAppContext) {
+    let (mut harness, _, _) = few(cx, deployment_kind(), "web", 3, true);
+    harness.click_at(("row-restart", 1usize));
+    assert!(!harness.exists("object-confirm".into()));
+    type_name(&mut harness, "web-01");
+    assert!(harness.exists("object-confirm".into()));
+    harness.click("object-cancel".into());
+
+    harness.check(0);
+    harness.check(1);
+    harness.click("restart-checked".into());
+    type_name(&mut harness, "web-00");
+    assert!(!harness.exists("object-confirm".into()));
+    type_name(&mut harness, CONTEXT);
+    assert!(harness.exists("object-confirm".into()));
+}
+
+#[gpui_kit::test]
+fn a_restart_failure_is_listed_and_only_it_is_retried(cx: &mut TestAppContext) {
+    let (mut harness, services, _) = few(cx, deployment_kind(), "web", 3, false);
+    let mut errors = services.action_errors.lock().unwrap();
+    errors.insert("web-01".into(), ObjectError::Denied("forbidden".into()));
+    errors.insert("web-02".into(), ObjectError::NotFound("gone".into()));
+    drop(errors);
+    harness.click("select-all".into());
+    harness.click("restart-checked".into());
+
+    harness.click("object-confirm".into());
+
+    assert!(dialog_open(&mut harness), "the failures keep it open");
+    assert_eq!(sorted_names(&services.restarted), named("web", 0..3));
+    assert!(harness.exists_at(("object-item", 0usize)));
+    assert!(harness.exists_at(("object-item", 1usize)));
+    assert!(!harness.exists_at(("object-item", 2usize)));
+
+    services.restarted.lock().unwrap().clear();
+    harness.click("object-confirm".into());
+
+    assert_eq!(sorted_names(&services.restarted), named("web", [1, 2]));
+    assert!(!dialog_open(&mut harness));
+    assert_eq!(harness.checked(), named("web", 0..3));
+}
+
+#[gpui_kit::test]
+fn cancelling_starts_no_more_restarts(cx: &mut TestAppContext) {
+    let (mut harness, services, _) = few(cx, deployment_kind(), "web", 12, false);
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    *services.action_gate.lock().unwrap() = Some(gate.clone());
+    harness.click("select-all".into());
+    harness.click("restart-checked".into());
+    harness.click("object-confirm".into());
+    assert!(harness.exists("object-progress".into()));
+
+    harness.click("object-cancel".into());
+    gate.add_permits(12);
+    harness.settle();
+
+    assert_eq!(services.restarted.lock().unwrap().len(), 8);
+    assert!(!dialog_open(&mut harness));
+}
+
+#[gpui_kit::test]
+fn a_row_run_names_the_created_job(cx: &mut TestAppContext) {
+    let (mut harness, services, _) = few(cx, cronjob_kind(), "backup", 2, false);
+
+    harness.click_at(("row-run", 0usize));
+    assert!(services.ran.lock().unwrap().is_empty());
+    assert_eq!(notification_count(&mut harness), 0);
+
+    harness.click("object-confirm".into());
+
+    assert_eq!(sorted_names(&services.ran), named("backup", [0]));
+    assert!(!dialog_open(&mut harness));
+    assert_eq!(notification_count(&mut harness), 1);
+}
+
+#[gpui_kit::test]
+fn a_retried_run_starts_only_the_failed_cronjob_and_names_every_job_once(cx: &mut TestAppContext) {
+    let (mut harness, services, _) = few(cx, cronjob_kind(), "backup", 3, false);
+    services
+        .action_errors
+        .lock()
+        .unwrap()
+        .insert("backup-01".into(), ObjectError::Denied("forbidden".into()));
+    harness.click("select-all".into());
+    harness.click("run-checked".into());
+
+    harness.click("object-confirm".into());
+
+    assert!(dialog_open(&mut harness));
+    assert!(harness.exists_at(("object-item", 0usize)));
+    assert!(!harness.exists_at(("object-item", 1usize)));
+    assert_eq!(notification_count(&mut harness), 0);
+
+    harness.click("object-confirm".into());
+
+    assert_eq!(
+        sorted_names(&services.ran),
+        named("backup", [0, 1, 1, 2]),
+        "one failed attempt and one run for each CronJob"
+    );
+    assert!(!dialog_open(&mut harness));
+    assert_eq!(notification_count(&mut harness), 1);
+}
+
+#[gpui_kit::test]
+fn closing_after_a_partial_run_still_names_the_created_jobs(cx: &mut TestAppContext) {
+    let (mut harness, services, _) = few(cx, cronjob_kind(), "backup", 2, false);
+    services
+        .action_errors
+        .lock()
+        .unwrap()
+        .insert("backup-01".into(), ObjectError::Denied("forbidden".into()));
+    harness.click("select-all".into());
+    harness.click("run-checked".into());
+    harness.click("object-confirm".into());
+    assert_eq!(notification_count(&mut harness), 0);
+
+    harness.click("object-cancel".into());
+
+    assert!(!dialog_open(&mut harness));
+    assert_eq!(notification_count(&mut harness), 1);
+}
+
+fn detailed_kind(cx: &mut TestAppContext, kind: ResourceKind) -> Harness<'_> {
+    let services = Arc::new(FakeServices::idle());
+    services.add_object(&kind, Some("shop"), owned("one", None));
+    let mut harness = harness(cx, services, vec![kind.clone()], false);
+    harness.open_object(target(kind, Some("shop"), "one"));
+    harness
+}
+
+#[gpui_kit::test]
+fn the_panel_offers_restart_for_a_stateful_set(cx: &mut TestAppContext) {
+    let mut harness = detailed_kind(cx, stateful_set_kind());
+    assert!(harness.exists("restart-object".into()));
+    assert!(!harness.exists("run-object".into()));
+
+    harness.click("restart-object".into());
+    harness.click("object-confirm".into());
+
+    assert!(!dialog_open(&mut harness));
+    assert!(harness.detail().is_some(), "a restart keeps the panel open");
+}
+
+#[gpui_kit::test]
+fn the_panel_offers_run_for_a_cronjob(cx: &mut TestAppContext) {
+    let mut harness = detailed_kind(cx, cronjob_kind());
+    assert!(harness.exists("run-object".into()));
+    assert!(!harness.exists("restart-object".into()));
+}
+
+#[gpui_kit::test]
+fn the_panel_offers_neither_for_a_job(cx: &mut TestAppContext) {
+    let mut harness = detailed_kind(cx, job_kind());
+    assert!(!harness.exists("run-object".into()));
+    assert!(!harness.exists("restart-object".into()));
 }
 
 // Detail panel

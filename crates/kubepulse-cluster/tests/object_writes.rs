@@ -217,3 +217,137 @@ async fn the_access_review_reports_a_denial_and_its_reason() {
     assert!(!access.allowed);
     assert_eq!(access.reason.as_deref(), Some("no rule allows update"));
 }
+
+const DEPLOYMENT_PATH: &str = "/apis/apps/v1/namespaces/default/deployments/web";
+
+fn workload(kind: &str, plural: &str, group: &str, name: &str) -> ObjectTarget {
+    ObjectTarget {
+        kind: ResourceKind {
+            group: group.into(),
+            version: "v1".into(),
+            kind: kind.into(),
+            plural: plural.into(),
+            namespaced: true,
+            verbs: vec![],
+            printer_columns: vec![],
+        },
+        namespace: Some("default".into()),
+        name: name.into(),
+    }
+}
+
+fn deployment(version: &str, image: &str) -> Value {
+    json!({
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {"name": "web", "namespace": "default", "resourceVersion": version},
+        "spec": {"template": {"spec": {"containers": [{"name": "web", "image": image}]}}},
+    })
+}
+
+const RESTARTED_AT: &str = "kubectl.kubernetes.io/restartedAt";
+
+#[tokio::test]
+async fn a_restart_retries_a_conflict_on_the_newer_object() {
+    let server = api_server().await;
+    get(DEPLOYMENT_PATH, reply(&deployment("1", "web:1")))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    get(DEPLOYMENT_PATH, reply(&deployment("2", "web:theirs")))
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path(DEPLOYMENT_PATH))
+        .respond_with(status(409, "Conflict", "the object has been modified"))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path(DEPLOYMENT_PATH))
+        .respond_with(reply(&deployment("3", "web:theirs")))
+        .mount(&server)
+        .await;
+    let connected = connect(&server).await;
+
+    let target = workload("Deployment", "deployments", "apps", "web");
+    connected.handle.restart_object(&target).await.unwrap();
+
+    let sent = writes(&server).await;
+    assert_eq!(sent.len(), 2);
+    let last: Value = sent[1].body_json().unwrap();
+    assert_eq!(last["metadata"]["resourceVersion"], "2");
+    let template = &last["spec"]["template"];
+    assert_eq!(template["spec"]["containers"][0]["image"], "web:theirs");
+    assert!(template["metadata"]["annotations"][RESTARTED_AT].is_string());
+}
+
+#[tokio::test]
+async fn a_restart_gives_up_after_three_conflicts() {
+    let server = api_server().await;
+    get(DEPLOYMENT_PATH, reply(&deployment("1", "web:1")))
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path(DEPLOYMENT_PATH))
+        .respond_with(status(409, "Conflict", "the object has been modified"))
+        .mount(&server)
+        .await;
+    let connected = connect(&server).await;
+
+    let target = workload("Deployment", "deployments", "apps", "web");
+    let result = connected.handle.restart_object(&target).await;
+
+    assert_eq!(
+        result,
+        Err(ObjectError::Conflict("the object has been modified".into()))
+    );
+    assert_eq!(writes(&server).await.len(), 3);
+}
+
+#[tokio::test]
+async fn running_a_cronjob_creates_an_owned_job_and_returns_its_name() {
+    let server = api_server().await;
+    let cronjob = json!({
+        "apiVersion": "batch/v1",
+        "kind": "CronJob",
+        "metadata": {"name": "backup", "namespace": "default", "uid": "u-1"},
+        "spec": {
+            "schedule": "0 * * * *",
+            "jobTemplate": {"spec": {"template": {"spec": {"restartPolicy": "Never"}}}},
+        },
+    });
+    get(
+        "/apis/batch/v1/namespaces/default/cronjobs/backup",
+        reply(&cronjob),
+    )
+    .mount(&server)
+    .await;
+    let created = json!({
+        "apiVersion": "batch/v1",
+        "kind": "Job",
+        "metadata": {"name": "backup-manual-x7k2q", "namespace": "default"},
+    });
+    Mock::given(method("POST"))
+        .and(path("/apis/batch/v1/namespaces/default/jobs"))
+        .respond_with(reply(&created))
+        .mount(&server)
+        .await;
+    let connected = connect(&server).await;
+
+    let target = workload("CronJob", "cronjobs", "batch", "backup");
+    let name = connected.handle.run_cronjob(&target).await.unwrap();
+
+    assert_eq!(name, "backup-manual-x7k2q");
+    let requests = server.received_requests().await.unwrap();
+    let post = requests
+        .iter()
+        .find(|request| request.method.as_str() == "POST")
+        .expect("a create request");
+    let sent: Value = post.body_json().unwrap();
+    assert_eq!(sent["metadata"]["generateName"], "backup-manual-");
+    assert_eq!(sent["metadata"]["ownerReferences"][0]["uid"], "u-1");
+    assert_eq!(sent["metadata"]["ownerReferences"][0]["controller"], true);
+}
