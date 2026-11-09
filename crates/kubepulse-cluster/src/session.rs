@@ -13,7 +13,8 @@ use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomRe
 use kube::{
     Api, Client, Config, Resource as _,
     api::{ListParams, ObjectList},
-    config::{KubeConfigOptions, Kubeconfig},
+    client::AuthError,
+    config::{AuthInfo, ExecInteractiveMode, KubeConfigOptions, Kubeconfig},
     core::{Request, discovery::Scope},
     discovery::{ApiGroup, Discovery},
 };
@@ -237,8 +238,16 @@ async fn run(
     cancel: CancellationToken,
     tasks: TaskTracker,
 ) {
+    let helper =
+        auth_info(&context, &kubeconfig).and_then(|auth| auth.exec.as_ref()?.command.clone());
     let established = cancel
-        .run_until_cancelled(establish(&context, kubeconfig, &options, &channels.state))
+        .run_until_cancelled(establish(
+            &context,
+            kubeconfig,
+            helper.as_deref(),
+            &options,
+            &channels.state,
+        ))
         .await;
     let client = match established {
         None => return,
@@ -271,18 +280,35 @@ async fn run(
     });
 
     cancel
-        .run_until_cancelled(monitor(&context, &client, &options, &channels.state))
+        .run_until_cancelled(monitor(
+            &context,
+            &client,
+            helper.as_deref(),
+            &options,
+            &channels.state,
+        ))
         .await;
 }
 
 async fn establish(
     context: &str,
-    kubeconfig: Kubeconfig,
+    mut kubeconfig: Kubeconfig,
+    helper: Option<&str>,
     options: &SessionOptions,
     state: &watch::Sender<ConnectionState>,
 ) -> Result<Client, String> {
     state.send_replace(ConnectionState::Connecting);
-    let uses_helper = uses_credential_helper(context, &kubeconfig);
+    let uses_helper = auth_info(context, &kubeconfig)
+        .is_some_and(|auth| auth.exec.is_some() || auth.auth_provider.is_some());
+    // There is no terminal to prompt in, and helpers that inherit one lose their
+    // error output.
+    for exec in kubeconfig
+        .auth_infos
+        .iter_mut()
+        .filter_map(|named| named.auth_info.as_mut()?.exec.as_mut())
+    {
+        exec.interactive_mode = Some(ExecInteractiveMode::Never);
+    }
     let config_options = KubeConfigOptions {
         context: Some(context.to_owned()),
         ..Default::default()
@@ -300,16 +326,16 @@ async fn establish(
         .await
         .map_err(|_| "the credential helper timed out".to_owned())?
         .map_err(|_| "the credential helper stopped unexpectedly".to_owned())?
-        .map_err(|error| describe(&error))?;
+        .map_err(|error| explain(&error, helper))?;
 
     state.send_replace(ConnectionState::Connecting);
-    time::timeout(options.connect_timeout, probe(&client))
+    time::timeout(options.connect_timeout, probe(&client, helper))
         .await
         .map_err(|_| "the API server did not respond in time".to_owned())??;
     Ok(client)
 }
 
-fn uses_credential_helper(context: &str, kubeconfig: &Kubeconfig) -> bool {
+fn auth_info<'a>(context: &str, kubeconfig: &'a Kubeconfig) -> Option<&'a AuthInfo> {
     let user = kubeconfig
         .contexts
         .iter()
@@ -320,37 +346,76 @@ fn uses_credential_helper(context: &str, kubeconfig: &Kubeconfig) -> bool {
         .iter()
         .find(|named| Some(&named.name) == user.as_ref())
         .and_then(|named| named.auth_info.as_ref())
-        .is_some_and(|auth| auth.exec.is_some() || auth.auth_provider.is_some())
 }
 
 /// Confirms the API server answers. Being refused access to `/version` still
 /// proves it is reachable, and authorization failures are normal states.
-async fn probe(client: &Client) -> Result<(), String> {
+async fn probe(client: &Client, helper: Option<&str>) -> Result<(), String> {
     match client.apiserver_version().await {
         Ok(_) => Ok(()),
         Err(kube::Error::Api(status)) if matches!(status.code, 403 | 404) => Ok(()),
-        Err(error) => Err(describe(&error)),
+        Err(error) => Err(explain(&error, helper)),
     }
 }
 
-/// Turns a client error into text for the user. Credential helper failures can
-/// carry the helper's output, so those details are dropped.
+/// Turns a client error into text for logs, which never includes what a
+/// credential helper printed.
 pub(crate) fn describe(error: &kube::Error) -> String {
+    text(error, None, false)
+}
+
+/// Turns a client error into text for the user. `helper` is the cluster's
+/// credential helper command. A failed helper's error output is included, but
+/// never its standard output, which carries credentials.
+pub(crate) fn explain(error: &kube::Error, helper: Option<&str>) -> String {
+    text(error, helper, true)
+}
+
+fn text(error: &kube::Error, helper: Option<&str>, helper_output: bool) -> String {
     match error {
         kube::Error::Api(status) => format!(
             "the API server responded {}: {}",
             status.code, status.message
         ),
-        kube::Error::Auth(_) => "authentication failed".to_owned(),
-        kube::Error::Service(source)
-            if source.downcast_ref::<kube::client::AuthError>().is_some() =>
-        {
-            "authentication failed".to_owned()
-        }
-        kube::Error::Service(_) | kube::Error::HyperError(_) => {
-            "the API server is unreachable".to_owned()
-        }
+        kube::Error::Auth(auth) => describe_auth(auth, helper, helper_output),
+        kube::Error::Service(source) => match source.downcast_ref::<AuthError>() {
+            Some(auth) => describe_auth(auth, helper, helper_output),
+            None => "the API server is unreachable".to_owned(),
+        },
+        kube::Error::HyperError(_) => "the API server is unreachable".to_owned(),
         _ => "the request failed".to_owned(),
+    }
+}
+
+/// The library's own messages can quote the helper's response or the variables
+/// passed to it, so each cause is described here instead.
+fn describe_auth(error: &AuthError, helper: Option<&str>, helper_output: bool) -> String {
+    let helper = helper.map_or_else(
+        || "the credential helper".to_owned(),
+        |command| format!("the credential helper \"{command}\""),
+    );
+    match error {
+        AuthError::AuthExecRun { out, .. } => {
+            let summary = format!("{helper} failed with {}", out.status);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            match stderr.trim() {
+                message if helper_output && !message.is_empty() => {
+                    format!("{summary}\n{message}")
+                }
+                _ => summary,
+            }
+        }
+        AuthError::AuthExecStart(error) => format!("{helper} could not be started: {error}"),
+        AuthError::AuthExecParse(_) | AuthError::ExecPluginFailed => {
+            format!("the response of {helper} could not be read")
+        }
+        AuthError::ReadTokenFile(error, path) => format!(
+            "the token file {} could not be read: {error}",
+            path.display()
+        ),
+        AuthError::InvalidBearerToken(_) => "the bearer token is not valid".to_owned(),
+        AuthError::InvalidBasicAuth(_) => "the user name or password is not valid".to_owned(),
+        _ => "authentication failed".to_owned(),
     }
 }
 
@@ -359,12 +424,13 @@ pub(crate) fn describe(error: &kube::Error) -> String {
 async fn monitor(
     context: &str,
     client: &Client,
+    helper: Option<&str>,
     options: &SessionOptions,
     state: &watch::Sender<ConnectionState>,
 ) {
     loop {
         time::sleep(options.health_interval).await;
-        let Err(reason) = checked_probe(client, options).await else {
+        let Err(reason) = checked_probe(client, helper, options).await else {
             continue;
         };
 
@@ -378,7 +444,7 @@ async fn monitor(
             .build();
         for delay in delays {
             time::sleep(delay).await;
-            match checked_probe(client, options).await {
+            match checked_probe(client, helper, options).await {
                 Ok(()) => break,
                 Err(reason) => {
                     state.send_replace(ConnectionState::Degraded { reason });
@@ -390,8 +456,12 @@ async fn monitor(
     }
 }
 
-async fn checked_probe(client: &Client, options: &SessionOptions) -> Result<(), String> {
-    time::timeout(options.connect_timeout, probe(client))
+async fn checked_probe(
+    client: &Client,
+    helper: Option<&str>,
+    options: &SessionOptions,
+) -> Result<(), String> {
+    time::timeout(options.connect_timeout, probe(client, helper))
         .await
         .map_err(|_| "the API server did not respond in time".to_owned())?
 }

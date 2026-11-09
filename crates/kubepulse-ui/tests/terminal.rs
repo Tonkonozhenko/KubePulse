@@ -14,6 +14,7 @@ use kubepulse_cluster::{
 };
 use kubepulse_store::synthetic::pod_kind;
 use kubepulse_ui::{
+    app,
     cluster_model::ClusterModel,
     identity::{ClusterKey, IdentityStore},
     preferences::Preferences,
@@ -86,6 +87,7 @@ fn setup(cx: &mut TestAppContext, object: Value) -> (Fixture, &mut VisualTestCon
     let shared = services.clone();
     let (model, shell) = cx.update(|cx| {
         gpui_kit::init(cx);
+        app::init(cx);
         cx.set_reduce_motion(true);
         cx.set_global(SharedServices(shared));
         terminal_tab::init(cx);
@@ -451,6 +453,16 @@ fn keys_the_kit_binds_still_reach_the_container(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("tab shift-tab ctrl-c");
 
     assert_eq!(typed(&fixture, cx), b"\t\x1b[Z\x03");
+}
+
+#[gpui_kit::test]
+fn ctrl_q_reaches_the_container_instead_of_quitting(cx: &mut TestAppContext) {
+    let (fixture, cx) = setup(cx, pod(&["app"], &[]));
+    open_running(&fixture, cx);
+
+    cx.simulate_keystrokes("ctrl-q");
+
+    assert_eq!(typed(&fixture, cx), b"\x11");
 }
 
 #[gpui_kit::test]

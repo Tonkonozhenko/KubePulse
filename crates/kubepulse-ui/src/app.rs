@@ -39,6 +39,30 @@ struct BackgroundRuntime(#[expect(dead_code)] ClusterRuntime);
 
 impl Global for BackgroundRuntime {}
 
+/// Each platform's standard quit shortcut.
+pub const QUIT_SHORTCUT: &str = if cfg!(target_os = "macos") {
+    "cmd-q"
+} else if cfg!(target_os = "windows") {
+    "alt-f4"
+} else {
+    "ctrl-q"
+};
+
+gpui_kit::actions!(kubepulse, [Quit]);
+
+/// Quits on the platform's shortcut, and when the only window closes, so that no
+/// platform keeps running without a window.
+pub fn init(cx: &mut App) {
+    cx.bind_keys([KeyBinding::new(QUIT_SHORTCUT, Quit, None)]);
+    cx.on_action(|_: &Quit, cx| cx.quit());
+    cx.on_window_closed(|cx, _| {
+        if cx.windows().is_empty() {
+            cx.quit();
+        }
+    })
+    .detach();
+}
+
 pub fn run() {
     run_with(RunOptions::default());
 }
@@ -83,6 +107,7 @@ pub fn run_with(options: RunOptions) {
         .with_assets(AllAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            init(cx);
             command_palette::init(cx);
             terminal_tab::init(cx);
             cx.set_global(SharedServices(services.clone()));

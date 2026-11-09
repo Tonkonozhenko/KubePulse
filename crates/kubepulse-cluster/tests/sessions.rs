@@ -37,6 +37,7 @@ async fn listing_contexts_makes_no_requests_and_runs_no_helpers() {
         token: "t".into(),
         delay_ms: 0,
         exit_code: 0,
+        message: String::new(),
         marker: Some(marker.clone()),
     };
     let list = kubeconfig(dir.path(), &[("a", &server.uri(), auth)]);
@@ -142,6 +143,7 @@ async fn runs_the_helper_while_authenticating_and_sends_its_token() {
         token: "helper-token".into(),
         delay_ms: 500,
         exit_code: 0,
+        message: String::new(),
         marker: None,
     };
     let list = kubeconfig(dir.path(), &[("a", &server.uri(), auth)]);
@@ -269,6 +271,7 @@ async fn a_slow_helper_times_out() {
         token: "t".into(),
         delay_ms: 3_000,
         exit_code: 0,
+        message: String::new(),
         marker: None,
     };
     let list = kubeconfig(dir.path(), &[("a", &server.uri(), auth)]);
@@ -294,6 +297,55 @@ async fn a_slow_helper_times_out() {
     );
 }
 
+async fn failure_reason(auth: Auth) -> String {
+    let dir = temp();
+    let server = api_server().await;
+    let list = kubeconfig(dir.path(), &[("a", &server.uri(), auth)]);
+    let mut sessions = manager(list);
+    sessions.connect("a").unwrap();
+    let failed = wait_until(
+        &mut sessions.session("a").unwrap().subscribe_state(),
+        is_failed,
+    )
+    .await;
+    let ConnectionState::Failed { reason } = failed else {
+        unreachable!()
+    };
+    reason
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_helper_shows_its_command_status_and_error_output() {
+    let reason = failure_reason(Auth::Helper {
+        token: "secret-token".into(),
+        delay_ms: 0,
+        exit_code: 3,
+        message: "the login expired, sign in again".into(),
+        marker: None,
+    })
+    .await;
+
+    let command = helper_path().display().to_string();
+    assert!(reason.contains(&format!("\"{command}\"")), "{reason}");
+    assert!(reason.contains(": 3\n"), "{reason}");
+    assert!(
+        reason.ends_with("\nthe login expired, sign in again"),
+        "{reason}"
+    );
+    assert!(!reason.contains("secret-token"), "{reason}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_missing_helper_is_named() {
+    let reason = failure_reason(Auth::Command("kubepulse-missing-helper".into())).await;
+
+    assert!(
+        reason
+            .starts_with("the credential helper \"kubepulse-missing-helper\" could not be started"),
+        "{reason}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_slow_helper_can_be_cancelled_without_blocking_other_sessions() {
     let dir = temp();
@@ -303,6 +355,7 @@ async fn a_slow_helper_can_be_cancelled_without_blocking_other_sessions() {
         token: "t".into(),
         delay_ms: 5_000,
         exit_code: 0,
+        message: String::new(),
         marker: None,
     };
     let list = kubeconfig(

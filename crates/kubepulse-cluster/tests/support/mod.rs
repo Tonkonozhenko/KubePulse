@@ -72,15 +72,19 @@ pub async fn mount_core_discovery(server: &MockServer) {
     .await;
 }
 
-/// How a context in a generated kubeconfig authenticates.
+/// How a context in a generated kubeconfig authenticates. Helpers are left
+/// interactive, as most real kubeconfigs are.
 pub enum Auth {
     None,
     Helper {
         token: String,
         delay_ms: u64,
         exit_code: i32,
+        message: String,
         marker: Option<PathBuf>,
     },
+    /// A helper that runs `command` with no arguments.
+    Command(String),
 }
 
 pub fn helper_path() -> PathBuf {
@@ -98,18 +102,23 @@ fn user_yaml(auth: &Auth) -> String {
             token,
             delay_ms,
             exit_code,
+            message,
             marker,
         } => {
-            let mut args = format!("[{token:?}, \"{delay_ms}\", \"{exit_code}\"");
+            let mut args = format!("[{token:?}, \"{delay_ms}\", \"{exit_code}\", {message:?}");
             if let Some(marker) = marker {
                 args.push_str(&format!(", {:?}", marker.display().to_string()));
             }
-            format!(
-                "\n    exec:\n      apiVersion: client.authentication.k8s.io/v1\n      interactiveMode: Never\n      command: {:?}\n      args: {args}]",
-                helper_path().display().to_string()
-            )
+            exec_yaml(&helper_path().display().to_string(), &format!("{args}]"))
         }
+        Auth::Command(command) => exec_yaml(command, "[]"),
     }
+}
+
+fn exec_yaml(command: &str, args: &str) -> String {
+    format!(
+        "\n    exec:\n      apiVersion: client.authentication.k8s.io/v1\n      command: {command:?}\n      args: {args}"
+    )
 }
 
 /// Writes a kubeconfig holding one context per `(name, server, auth)`.

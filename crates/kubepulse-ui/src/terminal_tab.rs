@@ -48,18 +48,20 @@ gpui_kit::actions!(
         SendTab,
         SendBackTab,
         SendInterrupt,
+        SendXon,
         CopySelection,
         PasteClipboard
     ]
 );
 
-/// The kit binds these keys for moving focus and copying, which would keep them
-/// from the program in the container.
+/// The kit binds these keys for moving focus and copying, and Ctrl+Q quits on
+/// Linux. Either would keep them from the program in the container.
 pub fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("tab", SendTab, Some(CONTEXT)),
         KeyBinding::new("shift-tab", SendBackTab, Some(CONTEXT)),
         KeyBinding::new("ctrl-c", SendInterrupt, Some(CONTEXT)),
+        KeyBinding::new("ctrl-q", SendXon, Some(CONTEXT)),
     ]);
     if cfg!(target_os = "macos") {
         cx.bind_keys([
@@ -663,6 +665,9 @@ impl TerminalTab {
             }))
             .on_action(cx.listener(|this, _: &SendBackTab, _, cx| {
                 this.type_bytes(b"\x1b[Z".to_vec(), cx);
+            }))
+            .on_action(cx.listener(|this, _: &SendXon, _, cx| {
+                this.type_bytes(vec![0x11], cx);
             }))
             .on_action(cx.listener(|this, _: &SendInterrupt, _, cx| {
                 this.type_bytes(vec![0x03], cx);

@@ -35,9 +35,10 @@ impl io::Write for Capture {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn credentials_never_reach_logs_or_failure_reasons() {
+async fn credentials_never_reach_logs_or_failure_reasons_and_helper_errors_reach_only_reasons() {
     const GOOD_TOKEN: &str = "good-token-5f1c9a";
     const BAD_TOKEN: &str = "bad-token-77ab10";
+    const HELPER_MESSAGE: &str = "helper-message-3e91d0";
 
     let capture = Capture::default();
     let writer = capture.clone();
@@ -72,12 +73,14 @@ async fn credentials_never_reach_logs_or_failure_reasons() {
         token: GOOD_TOKEN.into(),
         delay_ms: 0,
         exit_code: 0,
+        message: String::new(),
         marker: None,
     };
     let bad = Auth::Helper {
         token: BAD_TOKEN.into(),
         delay_ms: 0,
         exit_code: 3,
+        message: HELPER_MESSAGE.into(),
         marker: None,
     };
     let list = kubeconfig(
@@ -98,7 +101,11 @@ async fn credentials_never_reach_logs_or_failure_reasons() {
         |s| matches!(s, ConnectionState::Failed { .. }),
     )
     .await;
-    assert!(!format!("{failed:?}").contains(BAD_TOKEN));
+    let ConnectionState::Failed { reason } = failed else {
+        unreachable!()
+    };
+    assert!(reason.contains(HELPER_MESSAGE), "{reason}");
+    assert!(!reason.contains(BAD_TOKEN), "{reason}");
 
     // Let health checks and discovery log with the token attached.
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
@@ -109,6 +116,10 @@ async fn credentials_never_reach_logs_or_failure_reasons() {
     assert!(!logs.contains(GOOD_TOKEN), "token found in logs");
     assert!(
         !logs.contains(BAD_TOKEN),
-        "failed helper output found in logs"
+        "failed helper standard output found in logs"
+    );
+    assert!(
+        !logs.contains(HELPER_MESSAGE),
+        "failed helper error output found in logs"
     );
 }

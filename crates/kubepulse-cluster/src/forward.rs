@@ -25,7 +25,10 @@ use tokio::{
 };
 use tokio_util::sync::{CancellationToken, DropGuard};
 
-use crate::{resource_watch::SessionHandle, session::describe};
+use crate::{
+    resource_watch::SessionHandle,
+    session::{describe, explain},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ForwardKind {
@@ -233,7 +236,7 @@ async fn follow_service(
     let service = match services.get(&request.name).await {
         Ok(service) => service,
         Err(kube::Error::Api(status)) => return ForwardFailure::Cluster(status.message),
-        Err(error) => return ForwardFailure::Cluster(describe(&error)),
+        Err(error) => return ForwardFailure::Cluster(explain(&error, None)),
     };
     let ports = service.spec.and_then(|spec| spec.ports).unwrap_or_default();
     let Some(port) = ports

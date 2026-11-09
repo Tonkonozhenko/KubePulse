@@ -16,6 +16,7 @@ use kubepulse_extension_host::ContributionSet;
 use kubepulse_store::synthetic::pod_kind;
 use kubepulse_ui::{
     about_tab::{self, Document},
+    app,
     cluster_model::ClusterModel,
     cluster_tab::ClusterTab,
     command_palette,
@@ -88,6 +89,7 @@ fn harness(cx: &mut TestAppContext, statuses: Vec<ClusterStatus>) -> Harness {
     let (sender, commands) = mpsc::unbounded_channel();
     let (model, shell) = cx.update(|cx| {
         gpui_kit::init(cx);
+        app::init(cx);
         cx.set_reduce_motion(true);
         command_palette::init(cx);
         cx.set_global(SharedServices(Arc::new(FakeServices::idle())));
@@ -1383,6 +1385,7 @@ fn the_ui_stays_responsive_while_a_cluster_stalls(cx: &mut TestAppContext) {
 
     let model = cx.update(|cx| {
         gpui_kit::init(cx);
+        app::init(cx);
         command_palette::init(cx);
         cx.set_global(SharedServices(Arc::new(FakeServices::idle())));
         let receiver = runtime.state();
@@ -1440,6 +1443,19 @@ fn the_gear_button_opens_one_settings_tab(cx: &mut TestAppContext) {
     assert!(exists("settings", cx));
     click("rail-settings", cx);
     assert_eq!(settings_open(&workspace, cx), 1, "a second open reuses it");
+}
+
+#[gpui_kit::test]
+fn the_quit_shortcut_is_bound_to_quit(cx: &mut TestAppContext) {
+    let harness = harness(cx, vec![]);
+    let (_, cx) = window(cx, &harness.model, None);
+    let pressed = vec![gpui_kit::Keystroke::parse(app::QUIT_SHORTCUT).unwrap()];
+    let bound = cx.update(|window, _| window.highest_precedence_binding_for_action(&app::Quit));
+    assert_eq!(
+        bound.unwrap().match_keystrokes(&pressed),
+        Some(false),
+        "a full match"
+    );
 }
 
 #[gpui_kit::test]
