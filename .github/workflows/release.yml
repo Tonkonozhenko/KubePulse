@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: Check the tag matches the workspace version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Compare versions
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          workspace_version=$(cargo metadata --no-deps --format-version 1 --locked \
+            | jq -r '.packages[] | select(.name == "kubepulse") | .version')
+          if [ "${TAG#v}" != "$workspace_version" ]; then
+            echo "::error::Tag version ${TAG#v} does not match workspace version $workspace_version"
+            exit 1
+          fi
+
+  package:
+    needs: version
+    uses: ./.github/workflows/package.yml
+
+  publish:
+    name: Publish the release
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kubepulse-*
+          path: artifacts
+      - name: Collect installers and write checksums
+        run: |
+          mkdir release
+          find artifacts -mindepth 2 -maxdepth 2 -type f -exec mv {} release/ \;
+          cd release
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ "$TAG" == *-* ]]; then kind=--prerelease; else kind=--latest; fi
+          gh release create "$TAG" release/* --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --generate-notes --title "$TAG" "$kind"

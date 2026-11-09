@@ -111,6 +111,16 @@ These rules hold the design together:
 - Commit and push through a subagent running the Haiku model.
 - Do not add a session link or Claude signature, such as `Co-Authored-By` or `Claude-Session`, to commit messages.
 
+## Releases
+
+Pushing a tag `v<version>` runs `.github/workflows/release.yml`, which builds the installers and publishes them as a release with a `SHA256SUMS` file. A version with a pre-release suffix, such as `0.2.0-beta.1`, is published as a pre-release.
+
+1. Bump `version` under `[workspace.package]` in `Cargo.toml` and commit it to `main`.
+2. Wait for CI to pass on that commit.
+3. Tag the commit and push the tag: `git tag v<version> && git push origin v<version>`.
+
+The release fails without publishing anything if the tag differs from the workspace version, if any installer fails to build, or if the tag already has a release. To retry, delete the tag locally and on the remote with `git tag -d v<version> && git push origin :refs/tags/v<version>`, fix the cause, and push the tag again.
+
 ## OpenSpec conventions
 
 - Group capabilities in domain directories, and do not repeat the directory in the name: `general/`, `pod/`, `shell/`, and `arch/`. For example, `pod/log` rather than `pod/pod-logs`.
