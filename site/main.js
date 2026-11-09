@@ -1,11 +1,27 @@
 const shot = document.querySelector(".shot");
 const zoom = shot.querySelector(".zoom");
+let start = null;
 
-shot.addEventListener("mousemove", (event) => {
+const clamp = (value) => Math.min(100, Math.max(0, value));
+
+const focus = (event) => {
   const rect = shot.getBoundingClientRect();
-  const x = ((event.clientX - rect.left) / rect.width) * 100;
-  const y = ((event.clientY - rect.top) / rect.height) * 100;
+  const x = clamp(((event.clientX - rect.left) / rect.width) * 100);
+  const y = clamp(((event.clientY - rect.top) / rect.height) * 100);
   zoom.style.transformOrigin = `${x}% ${y}%`;
+};
+
+shot.addEventListener("pointermove", focus);
+shot.addEventListener("pointerdown", (event) => {
+  start = { x: event.clientX, y: event.clientY };
+});
+shot.addEventListener("pointerup", (event) => {
+  if (event.pointerType === "mouse" || !start) return;
+  const moved = Math.hypot(event.clientX - start.x, event.clientY - start.y);
+  start = null;
+  if (moved > 10) return;
+  focus(event);
+  shot.classList.toggle("zoomed");
 });
 
 const track = document.querySelector(".track");

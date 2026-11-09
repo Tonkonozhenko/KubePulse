@@ -272,9 +272,18 @@ h1 {
   transition: transform 0.25s ease;
 }
 
+.shot.zoomed {
+  cursor: zoom-out;
+  touch-action: none;
+}
+
+.shot.zoomed .zoom {
+  transform: scale(2.5);
+}
+
 @media (hover: hover) {
   .shot:hover .zoom {
-    transform: scale(2);
+    transform: scale(2.5);
   }
 }
 
