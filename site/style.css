@@ -137,9 +137,9 @@ footer {
 
 .hero {
   display: grid;
-  grid-template-columns: 1fr 1.05fr;
+  grid-template-columns: 1fr 1.25fr;
   align-items: center;
-  gap: 56px;
+  gap: 48px;
   padding-top: 56px;
   padding-bottom: 80px;
 }
@@ -168,13 +168,14 @@ footer {
 
 h1 {
   margin: 0 0 20px;
-  font-size: clamp(2.5rem, 6.5vw, 4.25rem);
+  font-size: clamp(2.5rem, 4.4vw, 3.6rem);
   font-weight: 800;
   line-height: 1.04;
   letter-spacing: -0.035em;
 }
 
 .gradient {
+  white-space: nowrap;
   background: linear-gradient(90deg, var(--blue), var(--violet) 55%, var(--teal));
   -webkit-background-clip: text;
   background-clip: text;
@@ -245,158 +246,143 @@ h1 {
   font-weight: 700;
 }
 
-.window {
-  position: relative;
+/* The screenshot includes a black margin around the window; the figure crops it. */
+.shot {
+  aspect-ratio: 2303 / 1684;
   margin: 0;
   overflow: hidden;
-  border: 1px solid #263045;
-  border-radius: 14px;
-  background: #0d121c;
-  box-shadow: var(--shadow), 0 0 0 1px rgba(255, 255, 255, 0.03);
-  color: #c9d1e0;
-  font-size: 0.8rem;
-  transform: perspective(1600px) rotateY(-6deg) rotateX(2deg);
+  cursor: zoom-in;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #0a0a0a;
+  box-shadow: var(--shadow), 0 0 120px -20px var(--glow-a), 0 0 160px -40px var(--glow-b);
 }
 
-.window-bar {
+.shot img {
+  display: block;
+  width: 108.51%;
+  max-width: none;
+  height: auto;
+  margin: -3.43% 0 0 -4.255%;
+}
+
+.zoom {
+  width: 100%;
+  height: 100%;
+  transition: transform 0.25s ease;
+}
+
+@media (hover: hover) {
+  .shot:hover .zoom {
+    transform: scale(2);
+  }
+}
+
+.gallery {
+  text-align: center;
+}
+
+.gallery h2 {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.carousel {
+  position: relative;
+  margin-top: 32px;
+}
+
+.track {
   display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 11px 14px;
-  border-bottom: 1px solid #1f2738;
-  background: #121927;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+  border-radius: 16px;
 }
 
-.light {
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
+.track::-webkit-scrollbar {
+  display: none;
 }
 
-.red { background: #f87171; }
-.yellow { background: #fbbf24; }
-.green { background: #34d399; }
-
-.window-title {
-  margin-left: 10px;
-  color: #7d879b;
-}
-
-.window-body {
-  display: grid;
-  grid-template-columns: 52px 1fr;
-}
-
-.rail {
+.slide {
   display: flex;
+  flex: 0 0 100%;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  padding: 14px 0;
-  border-right: 1px solid #1f2738;
-  background: #0a0e17;
+  margin: 0;
+  scroll-snap-align: center;
 }
 
-.cluster {
+.slide img {
+  width: 100%;
+  max-width: 980px;
+  height: auto;
+  aspect-ratio: 2499 / 1880;
+  object-fit: contain;
+}
+
+.slide figcaption {
+  margin-top: 4px;
+  padding: 0 56px;
+  color: var(--muted);
+}
+
+.nav-btn {
+  position: absolute;
+  top: calc(50% - 40px);
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--c) 22%, transparent);
-  color: var(--c);
-  font-weight: 700;
-}
-
-.cluster.active {
-  box-shadow: 0 0 0 2px var(--c);
-}
-
-.table {
-  min-width: 0;
-}
-
-.row {
-  display: grid;
-  grid-template-columns: 1.7fr 1fr 0.7fr 0.5fr;
-  gap: 8px;
-  padding: 8px 14px;
-  border-bottom: 1px solid #172031;
-  font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  white-space: nowrap;
-}
-
-.row > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.row.head {
-  color: #6f7a8f;
-  font-family: inherit;
-  font-size: 0.72rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.row.selected {
-  background: rgba(96, 165, 250, 0.12);
-  box-shadow: inset 2px 0 0 #60a5fa;
-}
-
-.status::before {
-  content: "";
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  margin-right: 6px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border);
   border-radius: 50%;
-  background: currentColor;
-  vertical-align: 1px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 8px 20px -8px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
 }
 
-.status.ok { color: #34d399; }
-.status.bad { color: #f87171; }
-.status.wait { color: #fbbf24; }
-
-.log {
-  padding: 10px 14px 14px;
-  background: #080b12;
+.nav-btn:hover {
+  border-color: var(--blue);
+  color: var(--blue);
 }
 
-.log-head {
+.nav-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+.prev {
+  left: 0;
+}
+
+.next {
+  right: 0;
+}
+
+.dots {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-  color: #7d879b;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 20px;
 }
 
-.pulse {
-  width: 90px;
-  height: 18px;
-  color: #2dd4bf;
-  stroke-width: 2;
-  filter: drop-shadow(0 0 4px rgba(45, 212, 191, 0.7));
+.dots button {
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--border);
+  cursor: pointer;
+  transition: width 0.2s ease, background 0.2s ease;
 }
 
-.log code {
-  display: block;
-  overflow: hidden;
-  color: #aeb7c8;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.log .t { color: #5d6880; }
-.log .err { color: #f87171; }
-
-.window figcaption {
-  position: absolute;
-  right: 10px;
-  bottom: 8px;
-  color: #4b5568;
-  font-size: 0.68rem;
+.dots button[aria-current="true"] {
+  width: 28px;
+  background: linear-gradient(90deg, var(--blue), var(--violet));
 }
 
 .stats {
@@ -639,12 +625,8 @@ footer p {
   }
 
   .hero {
-    gap: 48px;
+    gap: 40px;
     padding-top: 32px;
-  }
-
-  .window {
-    transform: none;
   }
 
   .features,
@@ -677,16 +659,16 @@ footer p {
     padding: 40px 20px;
   }
 
-  .window-body {
-    grid-template-columns: 44px 1fr;
+  .shot {
+    border-radius: 8px;
   }
 
-  .row {
-    grid-template-columns: 1.5fr 1fr;
-  }
-
-  .hide-sm {
+  .nav-btn {
     display: none;
+  }
+
+  .slide figcaption {
+    padding: 0;
   }
 }
 
@@ -697,7 +679,13 @@ footer p {
 
   .button,
   .features li,
-  .platforms a {
+  .platforms a,
+  .zoom,
+  .dots button {
     transition: none;
+  }
+
+  .track {
+    scroll-behavior: auto;
   }
 }

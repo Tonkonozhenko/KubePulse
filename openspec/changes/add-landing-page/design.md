@@ -23,7 +23,9 @@ The repository has no website. Product text lives in `README.md`, the logo in `a
 
 **System font stack, inline SVG or local images only.** Web fonts and icon CDNs would contact third parties, which the spec forbids. The page uses `system-ui` and friends, and the logo is a copy of `assets/logo-256.png` in `site/`. Copying rather than referencing `assets/` keeps the published artifact to the `site/` directory alone.
 
-**Color tokens with `prefers-color-scheme`.** Colors are CSS custom properties on `:root`, redefined in a `prefers-color-scheme: dark` media query. No toggle and no script, so the page needs no JavaScript.
+**Color tokens with `prefers-color-scheme`.** Colors are CSS custom properties on `:root`, redefined in a `prefers-color-scheme: dark` media query. There is no theme toggle.
+
+**A small local script for the screenshots.** `site/main.js` moves the hero zoom toward the cursor and drives the screenshot carousel. Without it the zoom centers on the screenshot and the carousel still scrolls and snaps by swipe or trackpad. Screenshots live in `site/screenshots/` as captured, and the hero crops the transparent shadow margin with CSS because the repository has no image tooling.
 
 **Publish with the official Pages actions.** `.github/workflows/pages.yml` runs on pushes to `main` with a `paths` filter of `site/**` and the workflow file itself, plus `workflow_dispatch`. It uses `actions/configure-pages`, `actions/upload-pages-artifact` with `path: site`, and `actions/deploy-pages`, with `pages: write` and `id-token: write` permissions on the deploy job only and a `concurrency` group so a newer push replaces an in-flight deploy. Publishing from a `gh-pages` branch was rejected because it adds generated commits to the repository.
 

@@ -8,6 +8,7 @@
   <meta name="description" content="KubePulse is a lightweight, native Kubernetes IDE for Linux, macOS, and Windows. Open source under Apache-2.0, with no accounts or telemetry.">
   <link rel="icon" type="image/png" href="logo.png">
   <link rel="stylesheet" href="style.css">
+  <script src="main.js" defer></script>
 </head>
 <body>
   <nav class="nav">
@@ -53,36 +54,10 @@
       </ul>
     </div>
 
-    <figure class="window" aria-label="Illustration of the KubePulse window">
-      <div class="window-bar">
-        <span class="light red"></span><span class="light yellow"></span><span class="light green"></span>
-        <span class="window-title">pods · payments</span>
+    <figure class="shot">
+      <div class="zoom">
+        <img src="screenshots/Screenshot_20261109_161920.png" width="2499" height="1880" alt="KubePulse listing the pods of a cluster, with the details of a running pod open beside the table">
       </div>
-      <div class="window-body" aria-hidden="true">
-        <aside class="rail">
-          <span class="cluster" style="--c:#3b82f6">P</span>
-          <span class="cluster active" style="--c:#f97316">S</span>
-          <span class="cluster" style="--c:#22c55e">D</span>
-        </aside>
-        <div class="table">
-          <div class="row head"><span>Name</span><span>Status</span><span class="hide-sm">Restarts</span><span class="hide-sm">Age</span></div>
-          <div class="row"><span>api-7f9c4b-x2kq</span><span class="status ok">Running</span><span class="hide-sm">0</span><span class="hide-sm">4d</span></div>
-          <div class="row"><span>api-7f9c4b-m8wz</span><span class="status ok">Running</span><span class="hide-sm">0</span><span class="hide-sm">4d</span></div>
-          <div class="row selected"><span>worker-5d8f-qp7n</span><span class="status bad">CrashLoop</span><span class="hide-sm">12</span><span class="hide-sm">2h</span></div>
-          <div class="row"><span>ledger-0</span><span class="status ok">Running</span><span class="hide-sm">1</span><span class="hide-sm">9d</span></div>
-          <div class="row"><span>migrate-28fd1</span><span class="status wait">Pending</span><span class="hide-sm">0</span><span class="hide-sm">8s</span></div>
-          <div class="log">
-            <div class="log-head">
-              <span>Logs · worker-5d8f-qp7n</span>
-              <svg class="pulse" viewBox="0 0 120 24"><path d="M0 12h40l6-9 8 18 7-14 5 5h54"/></svg>
-            </div>
-            <code><span class="t">12:04:51</span> connecting to queue at queue:5672</code>
-            <code><span class="t">12:04:52</span> <span class="err">error: connection refused</span></code>
-            <code><span class="t">12:04:52</span> retrying in 5s</code>
-          </div>
-        </div>
-      </div>
-      <figcaption>Illustration</figcaption>
     </figure>
   </header>
 
@@ -91,6 +66,24 @@
       <div><strong>10,000</strong><span>pods per cluster, by design</span></div>
       <div><strong>3</strong><span>platforms with the same features</span></div>
       <div><strong>0</strong><span>accounts, license keys, or telemetry</span></div>
+    </section>
+
+    <section id="screenshots" class="section gallery">
+      <p class="eyebrow">Screenshots</p>
+      <h2>See it in action</h2>
+      <div class="carousel" aria-roledescription="carousel" aria-label="Screenshots">
+        <div class="track" tabindex="0">
+          <figure class="slide"><img src="screenshots/Screenshot_20261109_161920.png" width="2499" height="1880" loading="lazy" alt="Pod list with the details of a running pod"><figcaption>Every pod at a glance, with details, conditions, and events beside the table</figcaption></figure>
+          <figure class="slide"><img src="screenshots/Screenshot_20261109_162004.png" width="2499" height="1880" loading="lazy" alt="Diff of a deployment manifest before it is applied"><figcaption>Review the diff of every change before you apply it</figcaption></figure>
+          <figure class="slide"><img src="screenshots/Screenshot_20261109_161927.png" width="2499" height="1880" loading="lazy" alt="Live logs of a container"><figcaption>Follow container logs live, with search, wrapping, and timestamps</figcaption></figure>
+          <figure class="slide"><img src="screenshots/Screenshot_20261109_161712.png" width="2499" height="1880" loading="lazy" alt="Pod list with two container shells open in tabs"><figcaption>Open container shells in tabs next to your resources</figcaption></figure>
+          <figure class="slide"><img src="screenshots/Screenshot_20261109_161723.png" width="2499" height="1880" loading="lazy" alt="Secret details with values hidden until revealed"><figcaption>Secret values stay hidden until you reveal them one by one</figcaption></figure>
+          <figure class="slide"><img src="screenshots/Screenshot_20261109_161647.png" width="2499" height="1880" loading="lazy" alt="Deployment list with desired, ready, and updated replicas"><figcaption>Deployments with desired, ready, and updated replicas</figcaption></figure>
+        </div>
+        <button class="nav-btn prev" type="button" aria-label="Previous screenshot"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg></button>
+        <button class="nav-btn next" type="button" aria-label="Next screenshot"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg></button>
+      </div>
+      <div class="dots" role="group" aria-label="Choose a screenshot"></div>
     </section>
 
     <section id="features" class="section">
