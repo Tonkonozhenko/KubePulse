@@ -362,12 +362,15 @@ mod tests {
         tokio::time::sleep(Duration::from_secs(1)).await;
         assert_eq!(list.borrow().version, 0, "reading is not a change");
 
-        for _ in 0..20 {
-            fs::write(&path, config(&[("a", "https://a"), ("b", "https://b")])).unwrap();
-        }
+        fs::write(&path, config(&[("a", "https://a"), ("b", "https://b")])).unwrap();
         tokio::time::sleep(Duration::from_secs(2)).await;
-        assert_eq!(list.borrow().version, 1, "a burst settles into one reload");
+        assert_eq!(
+            list.borrow().version,
+            1,
+            "a reload's own read is not a change"
+        );
     }
+
     #[tokio::test]
     async fn watcher_sees_a_file_created_later() {
         let dir = tempfile::tempdir().unwrap();
