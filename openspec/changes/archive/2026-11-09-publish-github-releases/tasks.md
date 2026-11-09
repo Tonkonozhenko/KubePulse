@@ -3,7 +3,7 @@
 ## 1. Shared packaging workflow
 
 - [x] 1.1 Create `.github/workflows/package.yml` with `on: workflow_call`, holding the matrix, system libraries, toolchain, cache, `cargo-packager` 0.11.8 install, packaging, and artifact upload moved from the `package` job in `ci.yml`; verify `yq '.on' .github/workflows/package.yml` shows `workflow_call`
-- [ ] 1.2 Replace the `package` job in `ci.yml` with a job that `uses: ./.github/workflows/package.yml`, keeping `if: github.event_name == 'push'`; verify after pushing to `main` that the CI run uploads the three `kubepulse-<os>` artifacts as before
+- [x] 1.2 Replace the `package` job in `ci.yml` with a job that `uses: ./.github/workflows/package.yml`, keeping `if: github.event_name == 'push'`; verify after pushing to `main` that the CI run uploads the three `kubepulse-<os>` artifacts as before
 
 ## 2. Release workflow
 
@@ -15,7 +15,7 @@
 
 ## 3. First release
 
-- [ ] 3.1 After the user confirms, push the tag `v0.1.0` on a `main` commit with green CI; verify the release `v0.1.0` has the `.deb`, `.dmg`, Windows installer, and `SHA256SUMS`, is marked latest, and that `sha256sum -c SHA256SUMS` passes on the downloaded files
+- [x] 3.1 After the user confirms, push the tag `v0.1.0` on a `main` commit with green CI; verify the release `v0.1.0` has the `.deb`, `.dmg`, Windows installer, and `SHA256SUMS`, is marked latest, and that `sha256sum -c SHA256SUMS` passes on the downloaded files
 
 ## Workflow follow-up
 
