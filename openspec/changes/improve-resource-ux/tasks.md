@@ -50,4 +50,4 @@
 - [x] 8.1 Add the new strings to `locales/en.json` with no plurals, and run `python3 scripts/check-i18n.py --write`. Verify that it passes with `en-XA` regenerated.
 - [x] 8.2 Record in `TODO.md` that extension actions are not rendered in rows or the detail panel. Verify that the entry is under Decide.
 - [x] 8.3 Run `cargo fmt --all --check`, `cargo clippy --workspace --all-targets`, `cargo test --workspace`, `python3 scripts/check-crate-graph.py`, and `cargo deny check licenses`. Verify that all pass.
-- [ ] 8.4 Run the app with `/run` against the `kubepulse-e2e` minikube profile, and check tags, shift-selection, multi-deletion, the right-click menu, and closing the panel in light, dark, and `en-XA`. Verify by recording what was checked in the change's final report.
+- [x] 8.4 Run the app with `/run` against the `kubepulse-e2e` minikube profile, and check tags, shift-selection, multi-deletion, the right-click menu, and closing the panel in light, dark, and `en-XA`. Verify by recording what was checked in the change's final report.

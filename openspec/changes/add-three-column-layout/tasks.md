@@ -42,8 +42,8 @@
 
 - [x] 6.1 Run `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo fmt --all --check`, `python3 scripts/check-crate-graph.py`, and `openspec validate add-three-column-layout --strict`, and verify each passes
 - [x] 6.2 Run the startup check, and verify the window still appears within 1 second with unreachable clusters
-- [ ] 6.3 Launch the app against a real cluster, and verify the rail, sidebar, preview, pin, double-click connect, and right-click menu work on Linux
-- [ ] 6.4 Measure memory after clicking through every kind on a 10k-pod synthetic cluster, and verify it stays within the limits in `general/resource-browsing`, or record the result and a mitigation in `design.md`
+- [x] 6.3 Launch the app against a real cluster, and verify the rail, sidebar, preview, pin, double-click connect, and right-click menu work on Linux
+- [x] 6.4 Measure memory after clicking through every kind on a 10k-pod synthetic cluster, and verify it stays within the limits in `general/resource-browsing`, or record the result and a mitigation in `design.md`
 
 ## Workflow follow-up
 

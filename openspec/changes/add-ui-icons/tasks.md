@@ -32,7 +32,7 @@
 
 - [x] 5.1 Replace `ShellEvent::TabsChanged` with `CloseTab(id)`, add `ShellState::request_close`, store the Settings tab as a `WeakEntity`, and handle the event in `Workspace` with `dock.remove_panel`
 - [x] 5.2 Add the close button to the `ClusterTab` and `SettingsTab` titles, with the `x` glyph and the `tab.close` tooltip, stopping propagation of mouse down and click
-- [ ] 5.3 Return `false` from `closable` on both tabs, and verify the dock's overflow menu no longer offers Close
+- [x] 5.3 Return `false` from `closable` on both tabs, and verify the dock's overflow menu no longer offers Close
 - [x] 5.4 Add tests for closing the active tab, an inactive tab without activating or pinning it, the last tab, the last tab of a pane, a preview tab, and the Settings tab
 - [x] 5.5 Add tests that closing a cluster's last tab sends no disconnect and keeps it selected, and that the closed tab's entity is released
 
@@ -50,6 +50,6 @@
 
 - [x] 7.1 Run `cargo test --workspace`, `cargo clippy --workspace --all-targets`, and `cargo fmt --all --check`
 - [x] 7.2 Run `python3 scripts/check-i18n.py` and `python3 scripts/check-crate-graph.py`
-- [ ] 7.3 Check icons in the running app in light and dark modes, including long cluster names in tab titles
-- [ ] 7.4 Check in the running app that the close button appears and works with one tab, several tabs, and split panes, and that a restart starts empty
+- [x] 7.3 Check icons in the running app in light and dark modes, including long cluster names in tab titles
+- [x] 7.4 Check in the running app that the close button appears and works with one tab, several tabs, and split panes, and that a restart starts empty
 - [x] 7.5 Measure the release binary size before and after, and record it in the commit message

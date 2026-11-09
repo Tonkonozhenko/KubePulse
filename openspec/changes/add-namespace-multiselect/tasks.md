@@ -20,8 +20,8 @@
 ## 4. Checks
 
 - [x] 4.1 Run `cargo test --workspace`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo fmt --all --check`, `python3 scripts/check-crate-graph.py`, and `openspec validate add-namespace-multiselect --strict`, and verify each passes, including the existing 10k-row browsing tests
-- [ ] 4.2 Launch the app against a real cluster on Linux, and verify selecting namespaces across kinds and tabs, clearing, and hiding on cluster-scoped kinds
-- [ ] 4.3 Run the `soak` example, and verify memory and row updates stay within the limits in `general/resource-browsing` with the extra view open, or record the result and a mitigation in `design.md`
+- [x] 4.2 Launch the app against a real cluster on Linux, and verify selecting namespaces across kinds and tabs, clearing, and hiding on cluster-scoped kinds
+- [x] 4.3 Run the `soak` example, and verify memory and row updates stay within the limits in `general/resource-browsing` with the extra view open, or record the result and a mitigation in `design.md`
 
 ## Workflow follow-up
 
