@@ -16,8 +16,9 @@ use std::{
 use gpui_kit::AppContext as _;
 use gpui_kit::WindowOptions;
 use kubepulse_cluster::{
-    ClusterEntry, ConnectionState, EventRecord, ExecRequest, ExecSize, ExecStream, LogRequest,
-    LogStream, ObjectError, ObjectTarget, ResourceKind, UpdateAccess, WriteMode,
+    ClusterEntry, ConnectionState, EventRecord, ExecRequest, ExecSize, ExecStream, ForwardRequest,
+    LogRequest, LogStream, ObjectError, ObjectTarget, PortForward, ResourceKind, UpdateAccess,
+    WriteMode,
 };
 use kubepulse_extension_api::{ExtensionRequest, ExtensionResponse, KindRef};
 use kubepulse_extension_host::{CallError, ContributionSet};
@@ -31,7 +32,7 @@ use kubepulse_ui::{
     identity::{ClusterKey, IdentityStore},
     resource_browser::ResourceBrowser,
     runtime::{ClusterState, ClusterStatus},
-    services::{ClusterServices, Reply},
+    services::{ClusterServices, ForwardStartError, Reply},
 };
 use serde_json::Value;
 use tokio::{
@@ -79,6 +80,10 @@ impl ClusterServices for Services {
 
     fn open_exec(&self, _: &str, _: ExecRequest, _: ExecSize) -> Option<ExecStream> {
         None
+    }
+
+    fn start_forward(&self, _: &str, _: ForwardRequest) -> Result<PortForward, ForwardStartError> {
+        Err(ForwardStartError::NotConnected)
     }
 
     fn open_logs(&self, _: &str, _: LogRequest) -> Option<LogStream> {

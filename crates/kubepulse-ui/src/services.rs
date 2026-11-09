@@ -1,12 +1,12 @@
 //! What views need from the background. Replies are futures, so the UI thread
 //! awaits them without blocking, and they run on the background runtime.
 
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{future::Future, io, pin::Pin, sync::Arc};
 
 use gpui_kit::Global;
 use kubepulse_cluster::{
-    EventRecord, ExecRequest, ExecSize, ExecStream, LogRequest, LogStream, ObjectError,
-    ObjectTarget, ResourceKind, UpdateAccess, WriteMode,
+    EventRecord, ExecRequest, ExecSize, ExecStream, ForwardRequest, LogRequest, LogStream,
+    ObjectError, ObjectTarget, PortForward, ResourceKind, UpdateAccess, WriteMode,
 };
 use kubepulse_extension_api::{ExtensionRequest, ExtensionResponse, KindRef};
 use kubepulse_extension_host::{CallError, ContributionSet};
@@ -45,10 +45,23 @@ pub trait ClusterServices: Send + Sync + 'static {
     fn open_logs(&self, context: &str, request: LogRequest) -> Option<LogStream>;
     /// Starts a shell, or returns `None` if the cluster is not connected.
     fn open_exec(&self, context: &str, request: ExecRequest, size: ExecSize) -> Option<ExecStream>;
+    /// Starts a port-forward that belongs to the cluster's session.
+    fn start_forward(
+        &self,
+        context: &str,
+        request: ForwardRequest,
+    ) -> Result<PortForward, ForwardStartError>;
     fn contributions(&self) -> Arc<ContributionSet>;
     fn kind_opened(&self, kind: KindRef);
     fn extension(&self, id: &str, request: ExtensionRequest)
     -> Reply<ExtensionResponse, CallError>;
+}
+
+#[derive(Debug)]
+pub enum ForwardStartError {
+    NotConnected,
+    /// The local port could not be bound.
+    Port(io::Error),
 }
 
 /// Lets views find the services.

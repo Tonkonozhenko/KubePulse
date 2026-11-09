@@ -11,8 +11,9 @@ use std::{
 use gpui_kit::VisualTestContext;
 use kubepulse_cluster::{
     ClusterEntry, ConnectionState, EventRecord, ExecFeed, ExecRequest, ExecSize, ExecStream,
-    LogBuffer, LogFeed, LogRequest, LogStream, ObjectError, ObjectTarget, RawObject, ResourceKind,
-    UpdateAccess, WatchEvent, WriteMode,
+    ForwardFailure, ForwardFeed, ForwardRequest, ForwardState, LogBuffer, LogFeed, LogRequest,
+    LogStream, ObjectError, ObjectTarget, PortForward, RawObject, ResourceKind, UpdateAccess,
+    WatchEvent, WriteMode, bind_local, forward_channel,
 };
 use kubepulse_extension_api::{ExtensionRequest, ExtensionResponse, KindRef, UiNode};
 use kubepulse_extension_host::{CallError, ContributionSet};
@@ -20,7 +21,7 @@ use kubepulse_store::{ClusterStore, ColumnResolver, StoreOptions, View, ViewQuer
 use kubepulse_ui::{
     columns::columns_for,
     runtime::ClusterStatus,
-    services::{ClusterServices, Reply},
+    services::{ClusterServices, ForwardStartError, Reply},
 };
 use serde_json::Value;
 use tokio::{
@@ -134,6 +135,26 @@ impl WatchSource for ScriptedSource {
     }
 }
 
+/// A forward that holds a real loopback port, so a port in use is refused as it
+/// would be.
+pub struct FakeForward {
+    pub request: ForwardRequest,
+    pub feed: ForwardFeed,
+    listener: Option<std::net::TcpListener>,
+}
+
+impl FakeForward {
+    pub fn set_state(&self, state: ForwardState) {
+        self.feed.state.send_replace(state);
+    }
+
+    /// Releases the port, then reports the failure, as a real forward does.
+    pub fn fail(&mut self, failure: ForwardFailure) {
+        self.listener = None;
+        self.set_state(ForwardState::Failed(failure));
+    }
+}
+
 /// The services a view sees, over a real store and a fixed set of objects.
 pub struct FakeServices {
     runtime: Runtime,
@@ -154,6 +175,8 @@ pub struct FakeServices {
     /// One feed per opened log stream, newest last.
     pub log_feeds: Mutex<Vec<(LogRequest, LogFeed)>>,
     pub exec_feeds: Mutex<Vec<(ExecRequest, ExecFeed)>>,
+    /// One per started forward, oldest first.
+    pub forwards: Mutex<Vec<FakeForward>>,
     /// Limits for the buffers of streams opened from now on.
     pub log_limits: Mutex<Option<(usize, usize)>>,
     /// Makes `open_logs` report a disconnected cluster.
@@ -209,6 +232,7 @@ impl FakeServices {
             write_results: Mutex::default(),
             log_feeds: Mutex::default(),
             exec_feeds: Mutex::default(),
+            forwards: Mutex::default(),
             log_limits: Mutex::default(),
             logs_disconnected: Mutex::default(),
             access: Mutex::default(),
@@ -339,6 +363,21 @@ impl ClusterServices for FakeServices {
         let (feed, stream) = kubepulse_cluster::exec_channel(size);
         self.exec_feeds.lock().unwrap().push((request, feed));
         Some(stream)
+    }
+
+    fn start_forward(
+        &self,
+        _: &str,
+        request: ForwardRequest,
+    ) -> Result<PortForward, ForwardStartError> {
+        let listener = bind_local(request.local_port).map_err(ForwardStartError::Port)?;
+        let (feed, forward) = forward_channel(listener.local_addr().unwrap().port());
+        self.forwards.lock().unwrap().push(FakeForward {
+            request,
+            feed,
+            listener: Some(listener),
+        });
+        Ok(forward)
     }
 
     fn contributions(&self) -> Arc<ContributionSet> {

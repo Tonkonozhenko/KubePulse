@@ -5,7 +5,7 @@
 use std::{
     env,
     future::Future,
-    io::Write as _,
+    io::{ErrorKind, Read as _, Write as _},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::Arc,
@@ -14,8 +14,9 @@ use std::{
 };
 
 use kubepulse_cluster::{
-    ConnectionState, ExecRequest, ExecSize, ExecState, ExecStream, ObjectTarget, ResourceKind,
-    SessionOptions,
+    ConnectionState, ExecRequest, ExecSize, ExecState, ExecStream, ForwardFailure, ForwardKind,
+    ForwardRequest, ForwardState, ObjectTarget, PortForward, ResourceKind, SessionOptions,
+    bind_local,
 };
 use kubepulse_extension_host::{ContributionSet, ExtensionHost, HostOptions};
 use kubepulse_store::{Row, View, ViewQuery};
@@ -25,7 +26,7 @@ use kubepulse_ui::{
         ClusterBackend, ClusterCommand, ClusterRuntime, ClusterState, ConnectedClusters,
         RuntimeServices, StoreConfig,
     },
-    services::ClusterServices,
+    services::{ClusterServices, ForwardStartError},
     terminal::{Emulator, Palette},
 };
 use tokio::{
@@ -201,6 +202,24 @@ impl Browser {
         self.services
             .open_exec(CONTEXT, request, size)
             .expect("the cluster is connected")
+    }
+
+    fn forward(&self, kind: ForwardKind, name: &str, port: u16) -> PortForward {
+        self.services
+            .start_forward(CONTEXT, request(kind, name, port))
+            .expect("the forward starts")
+    }
+
+    #[track_caller]
+    fn wait_for_forward(
+        &self,
+        forward: &PortForward,
+        reached: impl FnMut(&ForwardState) -> bool,
+    ) -> ForwardState {
+        let mut states = forward.subscribe();
+        self.within(async { states.wait_for(reached).await.map(|state| state.clone()) })
+            .expect("the forward reaches the state")
+            .expect("the forward is still open")
     }
 
     #[track_caller]
@@ -556,6 +575,107 @@ fn browses_a_real_cluster() {
         "{ended:?}"
     );
 
+    // Forwards reach the pod that answers, which `/hostname` names.
+    kubectl.run(&[
+        "create",
+        "deployment",
+        "echo",
+        "--image=registry.k8s.io/e2e-test-images/agnhost:2.47",
+        "--replicas=2",
+        "-n",
+        NAMESPACE,
+        "--",
+        "/agnhost",
+        "netexec",
+        "--http-port=8080",
+    ]);
+    kubectl.run(&[
+        "expose",
+        "deployment",
+        "echo",
+        "--port=80",
+        "--target-port=8080",
+        "-n",
+        NAMESPACE,
+    ]);
+    kubectl.run(&[
+        "wait",
+        "--for=condition=Available",
+        "deployment/echo",
+        "-n",
+        NAMESPACE,
+        "--timeout=120s",
+    ]);
+    let echo_pods = || {
+        let names = kubectl.run(&[
+            "get",
+            "pods",
+            "-n",
+            NAMESPACE,
+            "-l",
+            "app=echo",
+            "--field-selector=status.phase=Running",
+            "-o",
+            "jsonpath={.items[*].metadata.name}",
+        ]);
+        names
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let target = echo_pods()[0].clone();
+    let pod_forward = browser.forward(ForwardKind::Pod, &target, 8080);
+    let mut pod_states = pod_forward.subscribe();
+    browser.wait_for_forward(&pod_forward, |state| {
+        matches!(state, ForwardState::Active { .. })
+    });
+    assert_eq!(hostname(pod_forward.local_port()), target);
+    assert!(
+        std::net::TcpStream::connect((outside_address(), pod_forward.local_port())).is_err(),
+        "only loopback connections are accepted"
+    );
+    let taken = browser.services.start_forward(
+        CONTEXT,
+        ForwardRequest {
+            local_port: Some(pod_forward.local_port()),
+            ..request(ForwardKind::Pod, &target, 8080)
+        },
+    );
+    assert!(
+        matches!(taken, Err(ForwardStartError::Port(ref error)) if error.kind() == ErrorKind::AddrInUse),
+        "a port in use starts nothing"
+    );
+
+    let service_forward = browser.forward(ForwardKind::Service, "echo", 80);
+    let ForwardState::Active { pod: backend, .. } = browser
+        .wait_for_forward(&service_forward, |state| {
+            matches!(state, ForwardState::Active { .. })
+        })
+    else {
+        unreachable!()
+    };
+    assert_eq!(hostname(service_forward.local_port()), backend);
+
+    kubectl.run(&["delete", "pod", &backend, "-n", NAMESPACE, "--wait=false"]);
+    let moved = browser.wait_for_forward(
+        &service_forward,
+        |state| matches!(state, ForwardState::Active { pod, .. } if *pod != backend),
+    );
+    let ForwardState::Active {
+        pod: replacement, ..
+    } = moved
+    else {
+        unreachable!()
+    };
+    assert_eq!(hostname(service_forward.local_port()), replacement);
+    if backend != target {
+        kubectl.run(&["delete", "pod", &target, "-n", NAMESPACE, "--wait=false"]);
+    }
+    let failed = ForwardState::Failed(ForwardFailure::PodDeleted);
+    browser.wait_for_forward(&pod_forward, |state| *state == failed);
+    bind_local(Some(pod_forward.local_port())).expect("a failed forward releases its port");
+    let mut service_states = service_forward.subscribe();
+
     let open_shell = browser.shell("shelly", None);
     browser.wait_for_state(&open_shell, |state| *state == ExecState::Running);
     let mut shell_states = open_shell.subscribe();
@@ -572,4 +692,65 @@ fn browses_a_real_cluster() {
             .is_some(),
         "disconnecting ends the shell"
     );
+    for states in [&mut pod_states, &mut service_states] {
+        assert!(
+            browser
+                .within(async { while states.changed().await.is_ok() {} })
+                .is_some(),
+            "disconnecting ends forwards"
+        );
+    }
+    bind_local(Some(service_forward.local_port())).expect("the forward's port was released");
+}
+
+fn request(kind: ForwardKind, name: &str, port: u16) -> ForwardRequest {
+    ForwardRequest {
+        kind,
+        namespace: NAMESPACE.to_owned(),
+        name: name.to_owned(),
+        port,
+        local_port: None,
+    }
+}
+
+/// An address of this machine that other machines can reach.
+fn outside_address() -> std::net::IpAddr {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").expect("a UDP socket");
+    // Connecting a UDP socket only picks a route, and sends nothing.
+    socket.connect("192.0.2.1:9").expect("a route");
+    socket.local_addr().expect("a local address").ip()
+}
+
+/// The pod that answers `/hostname` through the local port.
+fn hostname(port: u16) -> String {
+    wait_for("an answer through the forward", WAIT, || {
+        let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).ok()?;
+        stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
+        stream
+            .write_all(b"GET /hostname HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .ok()?;
+        let mut response = Vec::new();
+        let mut chunk = [0; 1024];
+        // The response is read by its length, because a forwarded connection
+        // need not close when the pod closes it.
+        loop {
+            let read = stream.read(&mut chunk).ok()?;
+            if read == 0 {
+                return None;
+            }
+            response.extend_from_slice(&chunk[..read]);
+            let text = String::from_utf8_lossy(&response);
+            let Some((head, body)) = text.split_once("\r\n\r\n") else {
+                continue;
+            };
+            let length = head.lines().find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse::<usize>().ok())?
+            })?;
+            if body.len() >= length {
+                return Some(body[..length].to_owned());
+            }
+        }
+    })
 }

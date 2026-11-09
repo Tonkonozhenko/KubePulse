@@ -32,6 +32,7 @@ use crate::{
     cluster_tab::ClusterTab,
     columns::kind_ref,
     command_palette::{OpenCommandPalette, PaletteAction, palette_groups},
+    forwards::{ForwardRegistry, ForwardsTab, OpenPortForwards, SharedForwards},
     identity::ClusterKey,
     kind_sidebar::{KindSidebar, KindSidebarEvent},
     log_tab::LogTab,
@@ -74,6 +75,9 @@ impl Workspace {
         let rail = cx.new(|cx| ClusterRail::new(model.clone(), window, cx));
         let sidebar = cx.new(|cx| KindSidebar::new(model.clone(), cx));
         let (dock, _skin) = DockSkin::dock_area(DOCK_ID, None, window, cx);
+        // Forwards live as long as the window, whatever tabs come and go.
+        let forwards = cx.new(|_| ForwardRegistry::default());
+        cx.set_global(SharedForwards(forwards));
 
         let subscriptions = vec![
             cx.subscribe(&dock, |_, _, event: &DockEvent, cx| {
@@ -132,6 +136,7 @@ impl Workspace {
         ];
         on_shortcut::<OpenSettings>(Self::open_settings, window, cx);
         on_shortcut::<OpenCommandPalette>(Self::open_command_palette, window, cx);
+        on_shortcut::<OpenPortForwards>(Self::open_forwards, window, cx);
         Self {
             model,
             shell,
@@ -248,6 +253,19 @@ impl Workspace {
         self.add_to_dock(panel_handle(tab), window, cx);
     }
 
+    /// Activates the Port forwards tab, opening it if needed.
+    pub fn open_forwards(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(tab) = self.shell.read(cx).forwards_tab() {
+            self.dock.update(cx, |dock, cx| {
+                dock.select_panel(tab.entity_id().into(), window, cx);
+            });
+            return;
+        }
+        let model = self.model.clone();
+        let tab = cx.new(|cx| ForwardsTab::new(model, cx));
+        self.add_to_dock(panel_handle(tab), window, cx);
+    }
+
     /// Lists what the application offers at this moment. A dialog on screen
     /// keeps the keyboard, so the palette does not open over it.
     pub fn open_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -325,6 +343,7 @@ impl Workspace {
                 request_disconnect(&self.model, &context, window, cx);
             }
             PaletteAction::OpenSettings => self.open_settings(window, cx),
+            PaletteAction::OpenForwards => self.open_forwards(window, cx),
         }
     }
 
@@ -367,6 +386,7 @@ impl Workspace {
         let (tab, editor, settings) = (shell.tab(id), shell.editor(id), shell.settings_tab());
         let logs = shell.log_tab(id);
         let terminal = shell.terminal_tab(id);
+        let forwards = shell.forwards_tab().filter(|tab| tab.entity_id() == id);
         if let Some(editor) = &editor
             && editor.read(cx).has_unapplied_changes(cx)
         {
@@ -382,7 +402,11 @@ impl Workspace {
                 (None, None, None, None, Some(settings)) if settings.entity_id() == id => {
                     dock.remove_panel(settings, window, cx);
                 }
-                _ => {}
+                _ => {
+                    if let Some(forwards) = forwards {
+                        dock.remove_panel(forwards, window, cx);
+                    }
+                }
             }
         });
     }

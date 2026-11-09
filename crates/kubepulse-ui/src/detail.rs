@@ -26,7 +26,7 @@ use rust_i18n::t;
 
 use crate::{
     cluster_model::ClusterModel,
-    columns::{columns_for, is_pod, kind_ref},
+    columns::{columns_for, is_pod, is_service, kind_ref},
     declarative::{DeclarativeView, FormSubmitted},
     identity::ClusterKey,
     resource_browser::cell_text,
@@ -39,6 +39,7 @@ pub enum DetailEvent {
     Edit(ObjectTarget),
     Logs(ObjectTarget),
     Shell(ObjectTarget),
+    Forward(ObjectTarget),
     Delete(ObjectTarget),
     Close,
 }
@@ -489,12 +490,24 @@ impl DetailView {
                     cx.emit(DetailEvent::Shell(this.target.clone()));
                 }))
         });
+        let forwardable = is_pod(&self.target.kind) || is_service(&self.target.kind);
+        let forward = (loaded && forwardable).then(|| {
+            Button::new("open-forward")
+                .icon(IconName::ArrowRightLeft)
+                .small()
+                .label(t!("forward.action").to_string())
+                .on_click(cx.listener(|this, _, _, cx| {
+                    cx.emit(DetailEvent::Forward(this.target.clone()));
+                }))
+        });
         let actions = loaded.then(|| {
             div()
                 .flex()
+                .flex_wrap()
                 .gap_2()
                 .children(logs)
                 .children(shell)
+                .children(forward)
                 .child(
                     Button::new("edit-object")
                         .icon(IconName::Pencil)

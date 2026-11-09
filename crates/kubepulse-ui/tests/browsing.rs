@@ -7,8 +7,8 @@ use gpui_kit::{
     WindowOptions, component::WindowExt as _, test::TestWindowExt as _,
 };
 use kubepulse_cluster::{
-    ConnectionState, EventRecord, ObjectError, ObjectTarget, PrinterColumn, ResourceKind,
-    WatchEvent,
+    ConnectionState, EventRecord, ForwardFailure, ForwardKind, ForwardRequest, ForwardState,
+    ObjectError, ObjectTarget, PrinterColumn, ResourceKind, WatchEvent,
 };
 use kubepulse_extension_api::{
     ColumnContribution, ColumnSource, Contributions, DetailTabContribution, ExtensionRequest,
@@ -22,6 +22,8 @@ use kubepulse_store::{
 use kubepulse_ui::{
     cluster_model::{ClusterModel, ClusterModelEvent},
     cluster_tab::ClusterTab,
+    forward_dialog::{ForwardDialog, ForwardField},
+    forwards::SharedForwards,
     identity::{ClusterKey, IdentityStore},
     preferences::Preferences,
     resource_browser::ResourceBrowser,
@@ -1759,7 +1761,7 @@ fn the_right_click_menu_keeps_its_object_when_rows_move(cx: &mut TestAppContext)
 
     harness.cx.update(|window, cx| {
         window.render_frame(cx);
-        window.within("popup-menu").click(ElementId::Integer(3), cx);
+        window.within("popup-menu").click(ElementId::Integer(4), cx);
     });
     harness.cx.run_until_parked();
     assert!(dialog_open(&mut harness));
@@ -2332,4 +2334,280 @@ fn a_secret_shows_annotation_keys_but_never_their_values(cx: &mut TestAppContext
         detail.annotations(detail.object().unwrap())
     });
     assert_eq!(shown, [("last-applied".to_owned(), None)]);
+}
+
+fn service_kind() -> ResourceKind {
+    kind("", "Service", "services", true)
+}
+
+/// A pod and a service that declare ports, and a secret that cannot be forwarded to.
+fn forwardable(cx: &mut TestAppContext) -> (Harness<'_>, Arc<FakeServices>) {
+    let pod = json!({
+        "metadata": {"name": "web", "namespace": "shop", "uid": "uid-web"},
+        "spec": {"containers": [{"name": "app", "ports": [{"containerPort": 8080}]}]},
+    });
+    let service = json!({
+        "metadata": {"name": "front", "namespace": "shop", "uid": "uid-front"},
+        "spec": {"ports": [{"port": 80, "targetPort": 8080}]},
+    });
+    let source = ScriptedSource::default()
+        .with("Pod", vec![raw("web", Some("shop"), pod.clone())])
+        .with("Service", vec![raw("front", Some("shop"), service.clone())])
+        .with("Secret", vec![raw("key", Some("shop"), json!({}))]);
+    let services = Arc::new(FakeServices::new(
+        Arc::new(source),
+        ContributionSet::default(),
+    ));
+    services.add_object(&pod_kind(), Some("shop"), pod);
+    services.add_object(&service_kind(), Some("shop"), service);
+    let resources = vec![pod_kind(), service_kind(), secret_kind()];
+    (harness(cx, services.clone(), resources, false), services)
+}
+
+impl Harness<'_> {
+    fn forward_dialog(&mut self) -> Entity<ForwardDialog> {
+        let tab = self.tab();
+        self.cx
+            .update(|_, cx| tab.read(cx).forward_dialog().expect("an open dialog"))
+    }
+
+    fn restart_dialog(&mut self) -> Entity<ForwardDialog> {
+        let shell = self.shell.clone();
+        self.cx.update(|_, cx| {
+            let tab = shell.read(cx).forwards_tab().expect("the forwards tab");
+            tab.read(cx).dialog().expect("an open dialog")
+        })
+    }
+
+    fn set_field(&mut self, dialog: &Entity<ForwardDialog>, field: ForwardField, text: &str) {
+        self.cx.update(|window, cx| {
+            dialog.update(cx, |dialog, cx| dialog.set_field(field, text, window, cx));
+        });
+        self.cx.run_until_parked();
+    }
+
+    fn requested(&mut self, dialog: &Entity<ForwardDialog>) -> Option<ForwardRequest> {
+        self.cx.update(|_, cx| dialog.read(cx).request(cx))
+    }
+
+    /// Each listed forward's request and state.
+    fn forwards(&mut self) -> Vec<(ForwardRequest, ForwardState)> {
+        self.cx.update(|_, cx| {
+            let registry = cx.global::<SharedForwards>().0.read(cx);
+            registry
+                .entries()
+                .iter()
+                .map(|entry| (entry.request.clone(), entry.state.clone()))
+                .collect()
+        })
+    }
+
+    fn wait_for_forwards(
+        &mut self,
+        what: &str,
+        mut done: impl FnMut(&[(ForwardRequest, ForwardState)]) -> bool,
+    ) {
+        let started = std::time::Instant::now();
+        loop {
+            self.cx.run_until_parked();
+            if done(&self.forwards()) {
+                return;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(30),
+                "timed out waiting for {what}"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    /// Opens the dialog from the first row of `kind` and waits for the port the
+    /// object declares.
+    fn open_forward(&mut self, kind: &ResourceKind, port: u16) -> Entity<ForwardDialog> {
+        self.open_kind(kind);
+        self.click_at(("row-forward", 0usize));
+        assert!(dialog_open(self));
+        let dialog = self.forward_dialog();
+        wait_until(self.cx, "the declared port", |cx| {
+            cx.update(|_, cx| dialog.read(cx).request(cx).map(|request| request.port)) == Some(port)
+        });
+        dialog
+    }
+
+    fn start_pod_forward(&mut self) {
+        self.open_forward(&pod_kind(), 8080);
+        self.click("forward-start".into());
+        self.wait_for_forwards("the forward", |forwards| forwards.len() == 1);
+    }
+}
+
+fn pod_request(name: &str, local_port: Option<u16>) -> ForwardRequest {
+    ForwardRequest {
+        kind: ForwardKind::Pod,
+        namespace: "shop".into(),
+        name: name.into(),
+        port: 8080,
+        local_port,
+    }
+}
+
+#[gpui_kit::test]
+fn pods_and_services_offer_forwarding_and_other_kinds_do_not(cx: &mut TestAppContext) {
+    let (mut harness, _) = forwardable(cx);
+    harness.open_kind(&pod_kind());
+    assert!(harness.exists_at(("row-forward", 0usize)));
+    harness.open_kind(&service_kind());
+    assert!(harness.exists_at(("row-forward", 0usize)));
+    harness.open_kind(&secret_kind());
+    assert!(!harness.exists_at(("row-forward", 0usize)));
+
+    harness.open_object(ObjectTarget {
+        kind: service_kind(),
+        namespace: Some("shop".into()),
+        name: "front".into(),
+    });
+    assert!(harness.exists("open-forward".into()));
+}
+
+#[gpui_kit::test]
+fn a_pod_forward_uses_the_declared_port_and_shows_the_picked_local_port(cx: &mut TestAppContext) {
+    let (mut harness, services) = forwardable(cx);
+    harness.start_pod_forward();
+
+    assert!(!dialog_open(&mut harness));
+    let started: Vec<_> = services
+        .forwards
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|forward| forward.request.clone())
+        .collect();
+    assert_eq!(started, [pod_request("web", None)]);
+    let (request, state) = harness.forwards().remove(0);
+    assert_ne!(
+        request.local_port.unwrap_or_default(),
+        0,
+        "the picked port is shown"
+    );
+    assert_eq!(state, ForwardState::Starting);
+    assert!(
+        harness.exists_at(("forward-ports", 0usize)),
+        "the list opened"
+    );
+
+    let active = ForwardState::Active {
+        pod: "web".into(),
+        port: 8080,
+    };
+    services.forwards.lock().unwrap()[0].set_state(active.clone());
+    harness.wait_for_forwards("the active state", |forwards| forwards[0].1 == active);
+}
+
+#[gpui_kit::test]
+fn a_service_forward_asks_for_a_service_port(cx: &mut TestAppContext) {
+    let (mut harness, services) = forwardable(cx);
+    harness.open_forward(&service_kind(), 80);
+    harness.click("forward-start".into());
+    harness.wait_for_forwards("the forward", |forwards| forwards.len() == 1);
+    let request = services.forwards.lock().unwrap()[0].request.clone();
+    assert_eq!(request.kind, ForwardKind::Service);
+    assert_eq!((request.name.as_str(), request.port), ("front", 80));
+}
+
+#[gpui_kit::test]
+fn a_local_port_in_use_is_reported_and_starts_nothing(cx: &mut TestAppContext) {
+    let (mut harness, services) = forwardable(cx);
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = taken.local_addr().unwrap().port();
+    let dialog = harness.open_forward(&pod_kind(), 8080);
+    harness.set_field(&dialog, ForwardField::LocalPort, &port.to_string());
+
+    harness.click("forward-start".into());
+
+    assert!(dialog_open(&mut harness));
+    let error = harness
+        .cx
+        .update(|_, cx| dialog.read(cx).error().map(str::to_owned));
+    assert!(error.unwrap().contains(&port.to_string()));
+    assert!(harness.exists("forward-error".into()));
+    assert!(services.forwards.lock().unwrap().is_empty());
+    assert!(harness.forwards().is_empty());
+}
+
+#[gpui_kit::test]
+fn an_invalid_port_cannot_be_started(cx: &mut TestAppContext) {
+    let (mut harness, _) = forwardable(cx);
+    let dialog = harness.open_forward(&pod_kind(), 8080);
+    harness.set_field(&dialog, ForwardField::Port, "70000");
+    assert_eq!(harness.requested(&dialog), None);
+    harness.set_field(&dialog, ForwardField::Port, "8080");
+    harness.set_field(&dialog, ForwardField::LocalPort, "local");
+    assert_eq!(harness.requested(&dialog), None);
+}
+
+#[gpui_kit::test]
+fn a_forward_outlives_its_tab_and_stopping_it_releases_it(cx: &mut TestAppContext) {
+    let (mut harness, services) = forwardable(cx);
+    harness.start_pod_forward();
+    let tab = harness.tab().entity_id();
+    let shell = harness.shell.clone();
+    harness
+        .cx
+        .update(|_, cx| shell.update(cx, |shell, cx| shell.request_close(tab, cx)));
+    harness.cx.run_until_parked();
+    assert!(harness.cx.update(|_, cx| shell.read(cx).tab(tab).is_none()));
+    assert_eq!(harness.forwards().len(), 1);
+
+    harness.click_at(("forward-stop", 0usize));
+
+    assert!(harness.forwards().is_empty());
+    assert!(services.forwards.lock().unwrap()[0].feed.stopped());
+    assert!(harness.exists("no-forwards".into()));
+}
+
+#[gpui_kit::test]
+fn a_forward_leaves_the_list_when_its_session_ends(cx: &mut TestAppContext) {
+    let (mut harness, services) = forwardable(cx);
+    harness.start_pod_forward();
+    drop(services.forwards.lock().unwrap().remove(0));
+    harness.wait_for_forwards("the forward to go", <[_]>::is_empty);
+}
+
+#[gpui_kit::test]
+fn a_failed_forward_can_be_restarted_against_another_pod(cx: &mut TestAppContext) {
+    let (mut harness, services) = forwardable(cx);
+    harness.start_pod_forward();
+    let local_port = harness.forwards()[0].0.local_port;
+    assert!(!harness.exists_at(("forward-restart", 0usize)));
+
+    services.forwards.lock().unwrap()[0].fail(ForwardFailure::PodDeleted);
+    let failed = ForwardState::Failed(ForwardFailure::PodDeleted);
+    harness.wait_for_forwards("the failure", |forwards| forwards[0].1 == failed);
+    harness.click_at(("forward-restart", 0usize));
+    let dialog = harness.restart_dialog();
+    assert_eq!(
+        harness.requested(&dialog),
+        Some(pod_request("web", local_port))
+    );
+    harness.set_field(&dialog, ForwardField::Name, "web-2");
+    harness.click("forward-start".into());
+
+    assert!(!dialog_open(&mut harness));
+    let restarted = services.forwards.lock().unwrap()[1].request.clone();
+    assert_eq!(
+        restarted,
+        pod_request("web-2", local_port),
+        "the same port is used"
+    );
+    let listed = harness.forwards();
+    assert_eq!(listed.len(), 1, "the failed forward was replaced");
+    assert_eq!(listed[0].0.name, "web-2");
+    assert_eq!(listed[0].1, ForwardState::Starting);
+}
+
+#[gpui_kit::test]
+fn the_rail_opens_the_forward_list(cx: &mut TestAppContext) {
+    let (mut harness, _) = forwardable(cx);
+    harness.click("rail-forwards".into());
+    assert!(harness.exists("no-forwards".into()));
 }

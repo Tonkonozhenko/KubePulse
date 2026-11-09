@@ -98,10 +98,10 @@ Stop after this group if any target is missed, and revisit the design before sta
 
 ## 12. Port-forwarding
 
-- [ ] 12.1 Implement pod forwards with loopback-only binding and automatic port selection, and verify a test confirms the listener is not reachable on non-loopback addresses
-- [ ] 12.2 Implement service forwards through EndpointSlices with re-resolution, and verify replacing the backend pod reconnects
-- [ ] 12.3 Implement the global forward registry and its view, and verify forwards survive closing their tab and stop when their cluster disconnects
-- [ ] 12.4 Implement failure reporting and restart, and verify a deleted target pod marks the forward as failed
+- [x] 12.1 Implement pod forwards with loopback-only binding and automatic port selection, and verify a test confirms the listener is not reachable on non-loopback addresses
+- [x] 12.2 Implement service forwards through EndpointSlices with re-resolution, and verify replacing the backend pod reconnects
+- [x] 12.3 Implement the global forward registry and its view, and verify forwards survive closing their tab and stop when their cluster disconnects
+- [x] 12.4 Implement failure reporting and restart, and verify a deleted target pod marks the forward as failed
 
 ## 13. Release readiness
 

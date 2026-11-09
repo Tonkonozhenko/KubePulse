@@ -35,6 +35,10 @@ pub fn kind_ref(kind: &ResourceKind) -> KindRef {
     KindRef::new(&kind.group, &kind.kind)
 }
 
+pub fn is_service(kind: &ResourceKind) -> bool {
+    kind.group.is_empty() && kind.kind == "Service"
+}
+
 pub fn is_pod(kind: &ResourceKind) -> bool {
     kind.group.is_empty() && kind.kind == "Pod"
 }

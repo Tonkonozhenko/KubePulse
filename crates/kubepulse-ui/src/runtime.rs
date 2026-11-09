@@ -12,8 +12,9 @@ use std::{
 use async_trait::async_trait;
 use kubepulse_cluster::{
     ClusterEntry, ClusterList, ConnectionState, EventRecord, ExecRequest, ExecSize, ExecStream,
-    FileError, KubeconfigWatcher, LogRequest, LogStream, ObjectError, ObjectTarget, ResourceKind,
-    SessionHandle, SessionManager, SessionOptions, UpdateAccess, WriteMode, load,
+    FileError, ForwardRequest, KubeconfigWatcher, LogRequest, LogStream, ObjectError, ObjectTarget,
+    PortForward, ResourceKind, SessionHandle, SessionManager, SessionOptions, UpdateAccess,
+    WriteMode, load,
 };
 use kubepulse_extension_api::{
     ChangeOutcome, ChangeRequest, ClusterRef, ExtensionRequest, ExtensionResponse, HostError,
@@ -30,7 +31,7 @@ use tokio::{
 
 use crate::{
     columns::{columns_for, kind_ref},
-    services::{ClusterServices, Reply},
+    services::{ClusterServices, ForwardStartError, Reply},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -390,6 +391,23 @@ impl ClusterServices for RuntimeServices {
             container = request.container
         );
         Some(cluster.handle.open_exec(request, size, &label))
+    }
+
+    fn start_forward(
+        &self,
+        context: &str,
+        request: ForwardRequest,
+    ) -> Result<PortForward, ForwardStartError> {
+        let cluster = self
+            .clusters
+            .get(context)
+            .ok_or(ForwardStartError::NotConnected)?;
+        let _runtime = self.runtime.enter();
+        let label = t!("forward.work", name = request.name, port = request.port);
+        cluster
+            .handle
+            .start_forward(request, &label)
+            .map_err(ForwardStartError::Port)
     }
 
     fn contributions(&self) -> Arc<ContributionSet> {

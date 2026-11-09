@@ -14,6 +14,8 @@ pub mod command_palette;
 pub mod declarative;
 pub mod delete_dialog;
 pub mod detail;
+pub mod forward_dialog;
+pub mod forwards;
 pub mod icons;
 pub mod identity;
 pub mod kind_sidebar;

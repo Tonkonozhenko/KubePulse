@@ -1,6 +1,7 @@
 //! Kubeconfig, sessions, auth, discovery, watches, exec, logs, and port-forwarding.
 
 pub mod exec;
+pub mod forward;
 pub mod kubeconfig;
 pub mod logs;
 pub mod manager;
@@ -10,6 +11,10 @@ pub mod resource_watch;
 pub mod session;
 
 pub use exec::{ExecFeed, ExecRequest, ExecSize, ExecState, ExecStream, exec_channel, run_exec};
+pub use forward::{
+    ForwardFailure, ForwardFeed, ForwardKind, ForwardRequest, ForwardState, PortForward,
+    bind_local, forward_channel, run_forward, serve_forward,
+};
 pub use kubeconfig::{
     ClusterEntry, ClusterList, FileError, KubeconfigWatcher, default_paths, load,
 };

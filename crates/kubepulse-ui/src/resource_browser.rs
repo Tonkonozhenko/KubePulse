@@ -33,7 +33,7 @@ use rust_i18n::t;
 
 use crate::{
     cluster_model::{ClusterModel, ClusterModelEvent},
-    columns::{ComputedColumn, KindColumns, is_pod, kind_ref},
+    columns::{ComputedColumn, KindColumns, is_pod, is_service, kind_ref},
     identity::ClusterKey,
     services::ClusterServices,
     status::{Tone, status_tag, status_tone},
@@ -52,6 +52,7 @@ const ACTIONS_PADDING: f32 = 24.;
 pub enum RowAction {
     Logs,
     Shell,
+    Forward,
     Edit,
     Delete,
 }
@@ -61,6 +62,7 @@ impl RowAction {
         match self {
             Self::Logs => "row-logs",
             Self::Shell => "row-shell",
+            Self::Forward => "row-forward",
             Self::Edit => "row-edit",
             Self::Delete => "row-delete",
         }
@@ -70,6 +72,7 @@ impl RowAction {
         match self {
             Self::Logs => IconName::Logs,
             Self::Shell => IconName::SquareTerminal,
+            Self::Forward => IconName::ArrowRightLeft,
             Self::Edit => IconName::Pencil,
             Self::Delete => IconName::Trash,
         }
@@ -79,6 +82,7 @@ impl RowAction {
         match self {
             Self::Logs => t!("detail.logs"),
             Self::Shell => t!("detail.shell"),
+            Self::Forward => t!("forward.action"),
             Self::Edit => t!("detail.edit"),
             Self::Delete => t!("detail.delete"),
         }
@@ -91,9 +95,12 @@ fn row_actions(kind: &ResourceKind) -> &'static [RowAction] {
         &[
             RowAction::Logs,
             RowAction::Shell,
+            RowAction::Forward,
             RowAction::Edit,
             RowAction::Delete,
         ]
+    } else if is_service(kind) {
+        &[RowAction::Forward, RowAction::Edit, RowAction::Delete]
     } else {
         &[RowAction::Edit, RowAction::Delete]
     }
@@ -456,6 +463,7 @@ pub enum BrowserEvent {
     Close,
     Logs(ObjectTarget),
     Shell(ObjectTarget),
+    Forward(ObjectTarget),
     Edit(ObjectTarget),
     Delete(Vec<ObjectTarget>),
 }
@@ -533,7 +541,9 @@ impl ResourceBrowser {
         let mut table_columns = vec![
             control_column("select", SELECT_WIDTH),
             control_column("actions", actions_width),
-            Column::new("name", t!("column.name").to_string()).sortable(),
+            Column::new("name", t!("column.name").to_string())
+                .width(px(300.))
+                .sortable(),
         ];
         if kind.namespaced {
             table_columns
@@ -750,6 +760,7 @@ impl ResourceBrowser {
         cx.emit(match action {
             RowAction::Logs => BrowserEvent::Logs(target),
             RowAction::Shell => BrowserEvent::Shell(target),
+            RowAction::Forward => BrowserEvent::Forward(target),
             RowAction::Edit => BrowserEvent::Edit(target),
             RowAction::Delete => BrowserEvent::Delete(vec![target]),
         });

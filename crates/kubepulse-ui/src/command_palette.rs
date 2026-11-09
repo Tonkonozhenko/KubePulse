@@ -40,6 +40,7 @@ pub enum PaletteAction {
     Connect(String),
     Disconnect(String),
     OpenSettings,
+    OpenForwards,
 }
 
 #[derive(Clone)]
@@ -134,9 +135,15 @@ pub fn palette_groups(
         icon: Icon::new(IconName::Settings),
         action: PaletteAction::OpenSettings,
     };
+    let forwards = PaletteEntry {
+        label: t!("forward.title").to_string(),
+        keywords: Vec::new(),
+        icon: Icon::new(IconName::ArrowRightLeft),
+        action: PaletteAction::OpenForwards,
+    };
     groups.push(PaletteGroup {
         heading: t!("palette.commands").to_string(),
-        entries: commands.chain([settings]).collect(),
+        entries: commands.chain([settings, forwards]).collect(),
     });
 
     let connections = clusters.iter().filter_map(|status| {

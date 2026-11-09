@@ -20,6 +20,7 @@ use rust_i18n::t;
 use crate::{
     cluster_model::{ClusterModel, can_connect, is_live, state_label},
     cluster_settings::ClusterSettingsForm,
+    forwards::OpenPortForwards,
     icons::state_mark,
     identity::{ClusterIdentity, ClusterKey},
     runtime::ClusterStatus,
@@ -591,6 +592,15 @@ impl Render for ClusterRail {
                         }),
                 )
             })
+            .child(
+                Button::new("rail-forwards")
+                    .icon(IconName::ArrowRightLeft)
+                    .ghost()
+                    .tooltip(t!("forward.title").to_string())
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(OpenPortForwards), cx);
+                    }),
+            )
             .child(
                 Button::new("rail-settings")
                     .icon(IconName::Settings)

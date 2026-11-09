@@ -22,6 +22,7 @@ use crate::{
     columns::{columns_for, kind_icon, kind_ref, kind_title},
     delete_dialog::DeleteDialog,
     detail::{DetailEvent, DetailView},
+    forward_dialog::ForwardDialog,
     icons::view_glyph,
     identity::ClusterKey,
     resource_browser::{BrowserEvent, ResourceBrowser},
@@ -53,6 +54,7 @@ pub struct ClusterTab {
     browser: Option<Entity<ResourceBrowser>>,
     detail: Option<Entity<DetailView>>,
     delete_dialog: WeakEntity<DeleteDialog>,
+    forward_dialog: WeakEntity<ForwardDialog>,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -82,6 +84,7 @@ impl ClusterTab {
             browser: None,
             detail: None,
             delete_dialog: WeakEntity::new_invalid(),
+            forward_dialog: WeakEntity::new_invalid(),
             focus: cx.focus_handle(),
             _subscriptions: vec![subscription],
         }
@@ -97,6 +100,10 @@ impl ClusterTab {
 
     pub fn detail(&self) -> Option<&Entity<DetailView>> {
         self.detail.as_ref()
+    }
+
+    pub fn forward_dialog(&self) -> Option<Entity<ForwardDialog>> {
+        self.forward_dialog.upgrade()
     }
 
     pub fn delete_dialog(&self) -> Option<Entity<DeleteDialog>> {
@@ -174,6 +181,9 @@ impl ClusterTab {
                     BrowserEvent::Close => this.close_detail(cx),
                     BrowserEvent::Logs(target) => this.open_logs(target.clone(), cx),
                     BrowserEvent::Shell(target) => this.open_shell(target.clone(), cx),
+                    BrowserEvent::Forward(target) => {
+                        this.open_forward(target.clone(), window, cx);
+                    }
                     BrowserEvent::Edit(target) => this.open_editor(target.clone(), cx),
                     BrowserEvent::Delete(targets) => {
                         this.confirm_delete(targets.clone(), window, cx);
@@ -199,6 +209,7 @@ impl ClusterTab {
                 DetailEvent::OpenOwner(target) => this.open_object(target.clone(), window, cx),
                 DetailEvent::Logs(target) => this.open_logs(target.clone(), cx),
                 DetailEvent::Shell(target) => this.open_shell(target.clone(), cx),
+                DetailEvent::Forward(target) => this.open_forward(target.clone(), window, cx),
                 DetailEvent::Edit(target) => this.open_editor(target.clone(), cx),
                 DetailEvent::Delete(target) => {
                     this.confirm_delete(vec![target.clone()], window, cx);
@@ -220,6 +231,11 @@ impl ClusterTab {
         let key = self.key.clone();
         self.shell
             .update(cx, |shell, cx| shell.open_terminal(key, target, cx));
+    }
+
+    fn open_forward(&mut self, target: ObjectTarget, window: &mut Window, cx: &mut Context<Self>) {
+        let dialog = ForwardDialog::open(self.key.clone(), target, self.model.clone(), window, cx);
+        self.forward_dialog = dialog.downgrade();
     }
 
     fn open_editor(&mut self, target: ObjectTarget, cx: &mut Context<Self>) {
