@@ -1,34 +1,27 @@
 # general/licensing Specification
 
 ## Purpose
-Defines the license terms users receive and the rules that keep every distribution compliant with them, so that commercial use is paid for and the source stays public.
+Defines the license terms users receive and the rules that keep every distribution compliant with them.
 
 ## Requirements
 
-### Requirement: Business Source License terms
-Every release SHALL be licensed under Business Source License 1.1, with non-commercial use granted free of charge and commercial use requiring a paid license.
+### Requirement: Apache License terms
+Every release SHALL be licensed under the Apache License, Version 2.0.
 
 #### Scenario: Repository license
 - **WHEN** someone inspects the repository
-- **THEN** the root license file states the Business Source License 1.1 terms and all of its parameters
+- **THEN** the root license file states the Apache License, Version 2.0
 
 #### Scenario: Distributed application
 - **WHEN** a user installs a release
 - **THEN** the license text is included with the application and available from its About screen
 
-### Requirement: Scheduled conversion
-Each released version SHALL convert to AGPL-3.0 on the fourth anniversary of its first public release.
-
-#### Scenario: Version reaches its change date
-- **WHEN** four years have passed since a version's first public release
-- **THEN** that version is available under AGPL-3.0, while newer versions keep their own dates
-
 ### Requirement: Accurate license description
-Project materials SHALL describe unconverted releases as source-available, and MUST NOT describe them as open source.
+Project materials SHALL describe the product as open source under the Apache License, Version 2.0.
 
 #### Scenario: Release materials
 - **WHEN** the README, website, or release notes describe the license
-- **THEN** they say source-available, name the conversion to AGPL-3.0, and explain how to buy a commercial license
+- **THEN** they name the Apache License, Version 2.0
 
 ### Requirement: Compatible dependencies only
 Distributed builds MUST contain only dependencies whose licenses permit distribution under the project's terms, and GPL-family dependencies MUST NOT be included.
@@ -41,12 +34,12 @@ Distributed builds MUST contain only dependencies whose licenses permit distribu
 - **WHEN** a release is built
 - **THEN** it includes the license notices its dependencies require
 
-### Requirement: Contributions can be commercially licensed
-The project SHALL accept code contributions only under an agreement that allows them to be distributed under the commercial license and the Business Source License.
+### Requirement: Contributions under the project license
+The project SHALL accept code contributions under the Apache License, Version 2.0, as its section 5 describes, without a separate contributor agreement.
 
 #### Scenario: First contribution
 - **WHEN** a new contributor opens a pull request
-- **THEN** the pull request cannot be merged until the contributor has accepted the agreement
+- **THEN** the pull request can be merged without the contributor signing an additional agreement
 
 ### Requirement: Permissive extension contract
 The extension contract SHALL be licensed permissively, so that authors can build and license their own extensions independently of the application's license.
@@ -56,7 +49,7 @@ The extension contract SHALL be licensed permissively, so that authors can build
 - **THEN** the author can choose that extension's license, including a proprietary one
 
 ### Requirement: No license enforcement inside the application
-The application MUST run without license keys, activation, or usage reporting. Compliance relies on the license terms.
+The application MUST run without license keys, activation, or usage reporting.
 
 #### Scenario: Offline use
 - **WHEN** the application runs on a machine with no internet access

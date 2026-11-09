@@ -1724,8 +1724,8 @@ fn settings_opens_the_about_tab(cx: &mut TestAppContext) {
 
 #[test]
 fn the_build_carries_the_license_and_the_dependency_notices() {
-    assert!(about_tab::LICENSE.contains("Business Source License 1.1"));
-    assert!(about_tab::LICENSE.contains("GNU Affero General Public License, Version 3.0"));
+    assert!(about_tab::LICENSE.contains("Apache License"));
+    assert!(about_tab::LICENSE.contains("Version 2.0, January 2004"));
     for dependency in ["gpui-kit ", "alacritty_terminal ", "kube "] {
         assert!(
             about_tab::NOTICES.contains(&format!("- {dependency}")),

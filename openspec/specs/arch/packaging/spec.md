@@ -50,11 +50,11 @@ A Linux package SHALL declare every system library the application needs, includ
 - **THEN** the package manager installs the library with the package
 
 ### Requirement: License ships with the package
-Every package SHALL include the product license, and package metadata MUST NOT describe the product as open source.
+Every package SHALL include the product license.
 
 #### Scenario: Reading the license
 - **WHEN** the application is installed
-- **THEN** the Business Source License text is available on the system or shown by the installer
+- **THEN** the Apache License, Version 2.0 text is available on the system or shown by the installer
 
 ### Requirement: Removal keeps user data
 Removing the application SHALL remove everything the package installed, and MUST NOT remove the user's settings, themes, or kubeconfig files.

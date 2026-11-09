@@ -189,7 +189,7 @@
   "forward.work": "Port-forward to %{name}, port %{port}",
   "about.title": "About",
   "about.heading": "KubePulse %{version}",
-  "about.summary": "Source-available under the Business Source License 1.1. Non-commercial use is free.",
+  "about.summary": "Open source under the Apache License, Version 2.0.",
   "about.license": "License",
   "about.notices": "Third-party notices",
   "settings.view_license": "View license and notices"
