@@ -5,66 +5,172 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>KubePulse</title>
-  <meta name="description" content="KubePulse is a lightweight, native Kubernetes IDE for Linux, macOS, and Windows. Open source under Apache-2.0.">
+  <meta name="description" content="KubePulse is a lightweight, native Kubernetes IDE for Linux, macOS, and Windows. Open source under Apache-2.0, with no accounts or telemetry.">
   <link rel="icon" type="image/png" href="logo.png">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="hero">
-    <img class="logo" src="logo.png" alt="" width="128" height="128">
-    <h1>KubePulse</h1>
-    <p class="tagline">A lightweight, native Kubernetes IDE for Linux, macOS, and Windows, written in Rust.</p>
-    <div class="actions">
-      <a class="button primary" href="https://github.com/Tonkonozhenko/KubePulse/releases/latest">Download</a>
-      <a class="button" href="https://github.com/Tonkonozhenko/KubePulse">Source code</a>
+  <nav class="nav">
+    <a class="brand" href="./">
+      <img src="logo.png" alt="" width="32" height="32">
+      <span>KubePulse</span>
+    </a>
+    <div class="nav-links">
+      <a href="#features">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+        Features
+      </a>
+      <a href="#download">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19h14"/></svg>
+        Download
+      </a>
+      <a class="nav-github" href="https://github.com/Tonkonozhenko/KubePulse">
+        <svg class="mark" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
     </div>
-    <p class="note">KubePulse is in early development. Expect missing features and breaking changes between versions.</p>
+  </nav>
+
+  <header class="hero">
+    <div class="hero-text">
+      <p class="pill"><span class="dot"></span>Early development: expect missing features and breaking changes</p>
+      <h1>Your clusters,<br><span class="gradient">at native speed.</span></h1>
+      <p class="lead">KubePulse is a lightweight, native Kubernetes IDE for Linux, macOS, and Windows, written in Rust. Browse, debug, and change your clusters without waiting on your tools.</p>
+      <div class="actions">
+        <a class="button primary" href="https://github.com/Tonkonozhenko/KubePulse/releases/latest">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19h14"/></svg>
+          Download for free
+        </a>
+        <a class="button ghost" href="https://github.com/Tonkonozhenko/KubePulse">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 7-5 5 5 5m8-10 5 5-5 5"/></svg>
+          View the source
+        </a>
+      </div>
+      <ul class="badges">
+        <li>Apache-2.0</li>
+        <li>No accounts</li>
+        <li>No telemetry</li>
+      </ul>
+    </div>
+
+    <figure class="window" aria-label="Illustration of the KubePulse window">
+      <div class="window-bar">
+        <span class="light red"></span><span class="light yellow"></span><span class="light green"></span>
+        <span class="window-title">pods · payments</span>
+      </div>
+      <div class="window-body" aria-hidden="true">
+        <aside class="rail">
+          <span class="cluster" style="--c:#3b82f6">P</span>
+          <span class="cluster active" style="--c:#f97316">S</span>
+          <span class="cluster" style="--c:#22c55e">D</span>
+        </aside>
+        <div class="table">
+          <div class="row head"><span>Name</span><span>Status</span><span class="hide-sm">Restarts</span><span class="hide-sm">Age</span></div>
+          <div class="row"><span>api-7f9c4b-x2kq</span><span class="status ok">Running</span><span class="hide-sm">0</span><span class="hide-sm">4d</span></div>
+          <div class="row"><span>api-7f9c4b-m8wz</span><span class="status ok">Running</span><span class="hide-sm">0</span><span class="hide-sm">4d</span></div>
+          <div class="row selected"><span>worker-5d8f-qp7n</span><span class="status bad">CrashLoop</span><span class="hide-sm">12</span><span class="hide-sm">2h</span></div>
+          <div class="row"><span>ledger-0</span><span class="status ok">Running</span><span class="hide-sm">1</span><span class="hide-sm">9d</span></div>
+          <div class="row"><span>migrate-28fd1</span><span class="status wait">Pending</span><span class="hide-sm">0</span><span class="hide-sm">8s</span></div>
+          <div class="log">
+            <div class="log-head">
+              <span>Logs · worker-5d8f-qp7n</span>
+              <svg class="pulse" viewBox="0 0 120 24"><path d="M0 12h40l6-9 8 18 7-14 5 5h54"/></svg>
+            </div>
+            <code><span class="t">12:04:51</span> connecting to queue at queue:5672</code>
+            <code><span class="t">12:04:52</span> <span class="err">error: connection refused</span></code>
+            <code><span class="t">12:04:52</span> retrying in 5s</code>
+          </div>
+        </div>
+      </div>
+      <figcaption>Illustration</figcaption>
+    </figure>
   </header>
 
   <main>
-    <section>
-      <h2>What it does</h2>
+    <section class="stats" aria-label="At a glance">
+      <div><strong>10,000</strong><span>pods per cluster, by design</span></div>
+      <div><strong>3</strong><span>platforms with the same features</span></div>
+      <div><strong>0</strong><span>accounts, license keys, or telemetry</span></div>
+    </section>
+
+    <section id="features" class="section">
+      <p class="eyebrow">Features</p>
+      <h2>Everything you reach for, in one fast window</h2>
       <ul class="features">
         <li>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="19" cy="18" r="2"/></svg>
           <h3>Your clusters, listed offline</h3>
-          <p>Every context in your default kubeconfig is listed without touching the network. You connect and disconnect each cluster yourself.</p>
+          <p>Every context in your default kubeconfig shows up without touching the network. You decide when each cluster connects and disconnects.</p>
         </li>
         <li>
-          <h3>Built for large clusters</h3>
-          <p>Resource browsing designed for clusters with 10,000 pods each.</p>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></svg>
+          <h3>Built for big clusters</h3>
+          <p>Resource browsing designed for clusters with 10,000 pods each, so the table keeps up when your cluster grows.</p>
         </li>
         <li>
-          <h3>Logs, shells, and port forwarding</h3>
-          <p>Follow pod logs, open a shell in a container, and forward ports from the same window.</p>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3m5 0h5"/></svg>
+          <h3>Logs, shells, port forwards</h3>
+          <p>Follow pod logs, open a shell in a container, and forward ports, all from the same window.</p>
         </li>
         <li>
-          <h3>Safe manifest editing</h3>
-          <p>Every change goes through a dry run and a diff, and is applied only after you confirm it.</p>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v6c0 4.5 3.4 8.2 8 9 4.6-.8 8-4.5 8-9V6l-8-3Z"/><path d="m9 12 2 2 4-4"/></svg>
+          <h3>Edits you can trust</h3>
+          <p>Every change runs as a dry run first and shows you a diff. Nothing reaches the cluster until you confirm.</p>
         </li>
         <li>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
           <h3>Many clusters side by side</h3>
-          <p>Open several clusters at once, each marked with its own identity color.</p>
+          <p>Open several clusters at once, each marked with its own identity color, so you always know where you are.</p>
         </li>
         <li>
-          <h3>Fast to drive</h3>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H7a3 3 0 0 0 0 6h2V4Zm0 6v4m0 0H7a3 3 0 1 0 3 3v-3H9Zm6-10h2a3 3 0 1 1 0 6h-2V4Zm0 6v4m0 0h2a3 3 0 1 1-3 3v-3h1ZM9 10h6m-6 4h6"/></svg>
+          <h3>Keyboard first, extensible</h3>
           <p>A command palette, light and dark themes, and an extension system that the built-in features use too.</p>
         </li>
       </ul>
     </section>
 
-    <section>
-      <h2>Open source, no strings</h2>
-      <p>KubePulse is open source under the Apache License, Version 2.0. It needs no account or license key and sends no telemetry.</p>
+    <section class="section safety">
+      <div>
+        <p class="eyebrow">Safe changes</p>
+        <h2>No surprise writes to production</h2>
+        <p class="lead">Every change, including one from an extension, follows the same path. Deleting asks you to confirm the cluster, namespace, and object by name.</p>
+      </div>
+      <ol class="flow">
+        <li><span>1</span>Dry run</li>
+        <li><span>2</span>Review the diff</li>
+        <li><span>3</span>Confirm</li>
+        <li><span>4</span>Apply</li>
+      </ol>
     </section>
 
-    <section>
-      <h2>Get it</h2>
-      <p>Installers for Linux (<code>.deb</code>), macOS (<code>.dmg</code>), and Windows (<code>-setup.exe</code>) are attached to each <a href="https://github.com/Tonkonozhenko/KubePulse/releases/latest">release</a>, with a <code>SHA256SUMS</code> file to verify them.</p>
+    <section class="section open">
+      <p class="eyebrow">Open source</p>
+      <h2>Yours to use, read, and change</h2>
+      <p class="lead">KubePulse is open source under the Apache License, Version 2.0. It needs no account or license key and sends no telemetry. It never phones home.</p>
+    </section>
+
+    <section id="download" class="section download">
+      <p class="eyebrow">Download</p>
+      <h2>Get KubePulse</h2>
+      <div class="platforms">
+        <a href="https://github.com/Tonkonozhenko/KubePulse/releases/latest">
+          <strong>Linux</strong><span>Debian, Ubuntu, and derivatives · <code>.deb</code></span><em>Wayland and X11</em>
+        </a>
+        <a href="https://github.com/Tonkonozhenko/KubePulse/releases/latest">
+          <strong>macOS</strong><span>Disk image · <code>.dmg</code></span><em>Drag into Applications</em>
+        </a>
+        <a href="https://github.com/Tonkonozhenko/KubePulse/releases/latest">
+          <strong>Windows</strong><span>Installer · <code>-setup.exe</code></span><em>One-click setup</em>
+        </a>
+      </div>
+      <p class="fine">Every release includes a <code>SHA256SUMS</code> file so you can verify your download.</p>
     </section>
   </main>
 
   <footer>
-    <p>KubePulse · Apache-2.0 · <a href="https://github.com/Tonkonozhenko/KubePulse">GitHub</a></p>
+    <a class="brand" href="./"><img src="logo.png" alt="" width="24" height="24"><span>KubePulse</span></a>
+    <p>Open source under Apache-2.0 · <a href="https://github.com/Tonkonozhenko/KubePulse">GitHub</a> · <a href="https://github.com/Tonkonozhenko/KubePulse/releases">Releases</a></p>
   </footer>
 </body>
 </html>
