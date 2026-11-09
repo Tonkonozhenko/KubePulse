@@ -41,6 +41,7 @@ pub enum PaletteAction {
     Disconnect(String),
     OpenSettings,
     OpenForwards,
+    OpenAbout,
 }
 
 #[derive(Clone)]
@@ -141,9 +142,18 @@ pub fn palette_groups(
         icon: Icon::new(IconName::ArrowRightLeft),
         action: PaletteAction::OpenForwards,
     };
+    let about = PaletteEntry {
+        label: t!("about.title").to_string(),
+        keywords: vec![
+            t!("about.license").to_string(),
+            t!("about.notices").to_string(),
+        ],
+        icon: Icon::new(IconName::Info),
+        action: PaletteAction::OpenAbout,
+    };
     groups.push(PaletteGroup {
         heading: t!("palette.commands").to_string(),
-        entries: commands.chain([settings, forwards]).collect(),
+        entries: commands.chain([settings, forwards, about]).collect(),
     });
 
     let connections = clusters.iter().filter_map(|status| {

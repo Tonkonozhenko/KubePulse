@@ -17,6 +17,7 @@ use gpui_kit::{
 use rust_i18n::t;
 
 use crate::{
+    about_tab::OpenAbout,
     language,
     preferences::{Appearance, Preferences, PreferencesModel, SharedPreferences},
     shell_state::{SharedShellState, ShellState, close_button, close_on_middle_click},
@@ -129,6 +130,22 @@ fn open_folder(folder: PathBuf, cx: &mut App) {
         }
     })
     .detach();
+}
+
+fn about_group() -> SettingGroup {
+    SettingGroup::new()
+        .title(t!("about.title").to_string())
+        .item(SettingItem::new(
+            t!("about.heading", version = env!("CARGO_PKG_VERSION")).to_string(),
+            SettingField::render(|_, _, _| {
+                Button::new("open-about")
+                    .icon(IconName::Info)
+                    .label(t!("settings.view_license").to_string())
+                    .outline()
+                    .small()
+                    .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenAbout), cx))
+            }),
+        ))
 }
 
 pub struct SettingsTab {
@@ -344,7 +361,8 @@ impl Render for SettingsTab {
                 Settings::new("settings-pages").page(
                     SettingPage::new(t!("settings.title").to_string())
                         .group(self.appearance_group(cx))
-                        .group(self.language_group(cx)),
+                        .group(self.language_group(cx))
+                        .group(about_group()),
                 ),
             )
             .test_support()

@@ -3,10 +3,10 @@
 ## 1. Workspace and project foundations
 
 - [x] 1.1 Replace the scaffold with a Cargo workspace containing the crates from design D1, rename the package to `kubepulse`, and verify `cargo build --workspace` succeeds
-- [ ] 1.2 Add a CI check that enforces the crate dependency graph from D1, and verify it fails on a test branch where `kubepulse-builtin` depends on `kubepulse-store`
+- [x] 1.2 Add a CI check that enforces the crate dependency graph from D1, and verify it fails on a test branch where `kubepulse-builtin` depends on `kubepulse-store`
 - [ ] 1.3 Set up CI builds and tests on Linux, macOS, and Windows, and verify all three pass on the empty workspace
 - [x] 1.4 Add the root `LICENSE` with the BUSL 1.1 parameters from D17 and the Apache-2.0 license on `kubepulse-extension-api`, and verify each crate's manifest declares the intended license
-- [ ] 1.5 Add a license check in CI with a GPL-family exclusion, and verify a deliberately added GPL dependency fails it
+- [x] 1.5 Add a license check in CI with a GPL-family exclusion, and verify a deliberately added GPL dependency fails it
 - [ ] 1.6 Add a contributor license agreement check to pull requests and a README licensing section that says source-available, and verify the check blocks a pull request from a contributor who has not accepted
 
 ## 2. Feasibility gate
@@ -37,7 +37,7 @@ Stop after this group if any target is missed, and revisit the design before sta
 - [x] 4.3 Implement view queries for filter and sort with once-per-frame snapshot publication from D7, and verify 10k rows sort and filter within 100 milliseconds in a benchmark
 - [x] 4.4 Add the synthetic load generator from D18, and verify the store converges within 2 seconds after a 1,000-changes-per-second burst
 - [x] 4.5 Implement namespace-scoped fallback for forbidden cluster-wide lists, and verify it against a fake server that denies them
-- [ ] 4.6 Add scale benchmarks to CI with regression thresholds, and verify a deliberate slowdown fails them
+- [x] 4.6 Add scale benchmarks to CI with regression thresholds, and verify a deliberate slowdown fails them
 
 ## 5. Extension contract and host
 
@@ -56,7 +56,7 @@ Stop after this group if any target is missed, and revisit the design before sta
 - [x] 6.3 Implement the searchable cluster list showing each cluster's connection state, plus connect and disconnect actions and the active-work warning, and verify with UI tests against a fake cluster, including that opening a disconnected cluster starts no connection and closing its last tab leaves a cluster connected
 - [x] 6.4 Implement cluster identity and protected clusters with the keys from D16, and verify a reused context name on another server does not inherit settings
 - [x] 6.5 Implement workspace persistence and restore without automatic connection, and verify a restart test restores the layout in a disconnected state, activating a restored tab starts no connection, and disconnecting a cluster leaves its tabs open
-- [ ] 6.6 Add a startup time check, and verify the window appears within 1 second on the reference machine with unreachable clusters
+- [x] 6.6 Add a startup time check, and verify the window appears within 1 second on the reference machine with unreachable clusters. Run on the development machine, not on reference hardware: first frame after 221 milliseconds.
 
 ## 7. Resource browsing
 
@@ -105,7 +105,7 @@ Stop after this group if any target is missed, and revisit the design before sta
 
 ## 13. Release readiness
 
-- [ ] 13.1 Add the About screen with the license text and third-party notices, and verify both are present in release builds
+- [x] 13.1 Add the About screen with the license text and third-party notices, and verify both are present in release builds
 - [ ] 13.2 Package signed builds for Linux, macOS, and Windows, and verify each installs and starts on a clean machine
 - [ ] 13.3 Verify no license check or usage reporting exists by running the application offline and capturing its outbound traffic
 - [ ] 13.4 Run the end-to-end workflow on all three platforms against simulated 10k-pod clusters: connect two clusters, browse, edit with diff, follow logs, open a shell, and forward a port

@@ -186,5 +186,11 @@
   "forward.target_pod": "Pod %{namespace}/%{name}",
   "forward.target_service": "Service %{namespace}/%{name}",
   "forward.title": "Port forwards",
-  "forward.work": "Port-forward to %{name}, port %{port}"
+  "forward.work": "Port-forward to %{name}, port %{port}",
+  "about.title": "About",
+  "about.heading": "KubePulse %{version}",
+  "about.summary": "Source-available under the Business Source License 1.1. Non-commercial use is free.",
+  "about.license": "License",
+  "about.notices": "Third-party notices",
+  "settings.view_license": "View license and notices"
 }

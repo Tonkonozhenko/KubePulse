@@ -15,6 +15,7 @@ use kubepulse_extension_api::{CommandContribution, Contributions, ExtensionReque
 use kubepulse_extension_host::ContributionSet;
 use kubepulse_store::synthetic::pod_kind;
 use kubepulse_ui::{
+    about_tab::{self, Document},
     cluster_model::ClusterModel,
     cluster_tab::ClusterTab,
     command_palette,
@@ -1674,4 +1675,88 @@ fn the_palette_does_not_open_over_another_dialog(cx: &mut TestAppContext) {
 
     assert!(exists("disconnect-warning", cx));
     assert!(!exists("command-palette", cx));
+}
+
+// About
+
+fn about_open(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) -> usize {
+    fn count(state: &PanelState) -> usize {
+        usize::from(state.panel_name == about_tab::PANEL_NAME)
+            + state.children.iter().map(count).sum::<usize>()
+    }
+    count(&layout(workspace, cx).center)
+}
+
+fn shown_document(cx: &mut VisualTestContext) -> Document {
+    cx.update(|_, cx| {
+        let shell = cx.global::<SharedShellState>().0.clone();
+        let tab = shell.read(cx).about_tab().expect("the About tab");
+        tab.read(cx).shown()
+    })
+}
+
+#[gpui_kit::test]
+fn the_palette_opens_one_about_tab_that_shows_the_license_and_the_notices(cx: &mut TestAppContext) {
+    let harness = harness(cx, vec![]);
+    let (workspace, cx) = window(cx, &harness.model, None);
+    open_palette("about", cx);
+    confirm_palette(cx);
+    assert!(exists("about", cx));
+    assert_eq!(shown_document(cx), Document::License);
+
+    click("about-notices", cx);
+    assert_eq!(shown_document(cx), Document::Notices);
+
+    open_palette("notices", cx);
+    confirm_palette(cx);
+    assert_eq!(about_open(&workspace, cx), 1);
+}
+
+#[gpui_kit::test]
+fn settings_opens_the_about_tab(cx: &mut TestAppContext) {
+    let harness = harness(cx, vec![]);
+    let (workspace, cx) = window(cx, &harness.model, None);
+    click("rail-settings", cx);
+    click("open-about", cx);
+    assert!(exists("about", cx));
+    assert_eq!(about_open(&workspace, cx), 1);
+}
+
+#[test]
+fn the_build_carries_the_license_and_the_dependency_notices() {
+    assert!(about_tab::LICENSE.contains("Business Source License 1.1"));
+    assert!(about_tab::LICENSE.contains("GNU Affero General Public License, Version 3.0"));
+    for dependency in ["gpui-kit ", "alacritty_terminal ", "kube "] {
+        assert!(
+            about_tab::NOTICES.contains(&format!("- {dependency}")),
+            "{dependency}is missing from the notices"
+        );
+    }
+}
+
+#[gpui_kit::test]
+fn the_about_tab_closes_from_its_button_and_a_middle_click(cx: &mut TestAppContext) {
+    let harness = harness(cx, vec![]);
+    let (workspace, cx) = window(cx, &harness.model, None);
+    let about_id = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let shell = cx.global::<SharedShellState>().0.clone();
+            shell.read(cx).about_tab().map(|tab| tab.entity_id())
+        })
+    };
+    let open_about = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| window.dispatch_action(Box::new(about_tab::OpenAbout), cx));
+        cx.run_until_parked();
+    };
+
+    open_about(cx);
+    click(&close_button(about_id(cx).expect("the About tab")), cx);
+    assert_eq!(about_open(&workspace, cx), 0);
+    assert_eq!(about_id(cx), None);
+
+    open_about(cx);
+    let options = ClickOptions::new().with_button(MouseButton::Middle);
+    cx.update(|window, cx| window.click_with_options("about-tab-title", options, cx));
+    cx.run_until_parked();
+    assert_eq!(about_open(&workspace, cx), 0);
 }

@@ -52,3 +52,4 @@ depends = [
 
 [package.metadata.packager.deb.files]
 "../../LICENSE" = "usr/share/doc/kubepulse/copyright"
+"../../assets/third-party-notices.txt" = "usr/share/doc/kubepulse/third-party-notices.txt"

@@ -27,6 +27,7 @@ use rust_i18n::t;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
+    about_tab::{AboutTab, OpenAbout},
     cluster_model::{ClusterModel, ClusterModelEvent, is_live},
     cluster_rail::{ClusterRail, request_disconnect},
     cluster_tab::ClusterTab,
@@ -137,6 +138,7 @@ impl Workspace {
         on_shortcut::<OpenSettings>(Self::open_settings, window, cx);
         on_shortcut::<OpenCommandPalette>(Self::open_command_palette, window, cx);
         on_shortcut::<OpenPortForwards>(Self::open_forwards, window, cx);
+        on_shortcut::<OpenAbout>(Self::open_about, window, cx);
         Self {
             model,
             shell,
@@ -266,6 +268,18 @@ impl Workspace {
         self.add_to_dock(panel_handle(tab), window, cx);
     }
 
+    /// Activates the About tab, opening it if needed.
+    pub fn open_about(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(tab) = self.shell.read(cx).about_tab() {
+            self.dock.update(cx, |dock, cx| {
+                dock.select_panel(tab.entity_id().into(), window, cx);
+            });
+            return;
+        }
+        let tab = cx.new(AboutTab::new);
+        self.add_to_dock(panel_handle(tab), window, cx);
+    }
+
     /// Lists what the application offers at this moment. A dialog on screen
     /// keeps the keyboard, so the palette does not open over it.
     pub fn open_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -344,6 +358,7 @@ impl Workspace {
             }
             PaletteAction::OpenSettings => self.open_settings(window, cx),
             PaletteAction::OpenForwards => self.open_forwards(window, cx),
+            PaletteAction::OpenAbout => self.open_about(window, cx),
         }
     }
 
@@ -383,10 +398,12 @@ impl Workspace {
 
     fn close_tab(&mut self, id: EntityId, window: &mut Window, cx: &mut Context<Self>) {
         let shell = self.shell.read(cx);
-        let (tab, editor, settings) = (shell.tab(id), shell.editor(id), shell.settings_tab());
+        let (tab, editor) = (shell.tab(id), shell.editor(id));
         let logs = shell.log_tab(id);
         let terminal = shell.terminal_tab(id);
+        let settings = shell.settings_tab().filter(|tab| tab.entity_id() == id);
         let forwards = shell.forwards_tab().filter(|tab| tab.entity_id() == id);
+        let about = shell.about_tab().filter(|tab| tab.entity_id() == id);
         if let Some(editor) = &editor
             && editor.read(cx).has_unapplied_changes(cx)
         {
@@ -394,19 +411,20 @@ impl Workspace {
             return;
         }
         self.dock.update(cx, |dock, cx| {
-            match (tab, editor, logs, terminal, settings) {
-                (Some(tab), ..) => dock.remove_panel(tab, window, cx),
-                (_, Some(editor), ..) => dock.remove_panel(editor, window, cx),
-                (_, _, Some(logs), ..) => dock.remove_panel(logs, window, cx),
-                (_, _, _, Some(terminal), _) => dock.remove_panel(terminal, window, cx),
-                (None, None, None, None, Some(settings)) if settings.entity_id() == id => {
-                    dock.remove_panel(settings, window, cx);
-                }
-                _ => {
-                    if let Some(forwards) = forwards {
-                        dock.remove_panel(forwards, window, cx);
-                    }
-                }
+            if let Some(tab) = tab {
+                dock.remove_panel(tab, window, cx);
+            } else if let Some(editor) = editor {
+                dock.remove_panel(editor, window, cx);
+            } else if let Some(logs) = logs {
+                dock.remove_panel(logs, window, cx);
+            } else if let Some(terminal) = terminal {
+                dock.remove_panel(terminal, window, cx);
+            } else if let Some(settings) = settings {
+                dock.remove_panel(settings, window, cx);
+            } else if let Some(forwards) = forwards {
+                dock.remove_panel(forwards, window, cx);
+            } else if let Some(about) = about {
+                dock.remove_panel(about, window, cx);
             }
         });
     }

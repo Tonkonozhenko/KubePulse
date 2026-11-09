@@ -15,8 +15,9 @@ use kubepulse_extension_api::KindRef;
 use rust_i18n::t;
 
 use crate::{
-    cluster_tab::ClusterTab, forwards::ForwardsTab, identity::ClusterKey, log_tab::LogTab,
-    manifest_tab::ManifestTab, settings_tab::SettingsTab, terminal_tab::TerminalTab,
+    about_tab::AboutTab, cluster_tab::ClusterTab, forwards::ForwardsTab, identity::ClusterKey,
+    log_tab::LogTab, manifest_tab::ManifestTab, settings_tab::SettingsTab,
+    terminal_tab::TerminalTab,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -108,6 +109,7 @@ pub struct ShellState {
     /// Kept apart from `tabs`, because the Settings tab has no cluster or kind.
     settings_tab: Option<WeakEntity<SettingsTab>>,
     forwards_tab: Option<WeakEntity<ForwardsTab>>,
+    about_tab: Option<WeakEntity<AboutTab>>,
     editors: Vec<EditorEntry>,
     log_tabs: Vec<LogEntry>,
     /// One pod can have several shells, so these are found by tab alone.
@@ -147,6 +149,14 @@ impl ShellState {
 
     pub fn set_forwards_tab(&mut self, tab: Option<WeakEntity<ForwardsTab>>) {
         self.forwards_tab = tab;
+    }
+
+    pub fn about_tab(&self) -> Option<Entity<AboutTab>> {
+        self.about_tab.as_ref().and_then(WeakEntity::upgrade)
+    }
+
+    pub fn set_about_tab(&mut self, tab: Option<WeakEntity<AboutTab>>) {
+        self.about_tab = tab;
     }
 
     pub fn add_editor(

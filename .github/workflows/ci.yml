@@ -93,3 +93,16 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check licenses
+
+  notices:
+    name: Third-party notices
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@0.9.3
+      - run: cargo about generate --locked --fail -o assets/third-party-notices.txt about.hbs
+      - name: Check the notices are up to date
+        run: git diff --exit-code assets/third-party-notices.txt

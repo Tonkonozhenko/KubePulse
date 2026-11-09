@@ -22,6 +22,7 @@ python3 scripts/check-crate-graph.py     # check the crate dependency graph
 python3 scripts/check-i18n.py            # check catalogs and find literals in views
 python3 scripts/check-i18n.py --write    # also regenerate the en-XA pseudo-locale
 cargo deny check licenses                # check dependency licenses
+cargo about generate --locked --fail -o assets/third-party-notices.txt about.hbs  # regenerate the third-party notices after dependency changes
 ```
 
 Packaging uses `cargo-packager`, pinned to the version in `.github/workflows/ci.yml`. Packages are written to `target/packager`:
