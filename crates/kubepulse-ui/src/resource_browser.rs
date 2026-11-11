@@ -6,6 +6,7 @@ use std::{
     collections::{BTreeSet, HashMap, HashSet},
     ops::Range,
     sync::Arc,
+    time::Duration,
 };
 
 use gpui_kit::{
@@ -19,6 +20,7 @@ use gpui_kit::{
         menu::{PopupMenu, PopupMenuItem},
         searchable_list::SearchableVec,
         table::{Column, ColumnSort, DataTable, TableDelegate, TableEvent, TableState},
+        tooltip::Tooltip,
     },
     prelude::FluentBuilder as _,
     *,
@@ -29,9 +31,11 @@ use kubepulse_store::{
     Cell, LabelSelector, Row, Snapshot, SortDirection, SortKey, View, ViewQuery,
 };
 
+use chrono::{DateTime, Utc};
 use rust_i18n::t;
 
 use crate::{
+    age::age,
     cluster_model::{ClusterModel, ClusterModelEvent},
     columns::{
         ComputedColumn, KindColumns, is_cronjob, is_pod, is_restartable, is_service,
@@ -60,6 +64,8 @@ const SORT_ICON_REMS: f32 = 0.75;
 const SORT_ICON_PADDING: f32 = 4.;
 /// How many of a column's longest values, by characters, a fit measures.
 const FIT_CANDIDATES: usize = 8;
+/// How often ages are redrawn, so the youngest stay correct to the second.
+const AGE_REFRESH: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ColumnRole {
@@ -88,7 +94,7 @@ impl ColumnRole {
             Self::Name => (240., 120., 480.),
             Self::Namespace => (140., 80., 280.),
             Self::Status => (130., 80., 240.),
-            Self::Timestamp => (170., 120., 240.),
+            Self::Timestamp => (90., 60., 160.),
             Self::Text => (110., 60., 320.),
         };
         Some(Widths { initial, min, cap })
@@ -306,6 +312,26 @@ impl RowsDelegate {
             .is_some_and(|column| column.status)
     }
 
+    fn is_timestamp_column(&self, col_ix: usize) -> bool {
+        self.roles.get(col_ix) == Some(&ColumnRole::Timestamp)
+    }
+
+    /// What a cell shows: a time as its age, anything else as received.
+    pub fn display_text(
+        &self,
+        row_ix: usize,
+        col_ix: usize,
+        now: DateTime<Utc>,
+        cx: &App,
+    ) -> String {
+        let text = self.cell_text(row_ix, col_ix, cx);
+        if self.is_timestamp_column(col_ix) {
+            age(&text, now).unwrap_or(text)
+        } else {
+            text
+        }
+    }
+
     /// How a status cell is colored, or `None` for any other cell.
     pub fn cell_tone(&self, row_ix: usize, col_ix: usize, cx: &App) -> Option<Tone> {
         let text = self.cell_text(row_ix, col_ix, cx);
@@ -425,8 +451,9 @@ impl RowsDelegate {
     /// these close to the widest, and measuring only these keeps a fit cheap.
     fn longest_values(&self, col_ix: usize, cx: &App) -> Vec<String> {
         let mut longest: Vec<(usize, String)> = Vec::with_capacity(FIT_CANDIDATES + 1);
+        let now = Utc::now();
         for row_ix in 0..self.rows.len() {
-            let text = self.cell_text(row_ix, col_ix, cx);
+            let text = self.display_text(row_ix, col_ix, now, cx);
             let chars = text.chars().count();
             if longest.len() == FIT_CANDIDATES && chars <= longest[FIT_CANDIDATES - 1].0 {
                 continue;
@@ -477,6 +504,12 @@ impl TableDelegate for RowsDelegate {
         cx: &mut Context<TableState<Self>>,
     ) {
         let key = self.sort_key(col_ix);
+        // A time sorts by its age, so ascending puts the youngest first.
+        let sort = match (self.is_timestamp_column(col_ix), sort) {
+            (true, ColumnSort::Ascending) => ColumnSort::Descending,
+            (true, ColumnSort::Descending) => ColumnSort::Ascending,
+            (_, sort) => sort,
+        };
         let browser = self.browser.clone();
         // This runs inside the table's update, so the query waits for it to end.
         cx.defer(move |cx| {
@@ -568,6 +601,19 @@ impl TableDelegate for RowsDelegate {
                 let text = self.cell_text(row_ix, col_ix, cx);
                 if self.is_status_column(col_ix) && !text.is_empty() {
                     status_tag(text).into_any_element()
+                } else if self.is_timestamp_column(col_ix)
+                    && let Some(age) = age(&text, Utc::now())
+                {
+                    let exact: SharedString = text.into();
+                    div()
+                        .id(SharedString::from(format!("age-{row_ix}:{col_ix}")))
+                        .w_full()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .child(age)
+                        .tooltip(move |window, cx| Tooltip::new(exact.clone()).build(window, cx))
+                        .test_support()
+                        .into_any_element()
                 } else {
                     div()
                         .w_full()
@@ -770,7 +816,20 @@ impl ResourceBrowser {
             roles,
             auto_fit: false,
         };
+        let ages = delegate.roles.contains(&ColumnRole::Timestamp);
         let table = cx.new(|cx| TableState::new(delegate, window, cx));
+        if ages {
+            let table = table.downgrade();
+            cx.spawn(async move |_, cx| {
+                loop {
+                    cx.background_executor().timer(AGE_REFRESH).await;
+                    if table.update(cx, |_, cx| cx.notify()).is_err() {
+                        return;
+                    }
+                }
+            })
+            .detach();
+        }
 
         let filter =
             cx.new(|cx| InputState::new(window, cx).placeholder(t!("browser.filter").to_string()));

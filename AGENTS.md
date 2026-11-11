@@ -98,7 +98,7 @@ These rules hold the design together:
 - **Comments:** none unless the code is non-obvious.
 - **Language:** use the latest stable Rust features.
 - **Tests:** do not write tests for obvious error checks.
-- **Text:** user-visible text in `kubepulse-ui` comes from `locales/en.json` through `t!`, and titles in `kubepulse-builtin` need an entry in its `locales/en.json`. Avoid plurals, because catalogs have no plural rules. Show data from clusters and extensions exactly as received, after a translated summary if it is an error.
+- **Text:** user-visible text in `kubepulse-ui` comes from `locales/en.json` through `t!`, and titles in `kubepulse-builtin` need an entry in its `locales/en.json`. Avoid plurals, because catalogs have no plural rules. Show data from clusters and extensions exactly as received, after a translated summary if it is an error. Table timestamps are the exception: they show as ages, with the exact value on hover, when copied, and in the detail panel.
 - **Colors:** views take colors from `cx.theme()`. The only literal colors are cluster identity colors.
 
 ## Agent flow

@@ -6,6 +6,7 @@ use std::{
     time::Duration,
 };
 
+use chrono::{SecondsFormat, TimeDelta, Utc};
 use gpui_kit::{
     AppContext as _, ElementId, Entity, Modifiers, Pixels, SharedString, TestAppContext,
     VisualTestContext, WindowOptions,
@@ -2515,6 +2516,35 @@ fn labels_conditions_and_events_have_their_sections(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn conditions_are_tags_and_only_those_with_a_reason_add_a_line(cx: &mut TestAppContext) {
+    let mut harness = detailed(cx, detailed_pod(), pod_kind());
+    let detail = harness.detail().unwrap();
+
+    let shown = harness.cx.update(|_, cx| {
+        let conditions = detail.read(cx).conditions();
+        conditions
+            .iter()
+            .map(|c| (c.label(), c.detail()))
+            .collect::<Vec<_>>()
+    });
+
+    assert_eq!(
+        shown,
+        [
+            (
+                "Ready=False".to_owned(),
+                Some("Ready: Crash — back-off".to_owned())
+            ),
+            ("DiskPressure=True".to_owned(), None),
+        ]
+    );
+    assert!(harness.exists_at(("condition", 0usize)));
+    assert!(harness.exists_at(("condition", 1usize)));
+    assert!(harness.exists_at(("condition-detail", 0usize)));
+    assert!(!harness.exists_at(("condition-detail", 1usize)));
+}
+
+#[gpui_kit::test]
 fn events_can_be_scrolled_into_view_below_a_tall_panel(cx: &mut TestAppContext) {
     let conditions: Vec<Value> = (0..40)
         .map(|index| {
@@ -2991,7 +3021,7 @@ fn widths(harness: &mut Harness<'_>) -> Vec<Pixels> {
     })
 }
 
-/// What column `col_ix` needs to show its header and every row whole.
+/// What column `col_ix` needs to show its header and every row whole, as shown.
 fn needed(harness: &mut Harness<'_>, col_ix: usize, status: bool) -> Pixels {
     let browser = harness.browser();
     harness.cx.update(|window, cx| {
@@ -3000,7 +3030,10 @@ fn needed(harness: &mut Harness<'_>, col_ix: usize, status: bool) -> Pixels {
         let rows = delegate.rows_count(cx);
         let header = header_width(&delegate.column(col_ix, cx), window, cx);
         let content = (0..rows)
-            .map(|row_ix| value_width(&delegate.cell_text(row_ix, col_ix, cx), status, window, cx))
+            .map(|row_ix| {
+                let text = delegate.display_text(row_ix, col_ix, Utc::now(), cx);
+                value_width(&text, status, window, cx)
+            })
             .fold(header, Pixels::max);
         (content + px(PADDING)).ceil()
     })
@@ -3020,7 +3053,7 @@ fn an_empty_table_starts_every_column_wide_enough_for_its_role_and_header(cx: &m
     let (mut harness, _) = sized(cx, vec![]);
 
     let widths = widths(&mut harness);
-    let initial = [240., 140., 130., 110., 110., 170.];
+    let initial = [240., 140., 130., 110., 110., 90.];
     for (col_ix, initial) in (NAME..=CREATED).zip(initial) {
         let header = needed(&mut harness, col_ix, false);
         assert!(
@@ -3046,7 +3079,7 @@ fn the_first_rows_fit_each_column_up_to_its_cap(cx: &mut TestAppContext) {
         (NAMESPACE, false, 80.),
         (STATUS, true, 80.),
         (IP, false, 60.),
-        (CREATED, false, 120.),
+        (CREATED, false, 60.),
     ] {
         let needed = needed(&mut harness, col_ix, status);
         let fitted = needed.max(px(min));
@@ -3171,4 +3204,112 @@ fn a_column_the_user_sized_keeps_its_width(cx: &mut TestAppContext) {
     wait_for_computed(&mut harness);
 
     assert_eq!(widths(&mut harness)[computed], chosen);
+}
+
+// Ages
+
+fn aged_pod(name: &str, created: &str) -> RawObject {
+    raw(
+        name,
+        Some("a"),
+        json!({
+            "metadata": {"creationTimestamp": created},
+            "status": {"phase": "Running"},
+        }),
+    )
+}
+
+fn created_ago(elapsed: TimeDelta) -> String {
+    (Utc::now() - elapsed).to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
+fn row_named(harness: &mut Harness<'_>, name: &str) -> usize {
+    let browser = harness.browser();
+    harness.cx.update(|_, cx| {
+        let rows = &browser.read(cx).snapshot().rows;
+        rows.iter().position(|row| &*row.name == name).unwrap()
+    })
+}
+
+#[gpui_kit::test]
+fn a_created_cell_shows_its_age_and_keeps_the_exact_value(cx: &mut TestAppContext) {
+    let created = created_ago(TimeDelta::days(3) + TimeDelta::hours(4) + TimeDelta::minutes(30));
+    let pods = vec![aged_pod("old", &created), aged_pod("odd", "not a time")];
+    let (mut harness, _) = sized(cx, pods);
+    harness.wait_for_rows(2);
+    let (old, odd) = (
+        row_named(&mut harness, "old"),
+        row_named(&mut harness, "odd"),
+    );
+
+    let browser = harness.browser();
+    let (shown, shown_odd, copied) = harness.cx.update(|_, cx| {
+        let table = browser.read(cx).table().read(cx);
+        let delegate = table.delegate();
+        (
+            delegate.display_text(old, CREATED, Utc::now(), cx),
+            delegate.display_text(odd, CREATED, Utc::now(), cx),
+            table.dump_range(old..old + 1, cx).1[0][CREATED].clone(),
+        )
+    });
+
+    assert_eq!(shown, "3d4h");
+    assert_eq!(copied, created);
+    assert_eq!(shown_odd, "not a time");
+    assert!(harness.exists(format!("age-{old}:{CREATED}")));
+    assert!(!harness.exists(format!("age-{odd}:{CREATED}")));
+}
+
+#[gpui_kit::test]
+fn ages_are_redrawn_every_second_with_no_change_from_the_cluster(cx: &mut TestAppContext) {
+    let pods = vec![aged_pod("young", &created_ago(TimeDelta::seconds(5)))];
+    let (mut harness, _) = sized(cx, pods);
+    harness.wait_for_rows(1);
+    let browser = harness.browser();
+    let table = harness.cx.update(|_, cx| browser.read(cx).table().clone());
+    let redraws = Arc::new(Mutex::new(0));
+    let counted = redraws.clone();
+    let _observing = harness
+        .cx
+        .update(|_, cx| cx.observe(&table, move |_, _| *counted.lock().unwrap() += 1));
+
+    for _ in 0..60 {
+        harness.cx.executor().advance_clock(Duration::from_secs(1));
+        harness.cx.run_until_parked();
+    }
+
+    assert!(
+        *redraws.lock().unwrap() >= 60,
+        "{}",
+        redraws.lock().unwrap()
+    );
+}
+
+#[gpui_kit::test]
+fn sorting_by_created_ascending_puts_the_youngest_first(cx: &mut TestAppContext) {
+    let pods = vec![
+        aged_pod("older", &created_ago(TimeDelta::days(2))),
+        aged_pod("newer", &created_ago(TimeDelta::hours(1))),
+        aged_pod("middle", &created_ago(TimeDelta::hours(5))),
+    ];
+    let (mut harness, _) = sized(cx, pods);
+    harness.wait_for_rows(3);
+
+    // The first click sorts descending, the second ascending.
+    for _ in 0..2 {
+        harness.cx.update(|window, cx| {
+            window.render_frame(cx);
+            window.click(("icon-sort", CREATED), cx);
+        });
+        harness.cx.run_until_parked();
+    }
+
+    let browser = harness.browser();
+    wait_until(harness.cx, "the youngest first", |cx| {
+        cx.update(|_, cx| {
+            let rows = &browser.read(cx).snapshot().rows;
+            let names: Vec<&str> = rows.iter().map(|row| &*row.name).collect();
+            names == ["newer", "middle", "older"]
+        })
+    });
 }

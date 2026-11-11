@@ -1,4 +1,9 @@
 {
+  "age.days": "[%{n}d~]",
+  "age.hours": "[%{n}h~]",
+  "age.minutes": "[%{n}m~]",
+  "age.seconds": "[%{n}š~]",
+  "age.years": "[%{n}ý~]",
   "browser.access_denied": "[Àççéšš déñîéd: %{reason}~~~~~~~]",
   "browser.all_namespaces": "[Àll ñàméšpàçéš~~~~]",
   "browser.filter": "[Fîlţér~]",
@@ -31,6 +36,8 @@
   "detail.binary_value": "[(bîñàrý vàlûé)~~~~]",
   "detail.cluster": "[Çlûšţér: %{name}~~~~]",
   "detail.cluster_wide": "[(çlûšţér-wîdé)~~~~]",
+  "detail.condition_detail": "[%{kind}: %{detail}~~~~~]",
+  "detail.condition_reason_message": "[%{reason} — %{message}~~~~~~]",
   "detail.conditions": "[Çöñdîţîöñš~~~]",
   "detail.delete": "[Déléţé~]",
   "detail.delete_failed": "[Çöûld ñöţ déléţé: %{error}~~~~~~~]",

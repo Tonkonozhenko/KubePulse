@@ -5,6 +5,7 @@
 rust_i18n::i18n!("locales", fallback = "en");
 
 pub mod about_tab;
+pub mod age;
 pub mod app;
 pub mod cluster_model;
 pub mod cluster_rail;

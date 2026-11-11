@@ -18,7 +18,7 @@ Before any rows arrive, every data column SHALL start at a width suited to its r
 #### Scenario: Timestamp column fits a full timestamp
 
 - **WHEN** a table shows the Created column
-- **THEN** its initial width shows a full timestamp such as `2026-11-10T12:34:56Z` without cutting it off
+- **THEN** its initial width shows a two-unit age such as `23h59m` without cutting it off, and the full timestamp as received shows on hover
 
 ### Requirement: Columns fit their content when the table first fills
 

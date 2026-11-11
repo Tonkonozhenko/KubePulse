@@ -14,7 +14,9 @@ use gpui_kit::{
         description_list::DescriptionList,
         scroll::{Scrollbar, ScrollbarMode},
         tag::Tag,
+        tooltip::Tooltip,
     },
+    prelude::FluentBuilder as _,
     *,
 };
 use kubepulse_cluster::{EventRecord, ObjectTarget, ResourceKind};
@@ -69,6 +71,29 @@ pub struct Condition {
     pub reason: String,
     pub message: String,
     pub tone: Tone,
+}
+
+impl Condition {
+    /// The tag's text, in the same `key=value` form as labels.
+    pub fn label(&self) -> String {
+        format!("{}={}", self.kind, self.status)
+    }
+
+    /// Its reason and message, if it has either.
+    pub fn detail(&self) -> Option<String> {
+        let detail = match (self.reason.is_empty(), self.message.is_empty()) {
+            (true, true) => return None,
+            (false, true) => self.reason.clone(),
+            (true, false) => self.message.clone(),
+            (false, false) => t!(
+                "detail.condition_reason_message",
+                reason = self.reason,
+                message = self.message
+            )
+            .to_string(),
+        };
+        Some(t!("detail.condition_detail", kind = self.kind, detail = detail).to_string())
+    }
 }
 
 fn conditions(object: &Value) -> Vec<Condition> {
@@ -577,29 +602,39 @@ impl DetailView {
         if conditions.is_empty() {
             return None;
         }
-        let rows = conditions.into_iter().map(move |condition| {
+        let tags = conditions.iter().enumerate().map(|(index, condition)| {
+            let tooltip = condition.detail();
             div()
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .items_center()
-                        .gap_2()
-                        .child(tone_tag(condition.tone).child(condition.kind))
-                        .child(condition.status)
-                        .child(condition.reason),
-                )
-                .child(div().text_xs().text_color(muted).child(condition.message))
+                .id(("condition", index))
+                .child(tone_tag(condition.tone).child(condition.label()))
+                .when_some(tooltip, |this, tooltip| {
+                    let tooltip = SharedString::from(tooltip);
+                    this.tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+                })
+                .test_support()
         });
+        let details = conditions
+            .iter()
+            .enumerate()
+            .filter_map(|(index, condition)| {
+                let detail = condition.detail()?;
+                Some(
+                    div()
+                        .id(("condition-detail", index))
+                        .text_xs()
+                        .text_color(muted)
+                        .child(detail)
+                        .test_support(),
+                )
+            });
         Some(
             section(
                 "detail-conditions",
                 t!("detail.conditions").to_string(),
                 muted,
             )
-            .children(rows)
+            .child(div().flex().flex_wrap().gap_1().children(tags))
+            .children(details)
             .test_support(),
         )
     }

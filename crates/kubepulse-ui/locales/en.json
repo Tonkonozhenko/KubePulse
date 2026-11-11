@@ -1,4 +1,9 @@
 {
+  "age.days": "%{n}d",
+  "age.hours": "%{n}h",
+  "age.minutes": "%{n}m",
+  "age.seconds": "%{n}s",
+  "age.years": "%{n}y",
   "browser.access_denied": "Access denied: %{reason}",
   "browser.all_namespaces": "All namespaces",
   "browser.filter": "Filter",
@@ -31,6 +36,8 @@
   "detail.binary_value": "(binary value)",
   "detail.cluster": "Cluster: %{name}",
   "detail.cluster_wide": "(cluster-wide)",
+  "detail.condition_detail": "%{kind}: %{detail}",
+  "detail.condition_reason_message": "%{reason} — %{message}",
   "detail.conditions": "Conditions",
   "detail.delete": "Delete",
   "detail.delete_failed": "Could not delete: %{error}",
