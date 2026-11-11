@@ -27,6 +27,7 @@ use kubepulse_ui::{
     services::SharedServices,
     settings_tab,
     shell_state::{SharedShellState, ShellState},
+    status_bar::Summary,
     workspace::Workspace,
 };
 use support::{FakeServices, ScriptedSource, kind};
@@ -1823,4 +1824,102 @@ fn the_about_tab_closes_from_its_button_and_a_middle_click(cx: &mut TestAppConte
     cx.update(|window, cx| window.click_with_options("about-tab-title", options, cx));
     cx.run_until_parked();
     assert_eq!(about_open(&workspace, cx), 0);
+}
+
+// Status bar
+
+fn summary(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) -> Option<Summary> {
+    cx.update(|_, cx| workspace.read(cx).status_bar().read(cx).summary(cx))
+}
+
+fn shown(id: &'static str, cx: &mut VisualTestContext) -> bool {
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        window.try_find(id).is_some()
+    })
+}
+
+#[gpui_kit::test]
+fn the_status_bar_follows_the_selected_cluster(cx: &mut TestAppContext) {
+    let harness = harness(
+        cx,
+        vec![
+            status("a", ConnectionState::Connected, &[]),
+            status("b", ConnectionState::Disconnected, &[]),
+        ],
+    );
+    let (workspace, cx) = window(cx, &harness.model, None);
+    assert_eq!(summary(&workspace, cx), None);
+    assert!(shown("status-bar", cx));
+    assert!(!shown("status-cluster", cx));
+
+    select(&harness, "a", cx);
+    let a = summary(&workspace, cx).unwrap();
+    assert_eq!(a.identity.name, "a");
+    assert_eq!(a.state_label(), "Connected");
+    assert!(shown("status-cluster", cx));
+    assert!(shown("status-state", cx));
+
+    select(&harness, "b", cx);
+    let b = summary(&workspace, cx).unwrap();
+    assert_eq!(b.identity.name, "b");
+    assert_eq!(b.state_label(), "Disconnected");
+}
+
+#[gpui_kit::test]
+fn the_status_bar_explains_a_broken_connection(cx: &mut TestAppContext) {
+    let failed = ConnectionState::Failed {
+        reason: "helper exited with status 1".into(),
+    };
+    let degraded = ConnectionState::Degraded {
+        reason: "timed out".into(),
+    };
+    let harness = harness(
+        cx,
+        vec![
+            status("failed", failed, &[]),
+            status("degraded", degraded, &[]),
+            status("fine", ConnectionState::Connected, &[]),
+        ],
+    );
+    let (workspace, cx) = window(cx, &harness.model, None);
+
+    select(&harness, "failed", cx);
+    let failed = summary(&workspace, cx).unwrap();
+    assert_eq!(failed.reason(), Some("helper exited with status 1"));
+    assert!(shown("status-reason", cx));
+    assert!(!shown("status-stale", cx));
+
+    select(&harness, "degraded", cx);
+    assert_eq!(summary(&workspace, cx).unwrap().reason(), Some("timed out"));
+    assert!(shown("status-reason", cx));
+    assert!(shown("status-stale", cx));
+
+    select(&harness, "fine", cx);
+    assert_eq!(summary(&workspace, cx).unwrap().reason(), None);
+    assert!(!shown("status-reason", cx));
+}
+
+#[gpui_kit::test]
+fn the_status_bar_counts_running_work(cx: &mut TestAppContext) {
+    let harness = harness(
+        cx,
+        vec![
+            status(
+                "busy",
+                ConnectionState::Connected,
+                &["shell in pod web", "forward to pod web"],
+            ),
+            status("idle", ConnectionState::Connected, &[]),
+        ],
+    );
+    let (workspace, cx) = window(cx, &harness.model, None);
+
+    select(&harness, "busy", cx);
+    assert_eq!(summary(&workspace, cx).unwrap().work.len(), 2);
+    assert!(shown("status-work", cx));
+
+    select(&harness, "idle", cx);
+    assert!(summary(&workspace, cx).unwrap().work.is_empty());
+    assert!(!shown("status-work", cx));
 }

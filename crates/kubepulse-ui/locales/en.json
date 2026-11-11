@@ -159,6 +159,8 @@
   "state.degraded": "Degraded",
   "state.disconnected": "Disconnected",
   "state.failed": "Failed",
+  "status.forwards": "Forwards: %{count}",
+  "status.work": "Running: %{count}",
   "tab.close": "Close tab",
   "tab.server_changed": "This context is missing or now points to another server.",
   "tab.stale": "Showing last known data.",

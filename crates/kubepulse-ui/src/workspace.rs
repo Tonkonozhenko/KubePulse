@@ -44,6 +44,7 @@ use crate::{
     services::SharedServices,
     settings_tab::{OpenSettings, SettingsTab},
     shell_state::{Placement, SharedShellState, ShellEvent, ShellState, place_kind},
+    status_bar::StatusBar,
     terminal_tab::{OpenLocalTerminal, TerminalTab},
     theme::{self, SharedThemes, ThemeCatalog},
 };
@@ -58,6 +59,7 @@ pub struct Workspace {
     themes: Entity<ThemeCatalog>,
     rail: Entity<ClusterRail>,
     sidebar: Entity<KindSidebar>,
+    status_bar: Entity<StatusBar>,
     dock: Entity<DockArea>,
     paths: Option<ConfigPaths>,
     _subscriptions: Vec<Subscription>,
@@ -79,6 +81,7 @@ impl Workspace {
         // Forwards live as long as the window, whatever tabs come and go.
         let forwards = cx.new(|_| ForwardRegistry::default());
         cx.set_global(SharedForwards(forwards));
+        let status_bar = cx.new(|cx| StatusBar::new(model.clone(), cx));
 
         let subscriptions = vec![
             cx.subscribe(&dock, |_, _, event: &DockEvent, cx| {
@@ -153,10 +156,15 @@ impl Workspace {
             themes,
             rail,
             sidebar,
+            status_bar,
             dock,
             paths,
             _subscriptions: subscriptions,
         }
+    }
+
+    pub fn status_bar(&self) -> &Entity<StatusBar> {
+        &self.status_bar
     }
 
     pub fn dock(&self) -> &Entity<DockArea> {
@@ -748,10 +756,11 @@ fn save_in_background(path: PathBuf, json: serde_json::Result<String>, cx: &Asyn
 impl Render for Workspace {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let empty = self.dock.read(cx).is_empty(DockPlacement::Center, cx);
-        div()
-            .id("workspace")
-            .size_full()
+        let columns = div()
             .flex()
+            .flex_1()
+            .min_h_0()
+            .w_full()
             .child(self.rail.clone())
             .child(self.sidebar.clone())
             .child(
@@ -776,7 +785,14 @@ impl Render for Workspace {
                                 .test_support(),
                         )
                     }),
-            )
+            );
+        div()
+            .id("workspace")
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(columns)
+            .child(self.status_bar.clone())
     }
 }
 

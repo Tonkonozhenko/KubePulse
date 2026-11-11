@@ -30,24 +30,40 @@ pub fn activate_tab(
     shell.update(cx, |shell, cx| shell.activate(id, key, cx));
 }
 
+/// Which connection notes a tab shows.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Notes {
+    /// The state, why, and the way to reconnect.
+    All,
+    /// Only what the user must act on in the tab, because the status bar
+    /// shows the state and why.
+    Actions,
+}
+
 /// The cluster's state, why it is in that state, and the way to reconnect.
 pub fn connection_notes(
     key: &ClusterKey,
     model: &Entity<ClusterModel>,
+    shown: Notes,
     cx: &App,
 ) -> Vec<AnyElement> {
     let cluster = model.read(cx);
     let state = cluster.connection(&key.context);
-    let state_row = div()
-        .id("tab-state")
-        .flex()
-        .items_center()
-        .gap_1()
-        .text_color(cx.theme().muted_foreground)
-        .child(state_mark(&state, cx))
-        .child(state_label(&state))
-        .into_any_element();
-    let mut notes = vec![state_row];
+    let all = shown == Notes::All;
+    let mut notes = Vec::new();
+    if all {
+        notes.push(
+            div()
+                .id("tab-state")
+                .flex()
+                .items_center()
+                .gap_1()
+                .text_color(cx.theme().muted_foreground)
+                .child(state_mark(&state, cx))
+                .child(state_label(&state))
+                .into_any_element(),
+        );
+    }
     if !cluster.same_server(key) {
         notes.push(
             div()
@@ -58,7 +74,8 @@ pub fn connection_notes(
         );
         return notes;
     }
-    if let ConnectionState::Failed { reason } | ConnectionState::Degraded { reason } = &state {
+    if all && let ConnectionState::Failed { reason } | ConnectionState::Degraded { reason } = &state
+    {
         notes.push(
             div()
                 .id("tab-reason")
@@ -66,7 +83,7 @@ pub fn connection_notes(
                 .into_any_element(),
         );
     }
-    if matches!(state, ConnectionState::Degraded { .. }) {
+    if all && matches!(state, ConnectionState::Degraded { .. }) {
         notes.push(
             div()
                 .id("tab-stale")

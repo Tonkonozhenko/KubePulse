@@ -159,6 +159,8 @@
   "state.degraded": "[Dégràdéd~~]",
   "state.disconnected": "[Dîšçöññéçţéd~~~]",
   "state.failed": "[Fàîléd~]",
+  "status.forwards": "[Förwàrdš: %{count}~~~~~]",
+  "status.work": "[Rûññîñg: %{count}~~~~~]",
   "tab.close": "[Çlöšé ţàb~~]",
   "tab.server_changed": "[Ţhîš çöñţéxţ îš mîššîñg ör ñöw pöîñţš ţö àñöţhér šérvér.~~~~~~~~~~~~~~~~]",
   "tab.stale": "[Šhöwîñg làšţ kñöwñ dàţà.~~~~~~~]",

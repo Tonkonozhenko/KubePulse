@@ -52,9 +52,9 @@ const PENDING_CELL: &str = "…";
 const SELECT_COLUMN: usize = 0;
 const ACTIONS_COLUMN: usize = 1;
 const SELECT_WIDTH: f32 = 40.;
-const ACTION_WIDTH: f32 = 28.;
-/// The padding around the buttons of the actions column.
-const ACTIONS_PADDING: f32 = 24.;
+/// The actions column's xsmall icon buttons, and the gap between them.
+const ACTION_BUTTON_REMS: f32 = 1.25;
+const ACTION_GAP_REMS: f32 = 0.25;
 
 /// The table's default size draws text at `text_sm`, 8 px from each side.
 const CELL_TEXT_REMS: f32 = 0.875;
@@ -239,6 +239,14 @@ fn control_column(key: &'static str, width: f32) -> Column {
         .movable(false)
         .resizable(false)
         .selectable(false)
+}
+
+/// Exactly the buttons of `actions` actions, the gaps between them, and the
+/// cell padding.
+fn actions_width(actions: usize, rem: Pixels) -> f32 {
+    let buttons = actions as f32 * ACTION_BUTTON_REMS;
+    let gaps = actions.saturating_sub(1) as f32 * ACTION_GAP_REMS;
+    (f32::from(rem) * (buttons + gaps) + 2. * CELL_PADDING).ceil()
 }
 
 fn display_only_checkbox(id: impl Into<ElementId>, checked: bool) -> Checkbox {
@@ -770,7 +778,7 @@ impl ResourceBrowser {
         cx: &mut Context<Self>,
     ) -> Self {
         let actions = row_actions(&kind);
-        let actions_width = ACTIONS_PADDING + ACTION_WIDTH * actions.len() as f32;
+        let actions_width = actions_width(actions.len(), window.rem_size());
         let mut table_columns = vec![
             control_column("select", SELECT_WIDTH),
             control_column("actions", actions_width),

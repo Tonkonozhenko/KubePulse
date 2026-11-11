@@ -32,7 +32,7 @@ use crate::{
     identity::ClusterKey,
     services::{ClusterServices, Reply, SharedServices},
     shell_state::{SharedShellState, ShellState, close_button, close_on_middle_click},
-    tab_connection::{activate_tab, connection_notes},
+    tab_connection::{Notes, activate_tab, connection_notes},
 };
 
 pub const PANEL_NAME: &str = "ManifestTab";
@@ -898,7 +898,7 @@ impl Render for ManifestTab {
             .p_2()
             .child(div().h_1().w_full().flex_none().bg(rgb(identity.color)))
             .child(self.render_target(cx))
-            .children(connection_notes(&self.key, &self.model, cx))
+            .children(connection_notes(&self.key, &self.model, Notes::All, cx))
             .children(self.read_only.clone().map(|reason| {
                 div()
                     .id("manifest-read-only")

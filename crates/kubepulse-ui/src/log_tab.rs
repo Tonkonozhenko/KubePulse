@@ -31,7 +31,7 @@ use crate::{
     log_selection::{self, Geometry, LineText, Scroll, SelectionArea, selected_keys},
     services::{ClusterServices, SharedServices},
     shell_state::{SharedShellState, ShellState, close_button, close_on_middle_click},
-    tab_connection::{activate_tab, connection_notes},
+    tab_connection::{Notes, activate_tab, connection_notes},
 };
 
 pub const PANEL_NAME: &str = "LogTab";
@@ -1129,7 +1129,7 @@ impl Render for LogTab {
                     .child(target.to_string())
                     .test_support(),
             )
-            .children(connection_notes(&self.key, &self.model, cx))
+            .children(connection_notes(&self.key, &self.model, Notes::All, cx))
             .children(failure.map(|reason| {
                 div()
                     .id("log-load-error")

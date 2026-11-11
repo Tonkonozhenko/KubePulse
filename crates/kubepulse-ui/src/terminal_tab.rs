@@ -27,7 +27,7 @@ use crate::{
     identity::ClusterKey,
     services::{ClusterServices, SharedServices},
     shell_state::{SharedShellState, ShellState, close_button, close_on_middle_click},
-    tab_connection::{activate_tab, connection_notes},
+    tab_connection::{Notes, activate_tab, connection_notes},
     terminal::{
         CursorMark, Emulator, Frame, MouseAction, Palette, key_bytes, mouse_report, paste_bytes,
         wheel_keys,
@@ -1018,7 +1018,7 @@ impl TerminalTab {
                     .child(target.to_string())
                     .test_support(),
             )
-            .children(connection_notes(key, model, cx))
+            .children(connection_notes(key, model, Notes::All, cx))
             .children(failure.map(|reason| {
                 div()
                     .id("terminal-load-error")

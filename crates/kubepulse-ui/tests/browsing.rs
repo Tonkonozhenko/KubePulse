@@ -2938,6 +2938,24 @@ fn a_failed_forward_can_be_restarted_against_another_pod(cx: &mut TestAppContext
 }
 
 #[gpui_kit::test]
+fn the_status_bar_counts_forwards_and_opens_their_list(cx: &mut TestAppContext) {
+    let (mut harness, _) = forwardable(cx);
+    harness.start_pod_forward();
+    harness.show(&pod_kind());
+    assert!(!harness.exists_at(("forward-ports", 0usize)));
+
+    let workspace = harness.workspace.clone();
+    let forwards = harness.cx.update(|_, cx| {
+        let bar = workspace.read(cx).status_bar().read(cx);
+        bar.summary(cx).unwrap().forwards
+    });
+    assert_eq!(forwards, 1);
+
+    harness.click("status-forwards".into());
+    assert!(harness.exists_at(("forward-ports", 0usize)));
+}
+
+#[gpui_kit::test]
 fn the_rail_opens_the_forward_list(cx: &mut TestAppContext) {
     let (mut harness, _) = forwardable(cx);
     harness.click("rail-forwards".into());
@@ -3092,9 +3110,11 @@ fn the_first_rows_fit_each_column_up_to_its_cap(cx: &mut TestAppContext) {
     // Wider than their caps, so they stop there.
     assert_eq!(widths[NAME], px(480.));
     assert_eq!(widths[NODE], px(320.));
-    // The checkbox and the five pod actions keep their widths.
+    // The checkbox keeps its width, and the actions column holds five 1.25 rem
+    // buttons, four 0.25 rem gaps, and 8 px of padding on each side.
     assert_eq!(widths[0], px(40.));
-    assert_eq!(widths[1], px(24. + 28. * 5.));
+    let rem = harness.cx.update(|window, _| f32::from(window.rem_size()));
+    assert_eq!(widths[1], px((rem * (5. * 1.25 + 4. * 0.25) + 16.).ceil()));
 }
 
 #[gpui_kit::test]
@@ -3312,4 +3332,52 @@ fn sorting_by_created_ascending_puts_the_youngest_first(cx: &mut TestAppContext)
             names == ["newer", "middle", "older"]
         })
     });
+}
+
+#[gpui_kit::test]
+fn the_actions_column_ends_just_after_its_last_button(cx: &mut TestAppContext) {
+    let (mut harness, _) = sized(cx, sized_pods());
+    harness.wait_for_rows(2);
+
+    let (column, delete) = harness.cx.update(|window, cx| {
+        window.render_frame(cx);
+        let column = window.find(("col-header", 1usize)).bounds();
+        let delete = window.find(("row-delete", 0usize)).bounds();
+        (column, delete)
+    });
+
+    let spare = column.right() - delete.right();
+    assert!(
+        spare >= px(0.) && spare <= px(PADDING / 2. + 1.),
+        "{spare:?} to spare after the last button"
+    );
+}
+
+// Status bar
+
+#[gpui_kit::test]
+fn a_connected_list_view_leaves_its_state_to_the_status_bar(cx: &mut TestAppContext) {
+    let (mut harness, _) = sized(cx, sized_pods());
+    harness.wait_for_rows(2);
+
+    assert!(!harness.exists("tab-state".into()));
+    assert!(!harness.exists("tab-connect".into()));
+    assert!(harness.exists("status-state".into()));
+}
+
+#[gpui_kit::test]
+fn a_disconnected_list_view_still_offers_to_connect(cx: &mut TestAppContext) {
+    let (mut harness, _) = sized(cx, sized_pods());
+    harness.wait_for_rows(2);
+
+    let mut status = connected(CONTEXT, vec![pod_kind()]);
+    status.state = ConnectionState::Disconnected;
+    harness.state.send_replace(state(status));
+    let model = harness.model.clone();
+    wait_until(harness.cx, "the disconnection", |cx| {
+        cx.update(|_, cx| model.read(cx).connection(CONTEXT) == ConnectionState::Disconnected)
+    });
+
+    assert!(harness.exists("tab-connect".into()));
+    assert!(!harness.exists("tab-state".into()));
 }

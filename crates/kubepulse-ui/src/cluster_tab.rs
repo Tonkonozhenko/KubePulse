@@ -28,7 +28,7 @@ use crate::{
     resource_browser::{BrowserEvent, ResourceBrowser},
     services::{ClusterServices, SharedServices},
     shell_state::{SharedShellState, ShellState, TabSummary, close_button, close_on_middle_click},
-    tab_connection::{activate_tab, connection_notes},
+    tab_connection::{Notes, activate_tab, connection_notes},
 };
 
 pub const PANEL_NAME: &str = "ClusterTab";
@@ -391,8 +391,7 @@ impl Render for ClusterTab {
             .gap_2()
             .p_2()
             .child(div().h_1().w_full().flex_none().bg(rgb(identity.color)))
-            .child(identity.name)
-            .children(connection_notes(&self.key, &self.model, cx))
+            .children(connection_notes(&self.key, &self.model, Notes::Actions, cx))
             .when(same_server && !connect, |this| {
                 this.child(
                     div()
