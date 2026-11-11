@@ -45,6 +45,17 @@ use crate::{
 
 const PENDING_CELL: &str = "…";
 
+/// Minimum width for a status column (fits tags like "CrashLoopBackOff" + padding).
+const STATUS_COLUMN_MIN: f32 = 90.;
+/// Minimum width for timestamp columns.
+#[allow(dead_code)]
+const TIMESTAMP_COLUMN_MIN: f32 = 70.;
+/// Minimum width for numeric-value columns.
+#[allow(dead_code)]
+const NUMERIC_COLUMN_MIN: f32 = 50.;
+/// Minimum width for generic text/data columns.
+const GENERIC_COLUMN_MIN: f32 = 40.;
+
 const SELECT_COLUMN: usize = 0;
 const ACTIONS_COLUMN: usize = 1;
 const SELECT_WIDTH: f32 = 40.;
@@ -129,6 +140,18 @@ fn control_column(key: &'static str, width: f32) -> Column {
         .movable(false)
         .resizable(false)
         .selectable(false)
+}
+
+/// Returns the sum of minimum widths for all declared data columns.
+/// Status columns get a larger floor because status tags are long phrases.
+pub fn declared_columns_min_width(columns: &KindColumns) -> f32 {
+    columns.declared.iter().fold(0., |sum, col| {
+        sum + if col.status {
+            STATUS_COLUMN_MIN
+        } else {
+            GENERIC_COLUMN_MIN
+        }
+    })
 }
 
 fn display_only_checkbox(id: impl Into<ElementId>, checked: bool) -> Checkbox {
@@ -562,15 +585,21 @@ impl ResourceBrowser {
                 .sortable(),
         ];
         if kind.namespaced {
-            table_columns
-                .push(Column::new("namespace", t!("column.namespace").to_string()).sortable());
+            table_columns.push(Column::new("namespace", t!("column.namespace").to_string())
+                .width(px(GENERIC_COLUMN_MIN))
+                .sortable());
         }
         for column in &columns.declared {
-            table_columns
-                .push(Column::new(column.spec.id.to_string(), column.title.to_string()).sortable());
+            let col_width = if column.status { STATUS_COLUMN_MIN } else { GENERIC_COLUMN_MIN };
+            table_columns.push(
+                Column::new(column.spec.id.to_string(), column.title.to_string())
+                    .width(px(col_width))
+                    .sortable(),
+            );
         }
         for column in &columns.computed {
-            table_columns.push(Column::new(column.id.clone(), column.title.clone()));
+            table_columns
+                .push(Column::new(column.id.clone(), column.title.clone()).width(px(GENERIC_COLUMN_MIN)));
         }
         let delegate = RowsDelegate {
             rows: Vec::new(),
@@ -1184,5 +1213,58 @@ impl Render for ResourceBrowser {
                     }))
                     .child(DataTable::new(&self.table)),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::columns;
+    use kubepulse_store::ColumnSpec;
+
+    use super::{declared_columns_min_width, GENERIC_COLUMN_MIN, KindColumns, STATUS_COLUMN_MIN};
+
+    #[test]
+    fn empty_kind_columns_returns_zero() {
+        let columns = KindColumns::default();
+        assert!(declared_columns_min_width(&columns) < f32::EPSILON);
+    }
+
+    #[test]
+    fn status_column_gets_larger_min_width() {
+        let mut columns = KindColumns::default();
+        columns.declared.push(columns::ColumnDef {
+            title: "Status".into(),
+            spec: ColumnSpec::first_of("status", &[".status.phase"]).unwrap(),
+            status: true,
+        });
+        assert!((declared_columns_min_width(&columns) - STATUS_COLUMN_MIN).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn non_status_column_gets_generic_min_width() {
+        let mut columns = KindColumns::default();
+        columns.declared.push(columns::ColumnDef {
+            title: "Created".into(),
+            spec: ColumnSpec::first_of("created", &[".metadata.creationTimestamp"]).unwrap(),
+            status: false,
+        });
+        assert!((declared_columns_min_width(&columns) - GENERIC_COLUMN_MIN).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn mixed_columns_sum_correctly() {
+        let mut columns = KindColumns::default();
+        columns.declared.push(columns::ColumnDef {
+            title: "Status".into(),
+            spec: ColumnSpec::first_of("status", &[".status.phase"]).unwrap(),
+            status: true,
+        });
+        columns.declared.push(columns::ColumnDef {
+            title: "Created".into(),
+            spec: ColumnSpec::first_of("created", &[".metadata.creationTimestamp"]).unwrap(),
+            status: false,
+        });
+        let expected = STATUS_COLUMN_MIN + GENERIC_COLUMN_MIN;
+        assert!((declared_columns_min_width(&columns) - expected).abs() < f32::EPSILON);
     }
 }
