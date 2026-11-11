@@ -40,21 +40,10 @@ use crate::{
     identity::ClusterKey,
     object_dialog::Operation,
     services::ClusterServices,
-    status::{Tone, status_tag, status_tone},
+    status::{TAG_BORDER, TAG_PADDING_REMS, TAG_TEXT_REMS, Tone, status_tag, status_tone},
 };
 
 const PENDING_CELL: &str = "…";
-
-/// Minimum width for a status column (fits tags like "CrashLoopBackOff" + padding).
-const STATUS_COLUMN_MIN: f32 = 90.;
-/// Minimum width for timestamp columns.
-#[allow(dead_code)]
-const TIMESTAMP_COLUMN_MIN: f32 = 70.;
-/// Minimum width for numeric-value columns.
-#[allow(dead_code)]
-const NUMERIC_COLUMN_MIN: f32 = 50.;
-/// Minimum width for generic text/data columns.
-const GENERIC_COLUMN_MIN: f32 = 40.;
 
 const SELECT_COLUMN: usize = 0;
 const ACTIONS_COLUMN: usize = 1;
@@ -62,6 +51,110 @@ const SELECT_WIDTH: f32 = 40.;
 const ACTION_WIDTH: f32 = 28.;
 /// The padding around the buttons of the actions column.
 const ACTIONS_PADDING: f32 = 24.;
+
+/// The table's default size draws text at `text_sm`, 8 px from each side.
+const CELL_TEXT_REMS: f32 = 0.875;
+const CELL_PADDING: f32 = 8.;
+/// The table's sort icon in a sortable header, with 2 px on each side.
+const SORT_ICON_REMS: f32 = 0.75;
+const SORT_ICON_PADDING: f32 = 4.;
+/// How many of a column's longest values, by characters, a fit measures.
+const FIT_CANDIDATES: usize = 8;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColumnRole {
+    /// The checkbox and actions columns, which never change width.
+    Control,
+    Name,
+    Namespace,
+    Status,
+    Timestamp,
+    Text,
+}
+
+/// A column's starting width, the narrowest it gets, and the widest an
+/// automatic fit makes it.
+#[derive(Clone, Copy, Debug)]
+struct Widths {
+    initial: f32,
+    min: f32,
+    cap: f32,
+}
+
+impl ColumnRole {
+    fn widths(self) -> Option<Widths> {
+        let (initial, min, cap) = match self {
+            Self::Control => return None,
+            Self::Name => (240., 120., 480.),
+            Self::Namespace => (140., 80., 280.),
+            Self::Status => (130., 80., 240.),
+            Self::Timestamp => (170., 120., 240.),
+            Self::Text => (110., 60., 320.),
+        };
+        Some(Widths { initial, min, cap })
+    }
+}
+
+/// The role of each table column, in table order.
+pub fn column_roles(namespaced: bool, columns: &KindColumns) -> Vec<ColumnRole> {
+    let mut roles = vec![ColumnRole::Control, ColumnRole::Control, ColumnRole::Name];
+    if namespaced {
+        roles.push(ColumnRole::Namespace);
+    }
+    roles.extend(columns.declared.iter().map(|column| {
+        if column.status {
+            ColumnRole::Status
+        } else if column.timestamp {
+            ColumnRole::Timestamp
+        } else {
+            ColumnRole::Text
+        }
+    }));
+    roles.extend(columns.computed.iter().map(|_| ColumnRole::Text));
+    roles
+}
+
+/// How wide `text` is drawn in the theme's font at `size` rems.
+pub fn text_width(text: &str, size: f32, window: &Window, cx: &App) -> Pixels {
+    let run = TextRun {
+        len: text.len(),
+        font: font(cx.theme().font_family.clone()),
+        color: Hsla::default(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    window
+        .text_system()
+        .shape_line(
+            SharedString::from(text.to_owned()),
+            window.rem_size() * size,
+            &[run],
+            None,
+        )
+        .width
+}
+
+/// A header's name, and the sort icon of a sortable column.
+pub fn header_width(column: &Column, window: &Window, cx: &App) -> Pixels {
+    let name = text_width(&column.name, CELL_TEXT_REMS, window, cx);
+    if column.sort.is_some() {
+        name + window.rem_size() * SORT_ICON_REMS + px(SORT_ICON_PADDING)
+    } else {
+        name
+    }
+}
+
+/// A cell's content, drawn as plain text or as a status tag.
+pub fn value_width(text: &str, status: bool, window: &Window, cx: &App) -> Pixels {
+    if status {
+        text_width(text, TAG_TEXT_REMS, window, cx)
+            + window.rem_size() * (2. * TAG_PADDING_REMS)
+            + px(2. * TAG_BORDER)
+    } else {
+        text_width(text, CELL_TEXT_REMS, window, cx)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RowAction {
@@ -142,18 +235,6 @@ fn control_column(key: &'static str, width: f32) -> Column {
         .selectable(false)
 }
 
-/// Returns the sum of minimum widths for all declared data columns.
-/// Status columns get a larger floor because status tags are long phrases.
-pub fn declared_columns_min_width(columns: &KindColumns) -> f32 {
-    columns.declared.iter().fold(0., |sum, col| {
-        sum + if col.status {
-            STATUS_COLUMN_MIN
-        } else {
-            GENERIC_COLUMN_MIN
-        }
-    })
-}
-
 fn display_only_checkbox(id: impl Into<ElementId>, checked: bool) -> Checkbox {
     Checkbox::new(id).checked(checked).tab_stop(false)
 }
@@ -188,6 +269,10 @@ pub struct RowsDelegate {
     checked: HashSet<Arc<str>>,
     /// The row a Shift+click extends from.
     anchor: Option<Arc<str>>,
+    roles: Vec<ColumnRole>,
+    /// Set while the browser fits columns itself, which stops at each
+    /// column's cap. A fit the user asks for goes past it.
+    auto_fit: bool,
 }
 
 impl RowsDelegate {
@@ -336,6 +421,35 @@ impl RowsDelegate {
             }))
     }
 
+    /// The column's longest values by characters. A proportional font draws
+    /// these close to the widest, and measuring only these keeps a fit cheap.
+    fn longest_values(&self, col_ix: usize, cx: &App) -> Vec<String> {
+        let mut longest: Vec<(usize, String)> = Vec::with_capacity(FIT_CANDIDATES + 1);
+        for row_ix in 0..self.rows.len() {
+            let text = self.cell_text(row_ix, col_ix, cx);
+            let chars = text.chars().count();
+            if longest.len() == FIT_CANDIDATES && chars <= longest[FIT_CANDIDATES - 1].0 {
+                continue;
+            }
+            let at = longest.partition_point(|(other, _)| *other >= chars);
+            longest.insert(at, (chars, text));
+            longest.truncate(FIT_CANDIDATES);
+        }
+        longest.into_iter().map(|(_, text)| text).collect()
+    }
+
+    /// The widest of the column's header and its longest values.
+    fn content_width(&self, col_ix: usize, window: &Window, cx: &App) -> Pixels {
+        let status = self.is_status_column(col_ix);
+        self.longest_values(col_ix, cx)
+            .iter()
+            .map(|text| value_width(text, status, window, cx))
+            .fold(
+                header_width(&self.table_columns[col_ix], window, cx),
+                Pixels::max,
+            )
+    }
+
     fn computed_cell(&self, column: usize, row: &Arc<Row>) -> Option<&str> {
         let cell = self.computed.get(&(column, row.key.clone()))?;
         Arc::ptr_eq(&cell.row, row).then_some(cell.text.as_str())
@@ -393,6 +507,21 @@ impl TableDelegate for RowsDelegate {
         });
     }
 
+    fn fit_column(
+        &mut self,
+        col_ix: usize,
+        window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> Option<Pixels> {
+        let widths = self.roles.get(col_ix)?.widths()?;
+        let content = self.content_width(col_ix, window, cx);
+        Some(if self.auto_fit {
+            content.min(px(widths.cap - 2. * CELL_PADDING))
+        } else {
+            content
+        })
+    }
+
     fn render_th(
         &mut self,
         col_ix: usize,
@@ -401,7 +530,10 @@ impl TableDelegate for RowsDelegate {
     ) -> impl IntoElement {
         if col_ix != SELECT_COLUMN {
             return div()
-                .size_full()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .text_ellipsis()
                 .child(self.column(col_ix, cx).name.clone())
                 .into_any_element();
         }
@@ -437,7 +569,12 @@ impl TableDelegate for RowsDelegate {
                 if self.is_status_column(col_ix) && !text.is_empty() {
                     status_tag(text).into_any_element()
                 } else {
-                    div().child(text).into_any_element()
+                    div()
+                        .w_full()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .child(text)
+                        .into_any_element()
                 }
             }
         }
@@ -535,6 +672,17 @@ pub struct ResourceBrowser {
     expected_selection_events: usize,
     label_error: Option<String>,
     computing: HashSet<(usize, Arc<str>)>,
+    /// Computed values arrive outside any window update, and fitting their
+    /// column needs one.
+    window: AnyWindowHandle,
+    /// Whether the columns have been fitted to the first rows.
+    fitted: bool,
+    /// The computed columns fitted to their first values.
+    fitted_computed: HashSet<usize>,
+    /// The widths last set here, which tell the user's resizes apart.
+    applied: Vec<Pixels>,
+    /// Columns the user has resized, which are never fitted automatically.
+    user_sized: HashSet<usize>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -580,27 +728,34 @@ impl ResourceBrowser {
         let mut table_columns = vec![
             control_column("select", SELECT_WIDTH),
             control_column("actions", actions_width),
-            Column::new("name", t!("column.name").to_string())
-                .width(px(300.))
-                .sortable(),
+            Column::new("name", t!("column.name").to_string()).sortable(),
         ];
         if kind.namespaced {
-            table_columns.push(Column::new("namespace", t!("column.namespace").to_string())
-                .width(px(GENERIC_COLUMN_MIN))
-                .sortable());
+            table_columns
+                .push(Column::new("namespace", t!("column.namespace").to_string()).sortable());
         }
         for column in &columns.declared {
-            let col_width = if column.status { STATUS_COLUMN_MIN } else { GENERIC_COLUMN_MIN };
-            table_columns.push(
-                Column::new(column.spec.id.to_string(), column.title.to_string())
-                    .width(px(col_width))
-                    .sortable(),
-            );
+            table_columns
+                .push(Column::new(column.spec.id.to_string(), column.title.to_string()).sortable());
         }
         for column in &columns.computed {
-            table_columns
-                .push(Column::new(column.id.clone(), column.title.clone()).width(px(GENERIC_COLUMN_MIN)));
+            table_columns.push(Column::new(column.id.clone(), column.title.clone()));
         }
+        let roles = column_roles(kind.namespaced, &columns);
+        let table_columns: Vec<Column> = table_columns
+            .into_iter()
+            .zip(&roles)
+            .map(|(column, role)| match role.widths() {
+                None => column,
+                Some(widths) => {
+                    let header = header_width(&column, window, cx) + px(2. * CELL_PADDING);
+                    column
+                        .min_width(px(widths.min))
+                        .width(px(widths.initial).max(header.ceil()))
+                }
+            })
+            .collect();
+        let applied = table_columns.iter().map(|column| column.width).collect();
         let delegate = RowsDelegate {
             rows: Vec::new(),
             table_columns,
@@ -612,6 +767,8 @@ impl ResourceBrowser {
             actions,
             checked: HashSet::new(),
             anchor: None,
+            roles,
+            auto_fit: false,
         };
         let table = cx.new(|cx| TableState::new(delegate, window, cx));
 
@@ -708,6 +865,11 @@ impl ResourceBrowser {
             expected_selection_events: 0,
             label_error: None,
             computing: HashSet::new(),
+            window: window.window_handle(),
+            fitted: false,
+            fitted_computed: HashSet::new(),
+            applied,
+            user_sized: HashSet::new(),
             _subscriptions: subscriptions,
         }
     }
@@ -883,8 +1045,39 @@ impl ResourceBrowser {
                 self.selected = None;
                 cx.emit(BrowserEvent::Close);
             }
+            TableEvent::ColumnWidthsChanged(widths) => {
+                let resized = widths
+                    .iter()
+                    .zip(&self.applied)
+                    .enumerate()
+                    .filter(|(_, (width, applied))| width != applied)
+                    .map(|(col_ix, _)| col_ix);
+                self.user_sized.extend(resized);
+                self.applied = widths.clone();
+            }
             _ => {}
         }
+    }
+
+    /// Fits columns to their content, up to their caps, except those the
+    /// user has resized.
+    fn fit_columns(&mut self, columns: Range<usize>, window: &mut Window, cx: &mut Context<Self>) {
+        let user_sized = &self.user_sized;
+        self.applied = self.table.update(cx, |table, cx| {
+            table.delegate_mut().auto_fit = true;
+            for col_ix in columns.filter(|col_ix| !user_sized.contains(col_ix)) {
+                table.fit_col(col_ix, window, cx);
+            }
+            table.delegate_mut().auto_fit = false;
+            (0..table.delegate().table_columns.len())
+                .filter_map(|col_ix| table.col_width(col_ix))
+                .collect()
+        });
+    }
+
+    fn computed_column(&self, index: usize, cx: &App) -> usize {
+        let delegate = self.table.read(cx).delegate();
+        delegate.leading_columns() + delegate.columns.declared.len() + index
     }
 
     fn apply_snapshot(
@@ -901,6 +1094,12 @@ impl ResourceBrowser {
             delegate.drop_missing_rows();
             cx.notify();
         });
+        if !self.fitted && !snapshot.rows.is_empty() {
+            self.fitted = true;
+            // Computed columns are fitted once their values arrive.
+            let first_computed = self.computed_column(0, cx);
+            self.fit_columns(ACTIONS_COLUMN + 1..first_computed, window, cx);
+        }
         self.sync_selection(cx);
         self.request_computed(cx);
         if namespaces_changed {
@@ -1031,9 +1230,10 @@ impl ResourceBrowser {
                 targets,
             };
             let reply = self.services.extension(&column.extension, request);
+            let window = self.window;
             cx.spawn(async move |this, cx| {
                 let result = reply.await;
-                let _ = this.update(cx, |this, cx| {
+                let first = this.update(cx, |this, cx| {
                     for row in &wanted {
                         this.computing.remove(&(index, row.key.clone()));
                     }
@@ -1056,7 +1256,16 @@ impl ResourceBrowser {
                         }
                         cx.notify();
                     });
+                    this.fitted_computed.insert(index)
                 });
+                if first.is_ok_and(|first| first) {
+                    let _ = cx.update_window(window, |_, window, cx| {
+                        let _ = this.update(cx, |this, cx| {
+                            let col_ix = this.computed_column(index, cx);
+                            this.fit_columns(col_ix..col_ix + 1, window, cx);
+                        });
+                    });
+                }
             })
             .detach();
         }
@@ -1218,53 +1427,115 @@ impl Render for ResourceBrowser {
 
 #[cfg(test)]
 mod tests {
-    use crate::columns;
-    use kubepulse_store::ColumnSpec;
+    use kubepulse_cluster::PrinterColumn;
+    use kubepulse_extension_api::{ColumnContribution, ColumnSource, Contributions, KindRef};
+    use kubepulse_extension_host::ContributionSet;
 
-    use super::{declared_columns_min_width, GENERIC_COLUMN_MIN, KindColumns, STATUS_COLUMN_MIN};
+    use super::{ColumnRole::*, ResourceKind, column_roles};
+    use crate::columns::columns_for;
 
-    #[test]
-    fn empty_kind_columns_returns_zero() {
-        let columns = KindColumns::default();
-        assert!(declared_columns_min_width(&columns) < f32::EPSILON);
+    fn kind(group: &str, name: &str, printer_columns: Vec<PrinterColumn>) -> ResourceKind {
+        ResourceKind {
+            group: group.to_owned(),
+            version: "v1".into(),
+            kind: name.to_owned(),
+            plural: format!("{}s", name.to_lowercase()),
+            namespaced: true,
+            verbs: vec!["list".into()],
+            printer_columns,
+        }
+    }
+
+    fn contributed(group: &str, kind: &str, columns: &[(&str, ColumnSource)]) -> ContributionSet {
+        let columns = columns
+            .iter()
+            .map(|(title, source)| ColumnContribution {
+                id: title.to_lowercase(),
+                title: (*title).to_owned(),
+                kind: KindRef::new(group, kind),
+                source: source.clone(),
+            })
+            .collect();
+        ContributionSet {
+            version: 1,
+            extensions: vec![(
+                "e".to_owned(),
+                Contributions {
+                    columns,
+                    ..Default::default()
+                },
+            )],
+            ..ContributionSet::default()
+        }
+    }
+
+    fn path(path: &str) -> ColumnSource {
+        ColumnSource::Path { path: path.into() }
     }
 
     #[test]
-    fn status_column_gets_larger_min_width() {
-        let mut columns = KindColumns::default();
-        columns.declared.push(columns::ColumnDef {
-            title: "Status".into(),
-            spec: ColumnSpec::first_of("status", &[".status.phase"]).unwrap(),
-            status: true,
-        });
-        assert!((declared_columns_min_width(&columns) - STATUS_COLUMN_MIN).abs() < f32::EPSILON);
+    fn pod_columns_get_their_roles() {
+        let set = contributed(
+            "",
+            "Pod",
+            &[
+                (
+                    "Status",
+                    ColumnSource::Status {
+                        paths: vec![".status.phase".into()],
+                    },
+                ),
+                ("Node", path(".spec.nodeName")),
+                ("Risk", ColumnSource::Computed),
+            ],
+        );
+        let columns = columns_for(&kind("", "Pod", vec![]), &set);
+        assert_eq!(
+            column_roles(true, &columns),
+            [
+                Control, Control, Name, Namespace, Status, Text, Timestamp, Text
+            ]
+        );
     }
 
     #[test]
-    fn non_status_column_gets_generic_min_width() {
-        let mut columns = KindColumns::default();
-        columns.declared.push(columns::ColumnDef {
-            title: "Created".into(),
-            spec: ColumnSpec::first_of("created", &[".metadata.creationTimestamp"]).unwrap(),
-            status: false,
-        });
-        assert!((declared_columns_min_width(&columns) - GENERIC_COLUMN_MIN).abs() < f32::EPSILON);
+    fn a_time_path_is_a_timestamp() {
+        let set = contributed(
+            "batch",
+            "CronJob",
+            &[
+                ("Schedule", path(".spec.schedule")),
+                ("Last run", path(".status.lastScheduleTime")),
+            ],
+        );
+        let columns = columns_for(&kind("batch", "CronJob", vec![]), &set);
+        assert_eq!(
+            column_roles(true, &columns),
+            [
+                Control, Control, Name, Namespace, Text, Timestamp, Timestamp
+            ]
+        );
     }
 
     #[test]
-    fn mixed_columns_sum_correctly() {
-        let mut columns = KindColumns::default();
-        columns.declared.push(columns::ColumnDef {
-            title: "Status".into(),
-            spec: ColumnSpec::first_of("status", &[".status.phase"]).unwrap(),
-            status: true,
-        });
-        columns.declared.push(columns::ColumnDef {
-            title: "Created".into(),
-            spec: ColumnSpec::first_of("created", &[".metadata.creationTimestamp"]).unwrap(),
-            status: false,
-        });
-        let expected = STATUS_COLUMN_MIN + GENERIC_COLUMN_MIN;
-        assert!((declared_columns_min_width(&columns) - expected).abs() < f32::EPSILON);
+    fn printer_columns_of_a_cluster_scoped_kind_get_their_roles() {
+        let printer = [
+            ("Phase", ".status.phase"),
+            ("Size", ".spec.size"),
+            ("Ready since", ".status.readyTime"),
+        ]
+        .map(|(name, path)| PrinterColumn {
+            name: name.into(),
+            path: path.into(),
+        })
+        .to_vec();
+        let columns = columns_for(
+            &kind("example.com", "Widget", printer),
+            &ContributionSet::default(),
+        );
+        assert_eq!(
+            column_roles(false, &columns),
+            [Control, Control, Name, Status, Text, Timestamp, Timestamp]
+        );
     }
 }

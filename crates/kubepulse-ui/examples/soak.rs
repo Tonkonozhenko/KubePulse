@@ -164,6 +164,7 @@ fn main() {
                 title: spec.id.clone(),
                 spec: spec.clone(),
                 status: false,
+                timestamp: false,
             })
             .collect(),
         computed: Vec::new(),

@@ -7,12 +7,15 @@ use std::{
 };
 
 use gpui_kit::{
-    AppContext as _, ElementId, Entity, Modifiers, SharedString, TestAppContext, VisualTestContext,
-    WindowOptions, component::WindowExt as _, test::TestWindowExt as _,
+    AppContext as _, ElementId, Entity, Modifiers, Pixels, SharedString, TestAppContext,
+    VisualTestContext, WindowOptions,
+    component::{WindowExt as _, table::TableDelegate as _},
+    px,
+    test::TestWindowExt as _,
 };
 use kubepulse_cluster::{
     ConnectionState, EventRecord, ForwardFailure, ForwardKind, ForwardRequest, ForwardState,
-    ObjectError, ObjectTarget, PrinterColumn, ResourceKind, WatchEvent,
+    ObjectError, ObjectTarget, PrinterColumn, RawObject, ResourceKind, WatchEvent,
 };
 use kubepulse_extension_api::{
     ColumnContribution, ColumnSource, Contributions, DetailTabContribution, ExtensionRequest,
@@ -30,7 +33,7 @@ use kubepulse_ui::{
     forwards::SharedForwards,
     identity::{ClusterKey, IdentityStore},
     preferences::Preferences,
-    resource_browser::ResourceBrowser,
+    resource_browser::{ResourceBrowser, header_width, value_width},
     runtime::{ClusterState, ClusterStatus},
     services::SharedServices,
     settings_tab,
@@ -2909,4 +2912,263 @@ fn the_rail_opens_the_forward_list(cx: &mut TestAppContext) {
     let (mut harness, _) = forwardable(cx);
     harness.click("rail-forwards".into());
     assert!(harness.exists("no-forwards".into()));
+}
+
+// Column widths
+
+const NAME: usize = 2;
+const NAMESPACE: usize = 3;
+const STATUS: usize = 4;
+const NODE: usize = 5;
+const IP: usize = 6;
+const CREATED: usize = 7;
+/// The table's cell padding, on both sides together.
+const PADDING: f32 = 16.;
+
+fn sized_columns() -> Vec<ColumnContribution> {
+    vec![
+        ColumnContribution {
+            id: "status".into(),
+            title: "Status".into(),
+            kind: KindRef::new("", "Pod"),
+            source: ColumnSource::Status {
+                paths: vec![".status.phase".into()],
+            },
+        },
+        path_column("node", "Node", ".spec.nodeName"),
+        path_column("ip", "IP", ".status.podIP"),
+    ]
+}
+
+fn sized_pod(name: &str, namespace: &str, node: &str, ip: &str, phase: &str) -> RawObject {
+    raw(
+        name,
+        Some(namespace),
+        json!({
+            "metadata": {"creationTimestamp": "2026-11-10T12:34:56Z"},
+            "spec": {"nodeName": node},
+            "status": {"phase": phase, "podIP": ip},
+        }),
+    )
+}
+
+/// A long pod first, so the first rows always hold it, then a short one.
+fn sized_pods() -> Vec<RawObject> {
+    vec![
+        sized_pod(
+            &"long-name-".repeat(7),
+            "team-platform-observability",
+            &"n".repeat(60),
+            "10.100.200.250",
+            "CrashLoopBackOff",
+        ),
+        sized_pod("api", "a", "node-1", "10.0.0.1", "Running"),
+    ]
+}
+
+fn sized(cx: &mut TestAppContext, pods: Vec<RawObject>) -> (Harness<'_>, Arc<ScriptedSource>) {
+    let source = Arc::new(ScriptedSource::default().with("Pod", pods));
+    let services = Arc::new(FakeServices::new(
+        source.clone() as Arc<dyn WatchSource>,
+        contributed(sized_columns()),
+    ));
+    let mut harness = harness(cx, services, vec![pod_kind()], false);
+    harness.show(&pod_kind());
+    let browser = harness.browser();
+    wait_until(harness.cx, "the listing", |cx| {
+        cx.update(|_, cx| browser.read(cx).snapshot().synced)
+    });
+    (harness, source)
+}
+
+fn widths(harness: &mut Harness<'_>) -> Vec<Pixels> {
+    let browser = harness.browser();
+    harness.cx.update(|_, cx| {
+        let table = browser.read(cx).table().read(cx);
+        (0..table.delegate().columns_count(cx))
+            .map(|col_ix| table.col_width(col_ix).unwrap())
+            .collect()
+    })
+}
+
+/// What column `col_ix` needs to show its header and every row whole.
+fn needed(harness: &mut Harness<'_>, col_ix: usize, status: bool) -> Pixels {
+    let browser = harness.browser();
+    harness.cx.update(|window, cx| {
+        let table = browser.read(cx).table().read(cx);
+        let delegate = table.delegate();
+        let rows = delegate.rows_count(cx);
+        let header = header_width(&delegate.column(col_ix, cx), window, cx);
+        let content = (0..rows)
+            .map(|row_ix| value_width(&delegate.cell_text(row_ix, col_ix, cx), status, window, cx))
+            .fold(header, Pixels::max);
+        (content + px(PADDING)).ceil()
+    })
+}
+
+fn fit_by_hand(harness: &mut Harness<'_>, col_ix: usize) {
+    let browser = harness.browser();
+    harness.cx.update(|window, cx| {
+        let table = browser.read(cx).table().clone();
+        table.update(cx, |table, cx| table.fit_col(col_ix, window, cx));
+    });
+    harness.cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn an_empty_table_starts_every_column_wide_enough_for_its_role_and_header(cx: &mut TestAppContext) {
+    let (mut harness, _) = sized(cx, vec![]);
+
+    let widths = widths(&mut harness);
+    let initial = [240., 140., 130., 110., 110., 170.];
+    for (col_ix, initial) in (NAME..=CREATED).zip(initial) {
+        let header = needed(&mut harness, col_ix, false);
+        assert!(
+            widths[col_ix] >= px(initial),
+            "column {col_ix}: {:?}",
+            widths[col_ix]
+        );
+        assert!(
+            widths[col_ix] >= header,
+            "column {col_ix}: {:?} < {header:?}",
+            widths[col_ix]
+        );
+    }
+}
+
+#[gpui_kit::test]
+fn the_first_rows_fit_each_column_up_to_its_cap(cx: &mut TestAppContext) {
+    let (mut harness, _) = sized(cx, sized_pods());
+    harness.wait_for_rows(2);
+
+    let widths = widths(&mut harness);
+    for (col_ix, status, min) in [
+        (NAMESPACE, false, 80.),
+        (STATUS, true, 80.),
+        (IP, false, 60.),
+        (CREATED, false, 120.),
+    ] {
+        let needed = needed(&mut harness, col_ix, status);
+        let fitted = needed.max(px(min));
+        assert!(
+            widths[col_ix] >= needed && widths[col_ix] <= fitted + px(1.),
+            "column {col_ix}: {:?}, needs {needed:?}",
+            widths[col_ix]
+        );
+    }
+    // Wider than their caps, so they stop there.
+    assert_eq!(widths[NAME], px(480.));
+    assert_eq!(widths[NODE], px(320.));
+    // The checkbox and the five pod actions keep their widths.
+    assert_eq!(widths[0], px(40.));
+    assert_eq!(widths[1], px(24. + 28. * 5.));
+}
+
+#[gpui_kit::test]
+fn later_rows_do_not_move_columns(cx: &mut TestAppContext) {
+    let (mut harness, source) = sized(cx, sized_pods());
+    harness.wait_for_rows(2);
+    let before = widths(&mut harness);
+
+    source.send(WatchEvent::Applied(sized_pod(
+        "late",
+        "a-namespace-much-longer-than-any-before",
+        "node-2",
+        "10.0.0.2",
+        "Pending",
+    )));
+    harness.wait_for_rows(3);
+
+    assert_eq!(widths(&mut harness), before);
+}
+
+#[gpui_kit::test]
+fn fitting_by_hand_goes_past_the_cap(cx: &mut TestAppContext) {
+    let (mut harness, _) = sized(cx, sized_pods());
+    harness.wait_for_rows(2);
+
+    fit_by_hand(&mut harness, NAME);
+
+    let needed = needed(&mut harness, NAME, false);
+    assert!(needed > px(480.), "{needed:?}");
+    assert!(widths(&mut harness)[NAME] >= needed);
+}
+
+#[gpui_kit::test]
+fn fitting_ten_thousand_rows_stays_within_a_frame(cx: &mut TestAppContext) {
+    let mut harness = ten_thousand_pods(cx, pod_columns());
+    let columns = harness.cells(0).0.len() + CONTROL_COLUMNS;
+
+    let started = std::time::Instant::now();
+    for col_ix in NAME..columns {
+        fit_by_hand(&mut harness, col_ix);
+    }
+
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "fitting took {:?}",
+        started.elapsed()
+    );
+}
+
+fn computed_pods(cx: &mut TestAppContext) -> (Harness<'_>, Arc<FakeServices>) {
+    let source = Arc::new(SyntheticCluster::new(100, None));
+    let services = Arc::new(FakeServices::new(
+        source,
+        contributed(vec![computed_column()]),
+    ));
+    services.stall_extensions();
+    let mut harness = harness(cx, services.clone(), vec![pod_kind()], false);
+    harness.open_kind(&pod_kind());
+    harness.wait_for_rows(100);
+    harness.cx.update(|window, cx| window.render_frame(cx));
+    harness.cx.run_until_parked();
+    (harness, services)
+}
+
+fn wait_for_computed(harness: &mut Harness<'_>) {
+    let browser = harness.browser();
+    wait_until(harness.cx, "the computed cell", |cx| {
+        cx.update(|_, cx| {
+            let table = browser.read(cx).table().read(cx);
+            table.dump_range(0..1, cx).1[0]
+                .last()
+                .unwrap()
+                .starts_with("computed ")
+        })
+    });
+    harness.cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn a_computed_column_fits_its_first_values_alone(cx: &mut TestAppContext) {
+    let (mut harness, services) = computed_pods(cx);
+    let before = widths(&mut harness);
+    let computed = before.len() - 1;
+
+    services.release_extensions();
+    wait_for_computed(&mut harness);
+
+    let after = widths(&mut harness);
+    let needed = needed(&mut harness, computed, false);
+    assert!(
+        after[computed] >= needed.min(px(320.)),
+        "{:?} < {needed:?}",
+        after[computed]
+    );
+    assert_ne!(after[computed], before[computed]);
+    assert_eq!(after[..computed], before[..computed]);
+}
+
+#[gpui_kit::test]
+fn a_column_the_user_sized_keeps_its_width(cx: &mut TestAppContext) {
+    let (mut harness, services) = computed_pods(cx);
+    let computed = widths(&mut harness).len() - 1;
+    fit_by_hand(&mut harness, computed);
+    let chosen = widths(&mut harness)[computed];
+
+    services.release_extensions();
+    wait_for_computed(&mut harness);
+
+    assert_eq!(widths(&mut harness)[computed], chosen);
 }

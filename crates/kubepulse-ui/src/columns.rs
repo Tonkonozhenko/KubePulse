@@ -17,6 +17,8 @@ pub struct ColumnDef {
     pub spec: ColumnSpec,
     /// Shown as a tag colored by health.
     pub status: bool,
+    /// Holds a point in time, which is sized for a full timestamp.
+    pub timestamp: bool,
 }
 
 /// A column an extension computes, requested for visible rows only.
@@ -75,6 +77,7 @@ fn declared(id: &str, title: &str, paths: &[impl AsRef<str>], status: bool) -> O
             title: title.into(),
             spec,
             status,
+            timestamp: paths.iter().any(|path| is_time_path(path.as_ref())),
         }),
         Err(error) => {
             tracing::warn!(%error, "skipping column");
@@ -129,6 +132,11 @@ pub fn columns_for(kind: &ResourceKind, contributions: &ContributionSet) -> Kind
         false,
     ));
     columns
+}
+
+/// Kubernetes names its time fields `...Timestamp` or `...Time`.
+fn is_time_path(path: &str) -> bool {
+    path.ends_with("Timestamp") || path.ends_with("Time")
 }
 
 fn is_status_name(name: &str) -> bool {

@@ -2,9 +2,16 @@
 //! The text itself is always shown as received.
 
 use gpui_kit::{
-    SharedString,
+    SharedString, Styled as _,
     component::{Sizable as _, tag::Tag},
+    rems,
 };
+
+/// A status tag's text size, padding on each side, and border, which a table
+/// also measures it by.
+pub const TAG_TEXT_REMS: f32 = 0.625;
+pub const TAG_PADDING_REMS: f32 = 0.375;
+pub const TAG_BORDER: f32 = 1.;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tone {
@@ -96,7 +103,11 @@ pub fn status_tag(text: impl Into<SharedString>) -> Tag {
     use gpui_kit::ParentElement as _;
 
     let text = text.into();
-    tone_tag(status_tone(&text)).child(text)
+    tone_tag(status_tone(&text))
+        .text_size(rems(TAG_TEXT_REMS))
+        .px(rems(TAG_PADDING_REMS))
+        .border(gpui_kit::px(TAG_BORDER))
+        .child(text)
 }
 
 #[cfg(test)]
